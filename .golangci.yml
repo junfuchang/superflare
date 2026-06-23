@@ -1,0 +1,57 @@
+version: "2"
+run:
+  go: "1.26"
+  modules-download-mode: readonly
+linters:
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+      - linters:
+          - errcheck
+          - govet
+        path: build/
+      - linters:
+          - errcheck
+        path: tools/
+      - linters:
+          - errcheck
+        path: cmd/cli\.go
+        text: MarkDeprecated|Parse
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/junfuchang/superflare
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

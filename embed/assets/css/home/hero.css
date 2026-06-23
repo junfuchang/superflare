@@ -1,0 +1,12 @@
+#page-home #hero-container {
+  position: relative;
+}
+
+#plugin-datetime {
+}
+
+#page-home #hero-container p {
+  font-weight: 300;
+  text-transform: uppercase;
+  height: 30px;
+}

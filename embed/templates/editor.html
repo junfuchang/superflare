@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="google" content="notranslate">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SuperFlare &#22312;&#32447;&#25968;&#25454;&#32534;&#36753;</title>
+
+    <link rel="stylesheet" href="/assets/table/grid.css{{.DebugAssetVersion}}">
+    <script src="/assets/table/grid.js{{.DebugAssetVersion}}"></script>
+    <script src="/assets/table/grid.zh-CN.js{{.DebugAssetVersion}}"></script>
+    <style>
+        body {
+            --color-background: #1a1a1a;
+            --color-primary: #FFFDEA;
+            --color-accent: #5c5c5c;
+            --spacing-ui: 10px;
+            background-color: var(--color-background);
+            transition: background-color 0.3s;
+            font-family: Roboto, sans-serif;
+            font-size: 14px;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        .notice {
+            color: var(--color-primary);
+        }
+
+        .bookmark-icon {
+            background-color: var(--color-background) !important;
+        }
+
+        .bookmark-icon img {
+            height: 90%;
+        }
+
+        #search-container {
+            background-color: #fff;
+            padding: 10px;
+        }
+
+        .editor-tools {
+            margin: 16px 0 18px;
+            padding: 12px;
+            border: 1px solid rgba(255, 253, 234, 0.18);
+        }
+
+        .editor-tools form,
+        .editor-tools a,
+        .editor-tools input {
+            margin-right: 8px;
+            margin-top: 6px;
+        }
+
+        .link-check-invalid {
+            background-color: rgba(255, 128, 128, 0.25) !important;
+        }
+
+        .link-check-note {
+            color: #ff9d9d;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>SuperFlare &#22312;&#32447;&#25968;&#25454;&#32534;&#36753;</h1>
+    <p class="notice">&#22312;&#32447;&#32534;&#36753;&#21151;&#33021;&#36824;&#22312;&#24320;&#21457;&#20013;&#65292;&#30446;&#21069;&#24050;&#28385;&#36275;&#22522;&#26412;&#21151;&#33021;&#12290;</p>
+    <p class="notice">&#22312;&#20351;&#29992;&#26412;&#32534;&#36753;&#22120;&#21069;&#65292;&#24314;&#35758;&#20808;&#25163;&#21160;&#20445;&#23384;&#25968;&#25454;&#25991;&#20214;&#25110;&#19979;&#36733;&#22791;&#20221;&#12290;</p>
+    <p class="notice">&#22312;&#34920;&#26684;&#20013;&#23436;&#25104;&#25968;&#25454;&#26356;&#26032;&#25110;&#28155;&#21152;&#21518;&#65292;&#28857;&#20987;&#20445;&#23384;&#25968;&#25454;&#21363;&#21487;&#29983;&#25928;&#12290;</p>
+
+    <div class="editor-tools">
+        <h2>&#25968;&#25454;&#22791;&#20221;&#19982;&#24674;&#22797;</h2>
+        <a href="/editor/backup"><input type="button" value="&#19979;&#36733;&#22791;&#20221;" /></a>
+        <form action="/editor/restore" method="POST" enctype="multipart/form-data" style="display: inline-block;">
+            <input type="file" name="backup" accept=".zip,.yml,.yaml" />
+            <input type="submit" value="&#24674;&#22797;&#23548;&#20837;" />
+        </form>
+    </div>
+
+    <h2>&#20998;&#31867;&#31649;&#29702;</h2>
+    <div id="container-category"></div>
+    <div class="controls">
+        <input type="submit" value="&#20445;&#23384;&#25968;&#25454;" class="update-data" style="margin-top: 10px;" />
+        <form action="/editor" method="POST" id="form-categories">
+            <input type="hidden" name="categories" id="field-categories" value="" />
+            <input type="hidden" name="bookmarks" id="field-bookmarks" value="" />
+        </form>
+    </div>
+
+    <h2>&#24212;&#29992;&#32534;&#36753;</h2>
+
+    <div id="search-container" style="text-align: right;">
+        <span style="float: left; margin: 2px;">
+            <span>&#39640;&#20142;&#31579;&#36873;</span>
+            <input type="text" name="" id="search">
+        </span>
+        <input style="margin: 0 10px;" type="submit" value="&#20445;&#23384;&#25968;&#25454;" class="update-data" />
+        <input style="margin-right: 10px;" type="button" value="&#26816;&#26597;&#20844;&#32593;&#26080;&#25928;&#38142;&#25509;" id="check-links" />
+        <input type="submit" value="&#36820;&#22238;&#39318;&#39029;" id="back-home" />
+    </div>
+
+    <div id="container-bookmarks"></div>
+
+    <script type="text/html" id="data-categories">{{.DataCategories}}</script>
+    <script type="text/html" id="data-bookmarks">{{.DataBookmarks}}</script>
+    <script type="text/html" id="data-ports">{{.DataPorts}}</script>
+
+    <script>
+        let categories = JSON.parse(document.getElementById("data-categories").innerHTML) || [];
+        const dataBookmarks = JSON.parse(document.getElementById("data-bookmarks").innerHTML) || [];
+        const dataPorts = JSON.parse(document.getElementById("data-ports").textContent || "[]") || [];
+        const localLANHost = '{{.LocalLANHost}}';
+        const localPortDisplayMap = {};
+        const localPortValueMap = {};
+        const localPortOptions = dataPorts.map(function (item) {
+            const protocol = (item.Protocol || 'tcp').toLowerCase() === 'udp' ? 'udp' : 'tcp';
+            const scheme = protocol === 'udp' ? 'udp' : 'http';
+            const value = scheme + '://' + localLANHost + ':' + item.Port;
+            const label = '\u3010' + item.Port + '\u3011' + (item.Remark || '');
+            localPortDisplayMap[value] = label;
+            localPortValueMap[label] = value;
+            return label;
+        });
+
+        let categoriesMap = categories.reduce((prev, item) => {
+            prev[item.ID] = item.Name; return prev;
+        }, {})
+        const FLARE_FIX_CATEGORY = ["[SuperFlare \u5e94\u7528]"];
+        let bookmarks = dataBookmarks.filter(item => item.Category && item.Name && item.URL).map(item => {
+            if (item.Category === '_FLARE_FIXED_CATEGORY') {
+                item.Category = FLARE_FIX_CATEGORY[0];
+            } else {
+                item.Category = categoriesMap[item.Category]
+            }
+            item.LocalURL = item.LocalURL || '';
+            item.CheckResult = '';
+            return item;
+        }).sort((a, b) => (a.Category + "").localeCompare(b.Category + ""));
+    </script>
+
+    <script>
+        const instanceCategories = new Handsontable(document.getElementById('container-category'), {
+            language: 'zh-CN',
+            data: categories,
+            colHeaders: ['\u5206\u7c7b\u540d\u79f0'],
+            rowHeaders: true,
+            manualRowMove: true,
+            contextMenu: ["row_above", "row_below", "---------", "undo", "redo", "---------", "cut", "copy"],
+            columns: [
+                { data: 'Name' },
+            ],
+            height: 'auto',
+            afterChange: (changes) => {
+                if (!changes) { return }
+                changes.forEach(function ([row, prop, oldValue, newValue]) {
+                    categoriesMap = Object.keys(categoriesMap).reduce(function (prev, key) {
+                        if (categoriesMap[key] == oldValue) {
+                            prev[key] = newValue;
+                        } else {
+                            prev[key] = categoriesMap[key]
+                        }
+                        return prev;
+                    }, {});
+
+                    bookmarks = bookmarks.map(function (bookmark) {
+                        if (bookmark.Category == oldValue) {
+                            bookmark.Category = newValue;
+                        }
+                        return bookmark;
+                    });
+                });
+                updateDataTable()
+            },
+            licenseKey: 'non-commercial-and-evaluation'
+        });
+
+        function coverRenderer(instance, td, row, col, prop, value, cellProperties) {
+            const stringifiedValue = Handsontable.helper.stringify(value);
+
+            Handsontable.renderers.TextRenderer.apply(this, arguments);
+            return;
+
+            if (stringifiedValue.startsWith('http')) {
+                const img = document.createElement('IMG');
+
+                img.src = value;
+
+                Handsontable.dom.addEvent(img, 'mousedown', event => {
+                    event.preventDefault(); // prevent selection quirk
+                });
+
+                Handsontable.dom.empty(td);
+                td.appendChild(img);
+            } else if (stringifiedValue !== '') {
+
+                const img = document.createElement('IMG');
+
+                img.src = '/assets/mdi/blackboard-' + (value + '').toLowerCase() + '.svg{{.DebugAssetVersion}}';
+
+                Handsontable.dom.addEvent(img, 'mousedown', event => {
+                    event.preventDefault(); // prevent selection quirk
+                });
+
+                Handsontable.dom.empty(td);
+                td.className = 'bookmark-icon'
+                td.appendChild(img);
+
+            } else {
+                Handsontable.renderers.TextRenderer.apply(this, arguments);
+            }
+        }
+
+
+        const searchField = document.querySelector('#search');
+        const container = document.getElementById('container-bookmarks');
+        const dataTableColumns = buildDataTableColumns();
+        let instanceBookmarks = new Handsontable(container, {
+            language: 'zh-CN',
+            data: Array.from(bookmarks),
+            colHeaders: ['\u4e66\u7b7e\u540d\u79f0', '\u4e66\u7b7e\u5730\u5740', '\u5185\u7f51\u5730\u5740', /*'\u79c1\u5bc6',*/ '\u7c7b\u578b', '\u5b50\u76ee\u5f55', '\u56fe\u6807', '\u63cf\u8ff0', '\u68c0\u67e5\u7ed3\u679c'],
+            rowHeaders: true,
+            manualRowMove: true,
+            contextMenu: ["row_above", "row_below", "---------", "undo", "redo", "---------", "cut", "copy"],
+            columns: dataTableColumns,
+            // hiddenColumns: true,
+            // hiddenColumns: {
+            //     columns: [2],
+            //     copyPasteEnabled: false,
+            //     indicators: false
+            // },
+            height: 'auto',
+            stretchH: 'all',
+            search: true,
+            licenseKey: 'non-commercial-and-evaluation'
+        });
+        Handsontable.dom.addEvent(searchField, 'keyup', function (event) {
+            const queryResult = instanceBookmarks.getPlugin('search').query(this.value);
+            instanceBookmarks.render();
+        });
+
+
+        function bindData() {
+            const options = { bom: false, columnDelimiter: ',', columnHeaders: false, exportHiddenColumns: true, exportHiddenRows: true, rowDelimiter: '\r\n', rowHeaders: true };
+            const exportedCategories = instanceCategories.getPlugin('exportFile').exportAsString('csv', options);
+            const exportedBookmarks = exportBookmarksCSV();
+            document.getElementById('field-categories').value = exportedCategories;
+            document.getElementById('field-bookmarks').value = exportedBookmarks;
+        }
+
+        function csvEscape(value) {
+            const text = value == null ? '' : String(value);
+            if (/[",\r\n]/.test(text)) {
+                return '"' + text.replace(/"/g, '""') + '"';
+            }
+            return text;
+        }
+
+        function exportBookmarksCSV() {
+            return instanceBookmarks.getSourceData().map(function (item, idx) {
+                return [
+                    idx + 1,
+                    item.Name || '',
+                    item.URL || '',
+                    item.LocalURL || '',
+                    item.Category || '',
+                    item.Subdir || '',
+                    item.Icon || '',
+                    item.Desc || ''
+                ].map(csvEscape).join(',');
+            }).join('\r\n');
+        }
+
+        Array.from(document.getElementsByClassName('update-data')).forEach(function (btn) {
+            btn.addEventListener('click', function (event) {
+                event.preventDefault();
+                bindData();
+                document.getElementById('form-categories').submit();
+            });
+        });
+
+        function buildDataTableColumns() {
+            return [
+                { data: 'Name' },
+                { data: 'URL' },
+                { data: 'LocalURL', type: 'autocomplete', source: localPortOptions, strict: false, filter: false, allowInvalid: true, renderer: localURLRenderer },
+                // { data: 'Private', type: 'checkbox' },
+                { data: 'Category', editor: 'select', selectOptions: FLARE_FIX_CATEGORY.concat(categories.map(item => item.Name)), allowInvalid: false },
+                { data: 'Subdir' },
+                { data: 'Icon', renderer: coverRenderer },
+                { data: 'Desc' },
+                { data: 'CheckResult', readOnly: true, renderer: linkCheckRenderer }
+            ]
+        }
+
+        function localURLRenderer(instance, td, row, col, prop, value, cellProperties) {
+            const display = localPortDisplayMap[value] || value || '';
+            Handsontable.renderers.TextRenderer.apply(this, [instance, td, row, col, prop, display, cellProperties]);
+        }
+
+        function linkCheckRenderer(instance, td, row, col, prop, value, cellProperties) {
+            Handsontable.renderers.TextRenderer.apply(this, arguments);
+            if (value) {
+                td.className = (td.className || '') + ' link-check-invalid link-check-note';
+            }
+        }
+
+        document.getElementById('back-home').addEventListener('click', function (e) {
+            e.preventDefault();
+            location.href = "/";
+        })
+
+        document.getElementById('check-links').addEventListener('click', function (e) {
+            e.preventDefault();
+            bindData();
+            const btn = this;
+            btn.disabled = true;
+            btn.value = '\u68c0\u67e5\u4e2d...';
+            fetch('/editor/check-links', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bookmarks: document.getElementById('field-bookmarks').value })
+            }).then(function (res) {
+                return res.json();
+            }).then(function (results) {
+                bookmarks.forEach(function (item) { item.CheckResult = ''; });
+                (results || []).forEach(function (result) {
+                    const idx = Math.max(0, (result.row || 1) - 1);
+                    if (bookmarks[idx]) {
+                        bookmarks[idx].CheckResult = result.reason || '\u8fde\u63a5\u65e0\u6548';
+                    }
+                });
+                instanceBookmarks.render();
+                btn.value = (results && results.length) ? '\u53d1\u73b0 ' + results.length + ' \u4e2a\u5f02\u5e38\u94fe\u63a5' : '\u672a\u53d1\u73b0\u5f02\u5e38\u94fe\u63a5';
+                setTimeout(function () {
+                    btn.value = '\u68c0\u67e5\u516c\u7f51\u65e0\u6548\u94fe\u63a5';
+                    btn.disabled = false;
+                }, 2500);
+            }).catch(function () {
+                btn.value = '\u68c0\u67e5\u5931\u8d25';
+                setTimeout(function () {
+                    btn.value = '\u68c0\u67e5\u516c\u7f51\u65e0\u6548\u94fe\u63a5';
+                    btn.disabled = false;
+                }, 2500);
+            });
+        });
+
+
+        function updateDataTable() {
+            bookmarks.forEach(function (item) {
+                if (localPortValueMap[item.LocalURL]) {
+                    item.LocalURL = localPortValueMap[item.LocalURL];
+                }
+            });
+            instanceBookmarks.updateData(bookmarks)
+            instanceBookmarks.updateSettings({ columns: buildDataTableColumns() })
+        }
+
+        instanceBookmarks.addHook('afterChange', function (changes, source) {
+            if (!changes || source === 'loadData') { return; }
+            changes.forEach(function (change) {
+                const row = change[0];
+                const prop = change[1];
+                const newValue = change[3];
+                if (prop === 'LocalURL' && localPortValueMap[newValue]) {
+                    instanceBookmarks.setDataAtRowProp(row, 'LocalURL', localPortValueMap[newValue], 'local-port-select');
+                }
+            });
+        });
+
+        instanceBookmarks.addHook('beforeKeyDown', function (event) {
+            if (event.key !== 'Enter') { return; }
+            const selected = instanceBookmarks.getSelectedLast();
+            if (!selected) { return; }
+            const prop = instanceBookmarks.colToProp(selected[1]);
+            if (prop !== 'LocalURL') { return; }
+            const editor = instanceBookmarks.getActiveEditor && instanceBookmarks.getActiveEditor();
+            const inputValue = editor && editor.TEXTAREA ? editor.TEXTAREA.value : '';
+            if ((inputValue || '').trim() !== '') { return; }
+            event.preventDefault();
+            if (event.stopImmediatePropagation) { event.stopImmediatePropagation(); }
+            instanceBookmarks.setDataAtRowProp(selected[0], 'LocalURL', '', 'local-url-empty');
+            if (editor && editor.close) { editor.close(); }
+        });
+
+    </script>
+    <script>document.addEventListener('keydown', function (e) { if (e.key === 'Escape') history.back(); });</script>
+</body>
+
+</html>

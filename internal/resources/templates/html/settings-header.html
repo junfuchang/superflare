@@ -1,0 +1,1 @@
+{{ define "settings-header.html" }}<div class="header"><h1>{{ T .Locale "app_settings" }}</h1><p><a href="/">{{ T .Locale "back" }}</a></p>{{ if .ShowLoginInfo }}<p class="settings-login-info">{{ T .Locale "current_user" }} {{.UserName}}<p class="settings-login-info">{{ T .Locale "login_time" }} {{.LoginDate}}</p>{{ end }}</div>{{ end }}

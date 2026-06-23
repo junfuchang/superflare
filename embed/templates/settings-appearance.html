@@ -1,0 +1,253 @@
+{{ define "settings-appearance.html" }}
+<div class="setting-group-container">
+
+    <form method="POST" action="{{ .SettingPages.Appearance.Path }}">
+        <h2>{{ T .Locale "general_settings" }}</h2>
+        <div class="form-group">
+            <label for="settings-locale">{{ T .Locale "language" }}</label>
+            <select name="locale" id="settings-locale">
+                <option value="zh" {{ if eq .OptionLocale "zh" }}selected{{ end }}>{{ T .Locale "lang_zh" }}</option>
+                <option value="en" {{ if eq .OptionLocale "en" }}selected{{ end }}>{{ T .Locale "lang_en" }}</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="settings-title">{{ T .Locale "custom_title" }}</label>
+            <input type="text" name="title" id="settings-title" class="option-input" placeholder='{{ T .Locale "site_title_placeholder" }}' value="{{.OptionTitle}}">
+        </div>
+
+        <div class="form-group">
+            <label for="settings-site-icon">{{ T .Locale "site_icon" }}</label>
+            <input type="text" list="site-icon-options" name="site-icon" id="settings-site-icon" class="option-input" placeholder="home" value="{{.OptionSiteIcon}}">
+            <datalist id="site-icon-options">
+                {{.SiteIconOptions}}
+            </datalist>
+            <p class="help-text">{{ T .Locale "site_icon_help" }} <a href="/icons" target="_blank">/icons</a>.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-footer">{{ T .Locale "custom_footer" }}</label>
+            <textarea name="footer" id="settings-footer" class="option-input" cols="30" rows="10" placeholder='{{ T .Locale "footer_placeholder" }}'>{{.OptionFooter}}</textarea>
+            <p class="help-text">{{ T .Locale "footer_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-open-app-newtab">{{ T .Locale "open_app_newtab" }}</label>
+            {{ if .OptionOpenAppNewTab }}
+            <select name="open-app-newtab" id="settings-open-app-newtab">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="open-app-newtab" id="settings-open-app-newtab">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-open-bookmark-newtab">{{ T .Locale "open_bookmark_newtab" }}</label>
+            {{ if .OptionOpenBookmarkNewTab }}
+            <select name="open-bookmark-newtab" id="settings-open-bookmark-newtab">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="open-bookmark-newtab" id="settings-open-bookmark-newtab">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-enable-encrypted-link">{{ T .Locale "show_encrypted_link" }}</label>
+            {{ if .OptionEnableEncryptedLink }}
+            <select name="enable-encrypted-link" id="settings-enable-encrypted-link">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="enable-encrypted-link" id="settings-enable-encrypted-link">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-keep-letter-case">{{ T .Locale "keep_letter_case" }}</label>
+            {{ if .OptionKeepLetterCase }}
+            <select name="keep-letter-case" id="settings-keep-letter-case">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="keep-letter-case" id="settings-keep-letter-case">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-icon-mode">{{ T .Locale "icon_mode" }}</label>
+            {{ if .OptionIconModeDefault }}
+            <select name="icon-mode" id="settings-icon-mode">
+                <option value="DEFAULT" selected>{{ T .Locale "icon_mode_default" }}</option>
+                <option value="FILLING">{{ T .Locale "icon_mode_filling" }}</option>
+            </select>
+            {{ end }}
+            {{ if .OptionIconModeFilling }}
+            <select name="icon-mode" id="settings-icon-mode">
+                <option value="DEFAULT">{{ T .Locale "icon_mode_default" }}</option>
+                <option value="FILLING" selected>{{ T .Locale "icon_mode_filling" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <h2>{{ T .Locale "module_settings" }}</h2>
+
+        <div class="form-group">
+            <label for="settings-home-max-columns">{{ T .Locale "home_max_columns" }}</label>
+            <input type="number" min="0" max="8" name="home-max-columns" id="settings-home-max-columns" class="option-input" value="{{.OptionHomeMaxColumns}}">
+            <p class="help-text">{{ T .Locale "home_max_columns_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-home-max-width">{{ T .Locale "home_max_width" }}</label>
+            <input type="number" min="0" max="2400" name="home-max-width" id="settings-home-max-width" class="option-input" value="{{.OptionHomeMaxWidth}}">
+            <p class="help-text">{{ T .Locale "home_max_width_help" }}</p>
+        </div>
+
+        <h2>{{ T .Locale "home_modules" }}</h2>
+
+        <div class="form-group">
+            <label for="settings-show-title">{{ T .Locale "show_title_component" }}</label>
+            {{ if .OptionShowTitle }}
+            <select name="show-title" id="settings-show-title">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="show-title" id="settings-show-title">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        {{ if .OptionShowTitle }}
+        <div class="form-group">
+            <label for="settings-custom-greetings">{{ T .Locale "custom_greetings" }}</label>
+            <input type="text" name="greetings" id="settings-custom-greetings" class="option-input" placeholder='{{ T .Locale "greetings_placeholder" }}' value="{{.OptionGreetings}}">
+            <p class="help-text">{{ T .Locale "greetings_help" }}</p>
+        </div>
+        {{ end }}
+
+        <div class="form-group">
+            <label for="settings-show-datetime">{{ T .Locale "show_datetime" }}</label>
+            {{ if .OptionShowDateTime }}
+            <select name="show-datetime" id="settings-show-datetime">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="show-datetime" id="settings-show-datetime">
+                <option value="1">{{ T .Locale "yes" }}</option>
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-show-apps">{{ T .Locale "show_apps" }}</label>
+            {{ if .OptionShowApps }}
+            <select name="show-apps" id="settings-show-apps">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="show-apps" id="settings-show-apps">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-apps-title">{{ T .Locale "custom_apps_title" }}</label>
+            <input type="text" name="apps-title" id="settings-apps-title" class="option-input" placeholder='{{ T .Locale "module_title_placeholder" }}' value="{{.OptionAppsTitle}}">
+            <p class="help-text">{{ T .Locale "module_title_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-show-bookmarks">{{ T .Locale "show_bookmarks" }}</label>
+            {{ if .OptionShowBookmarks }}
+            <select name="show-bookmarks" id="settings-show-bookmarks">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="show-bookmarks" id="settings-show-bookmarks">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-bookmarks-title">{{ T .Locale "custom_bookmarks_title" }}</label>
+            <input type="text" name="bookmarks-title" id="settings-bookmarks-title" class="option-input" placeholder='{{ T .Locale "module_title_placeholder" }}' value="{{.OptionBookmarksTitle}}">
+            <p class="help-text">{{ T .Locale "module_title_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-bookmark-category-color">{{ T .Locale "bookmark_category_color" }}</label>
+            <input type="text" name="bookmark-category-color" id="settings-bookmark-category-color" class="option-input" placeholder="rgba(255, 253, 234, 1)" value="{{.OptionBookmarkCategoryColor}}">
+            <p class="help-text">{{ T .Locale "use_theme_color_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-bookmark-item-color">{{ T .Locale "bookmark_item_color" }}</label>
+            <input type="text" name="bookmark-item-color" id="settings-bookmark-item-color" class="option-input" placeholder="rgba(255, 253, 234, 1)" value="{{.OptionBookmarkItemColor}}">
+            <p class="help-text">{{ T .Locale "use_theme_color_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="settings-hide-settings-button">{{ T .Locale "hide_settings_button" }}</label>
+            {{ if .OptionHideSettingsButton }}
+            <select name="hide-settings-button" id="settings-hide-settings-button">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="hide-settings-button" id="settings-hide-settings-button">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-hide-help-button">{{ T .Locale "hide_help_button" }}</label>
+            {{ if .OptionHideHelpButton }}
+            <select name="hide-help-button" id="settings-hide-help-button">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="hide-help-button" id="settings-hide-help-button">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <input class="btn-submit" type="submit" value='{{ T .Locale "save_changes" }}' />
+        </div>
+    </form>
+
+</div>
+{{ end }}

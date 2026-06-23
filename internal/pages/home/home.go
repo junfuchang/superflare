@@ -1,0 +1,593 @@
+package home
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"html/template"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/labstack/echo/v5"
+
+	"github.com/junfuchang/superflare/config/data"
+	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/auth"
+	"github.com/junfuchang/superflare/internal/background"
+	"github.com/junfuchang/superflare/internal/fn"
+	"github.com/junfuchang/superflare/internal/i18n"
+	"github.com/junfuchang/superflare/internal/pool"
+)
+
+const _cspValue = "object-src 'none'; base-uri 'none'; require-trusted-types-for 'script';"
+const _cspScriptNone = "script-src 'none'; "
+const _inlineClockScript = `(function(){var container=document.getElementById("live-datetime");if(!container){return;}var dateNode=container.querySelector('[data-role="date"]');var dayNode=container.querySelector('[data-role="day"]');var timeNode=container.querySelector('[data-role="time"]');var locale=container.getAttribute("data-locale")||"zh";var browserLocale=locale==="en"?"en-US":"zh-CN";function formatDate(now){if(locale==="en"){return new Intl.DateTimeFormat(browserLocale,{month:"short",day:"2-digit",year:"numeric"}).format(now);}return new Intl.DateTimeFormat(browserLocale,{year:"numeric",month:"long",day:"numeric"}).format(now);}function formatDay(now){return new Intl.DateTimeFormat(browserLocale,{weekday:"long"}).format(now);}function pad(num){return String(num).padStart(2,"0");}function tick(){var now=new Date();if(dateNode){dateNode.textContent=formatDate(now);}if(dayNode){dayNode.textContent=formatDay(now);}if(timeNode){timeNode.textContent=[pad(now.getHours()),pad(now.getMinutes()),pad(now.getSeconds())].join(":");}}tick();window.setInterval(tick,1000);}());`
+const _inlineBackgroundLoaderScript = background.InlineLoaderScript
+
+func setCSPHeader(c *echo.Context, scriptNonce string) {
+	if !define.AppFlags.DisableCSP {
+		c.Response().Header().Set("Content-Security-Policy", getCSPValue(scriptNonce))
+	}
+}
+
+func customHomeStyle(options model.Application, assets background.Assets) template.HTML {
+	var b strings.Builder
+	hasBackground := assets.Enabled
+	if assets.Enabled {
+		opacity := options.BackgroundOpacity
+		if opacity < 0 {
+			opacity = 0
+		}
+		if opacity > 100 {
+			opacity = 100
+		}
+		blur := options.BackgroundBlur
+		if blur < 0 {
+			blur = 0
+		}
+		b.WriteString(`<style>.page-background{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;}.page-background img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center center;transform:scale(1.08);filter:blur(`)
+		b.WriteString(strconv.Itoa(blur))
+		b.WriteString(`px);opacity:`)
+		b.WriteString(strconv.FormatFloat(float64(opacity)/100, 'f', 2, 64))
+		b.WriteString(`;}body.has-preview-background,body.has-loaded-background{background-image:none !important;}.page-background-preview{opacity:0;}.page-background.has-preview .page-background-preview{opacity:`)
+		b.WriteString(strconv.FormatFloat(float64(opacity)/100, 'f', 2, 64))
+		b.WriteString(`;}.page-background-full{opacity:0;}.page-background.is-loaded .page-background-preview{opacity:0;}.page-background.is-loaded .page-background-full{opacity:`)
+		b.WriteString(strconv.FormatFloat(float64(opacity)/100, 'f', 2, 64))
+		b.WriteString(`;}.page-background.is-failed .page-background-full{opacity:0;}</style>`)
+		if assets.AccentColor != "" {
+			b.WriteString(`<style>body{--scrollbar-accent:`)
+			b.WriteString(assets.AccentColor)
+			b.WriteString(`;}</style>`)
+		}
+	}
+	if options.HomeMaxWidth > 0 {
+		b.WriteString(`<style>#page-home.pageview .container{max-width:`)
+		b.WriteString(strconv.Itoa(options.HomeMaxWidth))
+		b.WriteString(`px;}</style>`)
+	}
+	if options.HomeMaxColumns > 0 {
+		appendAdaptiveColumnStyle(&b, options.HomeMaxColumns)
+	}
+	if options.GlassEffect != "" && options.GlassEffect != "none" && options.GlassIntensity > 0 {
+		intensity := options.GlassIntensity
+		if intensity > 100 {
+			intensity = 100
+		}
+		blur := 6 + intensity/4
+		tintAlpha := 0.06 + float64(intensity)/520
+		highlightAlpha := 0.12 + float64(intensity)/480
+		if !hasBackground {
+			b.WriteString(`<style>body.glass-frosted,body.glass-liquid{background-image:radial-gradient(circle at top,rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(tintAlpha, 'f', 3, 64))
+			b.WriteString(`),transparent 58%),linear-gradient(180deg,rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(tintAlpha/1.2, 'f', 3, 64))
+			b.WriteString(`),transparent 72%);}</style>`)
+		} else {
+			b.WriteString(`<style>.page-background::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(tintAlpha, 'f', 3, 64))
+			b.WriteString(`),rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(tintAlpha/1.6, 'f', 3, 64))
+			b.WriteString(`));backdrop-filter:blur(`)
+			b.WriteString(strconv.Itoa(blur))
+			b.WriteString(`px);-webkit-backdrop-filter:blur(`)
+			b.WriteString(strconv.Itoa(blur))
+			b.WriteString(`px);}body.glass-liquid .page-background::after{background:radial-gradient(circle at top left,rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(highlightAlpha, 'f', 3, 64))
+			b.WriteString(`),transparent 38%),linear-gradient(180deg,rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(tintAlpha, 'f', 3, 64))
+			b.WriteString(`),rgba(255,255,255,`)
+			b.WriteString(strconv.FormatFloat(tintAlpha/1.8, 'f', 3, 64))
+			b.WriteString(`));box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -40px 80px rgba(255,255,255,.04);}</style>`)
+		}
+	}
+	if options.BookmarkCategoryColor != "" || options.BookmarkItemColor != "" {
+		b.WriteString(`<style>`)
+		if options.BookmarkCategoryColor != "" {
+			b.WriteString(`#container-bookmakrs .bookmark-group-container h3.bookmark-group-title,#container-bookmakrs .bookmark-subdir summary,#container-bookmakrs .bookmark-subdir summary::before{color:`)
+			b.WriteString(options.BookmarkCategoryColor)
+			b.WriteString(`;}`)
+		}
+		if options.BookmarkItemColor != "" {
+			b.WriteString(`#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark,#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark span{color:`)
+			b.WriteString(options.BookmarkItemColor)
+			b.WriteString(`;}#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark img{color:`)
+			b.WriteString(options.BookmarkItemColor)
+			b.WriteString(`;}`)
+		}
+		b.WriteString(`</style>`)
+	}
+	return template.HTML(b.String())
+}
+
+func renderBackgroundHTML(assets background.Assets) template.HTML {
+	if !assets.Enabled {
+		return ""
+	}
+
+	previewSource := strings.TrimSpace(background.PreviewSource(assets))
+	fullSource := template.HTMLEscapeString(assets.FullURL)
+	var b strings.Builder
+	b.WriteString(`<div class="page-background" aria-hidden="true">`)
+	if previewSource != "" {
+		b.WriteString(`<img class="page-background-preview" src="`)
+		b.WriteString(template.HTMLEscapeString(previewSource))
+		b.WriteString(`" alt="" loading="eager" fetchpriority="high" decoding="async">`)
+	}
+	b.WriteString(`<img class="page-background-full" src="`)
+	b.WriteString(fullSource)
+	b.WriteString(`" alt="" loading="eager" fetchpriority="high" decoding="async"></div>`)
+	return template.HTML(b.String())
+}
+
+func cssURLValue(input string) string {
+	input = strings.ReplaceAll(input, `\`, `\\`)
+	input = strings.ReplaceAll(input, `'`, `\'`)
+	input = strings.ReplaceAll(input, "\n", "")
+	input = strings.ReplaceAll(input, "\r", "")
+	return input
+}
+
+func pageAppearance(options model.Application, assets background.Assets) template.CSS {
+	base := string(define.GetAppBodyStyle())
+	previewSource := strings.TrimSpace(background.PreviewSource(assets))
+	if previewSource == "" {
+		return template.CSS(base)
+	}
+	opacity := options.BackgroundOpacity
+	if opacity < 0 {
+		opacity = 0
+	}
+	if opacity > 100 {
+		opacity = 100
+	}
+	overlayAlpha := 1 - (float64(opacity) / 100)
+	backgroundColor := extractBodyBackgroundColor(base)
+
+	var b strings.Builder
+	b.WriteString(base)
+	if overlayAlpha > 0 {
+		if backgroundColor == "" {
+			backgroundColor = "rgba(26,26,26,1)"
+		}
+		b.WriteString(`background-image:linear-gradient(`)
+		b.WriteString(rgbaOverlay(backgroundColor, overlayAlpha))
+		b.WriteString(`,`)
+		b.WriteString(rgbaOverlay(backgroundColor, overlayAlpha))
+		b.WriteString(`),url('`)
+	} else {
+		b.WriteString(`background-image:url('`)
+	}
+	b.WriteString(cssURLValue(previewSource))
+	b.WriteString(`');background-position:center center;background-repeat:no-repeat;background-size:cover;`)
+	return template.CSS(b.String())
+}
+
+func extractBodyBackgroundColor(base string) string {
+	const prefix = "--color-background:"
+	idx := strings.Index(base, prefix)
+	if idx < 0 {
+		return ""
+	}
+	start := idx + len(prefix)
+	end := strings.Index(base[start:], ";")
+	if end < 0 {
+		return strings.TrimSpace(base[start:])
+	}
+	return strings.TrimSpace(base[start : start+end])
+}
+
+func rgbaOverlay(color string, alpha float64) string {
+	alpha = clampFloat(alpha, 0, 1)
+	color = strings.TrimSpace(color)
+	if strings.HasPrefix(color, "#") {
+		if r, g, b, ok := hexToRGB(color); ok {
+			return fmt.Sprintf("rgba(%d,%d,%d,%.3f)", r, g, b, alpha)
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(color), "rgb(") {
+		parts := strings.TrimSuffix(strings.TrimPrefix(color, "rgb("), ")")
+		return "rgba(" + parts + "," + strconv.FormatFloat(alpha, 'f', 3, 64) + ")"
+	}
+	if strings.HasPrefix(strings.ToLower(color), "rgba(") {
+		parts := strings.TrimSuffix(strings.TrimPrefix(color, "rgba("), ")")
+		items := strings.Split(parts, ",")
+		if len(items) >= 3 {
+			return "rgba(" + strings.TrimSpace(items[0]) + "," + strings.TrimSpace(items[1]) + "," + strings.TrimSpace(items[2]) + "," + strconv.FormatFloat(alpha, 'f', 3, 64) + ")"
+		}
+	}
+	return fmt.Sprintf("rgba(26,26,26,%.3f)", alpha)
+}
+
+func hexToRGB(color string) (int, int, int, bool) {
+	hex := strings.TrimPrefix(strings.TrimSpace(color), "#")
+	switch len(hex) {
+	case 3:
+		r, errR := strconv.ParseUint(strings.Repeat(string(hex[0]), 2), 16, 8)
+		g, errG := strconv.ParseUint(strings.Repeat(string(hex[1]), 2), 16, 8)
+		b, errB := strconv.ParseUint(strings.Repeat(string(hex[2]), 2), 16, 8)
+		return int(r), int(g), int(b), errR == nil && errG == nil && errB == nil
+	case 6, 8:
+		r, errR := strconv.ParseUint(hex[0:2], 16, 8)
+		g, errG := strconv.ParseUint(hex[2:4], 16, 8)
+		b, errB := strconv.ParseUint(hex[4:6], 16, 8)
+		return int(r), int(g), int(b), errR == nil && errG == nil && errB == nil
+	default:
+		return 0, 0, 0, false
+	}
+}
+
+func clampFloat(value float64, min float64, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func appendAdaptiveColumnStyle(b *strings.Builder, maxColumns int) {
+	if maxColumns < 1 {
+		return
+	}
+	if maxColumns > 8 {
+		maxColumns = 8
+	}
+	const (
+		minColumnWidth   = 180
+		appColumnGap     = 18
+		bookmarkColumnGap = 18
+	)
+	b.WriteString(`<style>`)
+	b.WriteString(fmt.Sprintf(`#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-gap:%dpx;row-gap:0;align-items:start;}#container-apps .apps-container .app-container{float:none;width:auto;min-width:0;}#container-bookmakrs .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-count:auto;column-gap:%dpx;gap:%dpx;align-items:start;}#container-bookmakrs .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;float:none;margin-bottom:0;vertical-align:top;align-self:start;}`,
+		minColumnWidth, maxColumns, appColumnGap, maxColumns, appColumnGap,
+		minColumnWidth, maxColumns, bookmarkColumnGap, maxColumns, bookmarkColumnGap, bookmarkColumnGap,
+	))
+	mobileColumns := 2
+	if maxColumns < mobileColumns {
+		mobileColumns = maxColumns
+	}
+	if mobileColumns < 1 {
+		mobileColumns = 1
+	}
+	b.WriteString(fmt.Sprintf(`@media (max-width:767px){#container-bookmakrs .bookmark-groups{display:block;column-count:%d;column-gap:%dpx;}#container-bookmakrs .bookmark-group-container{break-inside:avoid;display:inline-block;width:100%%;max-width:none;min-width:0;float:none;margin-bottom:%dpx;vertical-align:top;}}`, mobileColumns, bookmarkColumnGap, bookmarkColumnGap))
+	b.WriteString(`@media (max-width:340px){#container-bookmakrs .bookmark-groups{column-count:1;}}`)
+	b.WriteString(`</style>`)
+}
+
+func RegisterRouting(e *echo.Echo) {
+	e.GET(define.RegularPages.Home.Path, pageHome)
+	e.POST(define.RegularPages.Home.Path, pageSearch)
+	e.GET(define.RegularPages.Help.Path, renderHelp)
+	if define.AppFlags.Visibility != "PRIVATE" {
+		e.GET(define.RegularPages.Applications.Path, pageApplication)
+		e.GET(define.RegularPages.Bookmarks.Path, pageBookmark)
+	} else {
+		e.GET(define.RegularPages.Applications.Path, pageApplication, auth.AuthRequired)
+		e.GET(define.RegularPages.Bookmarks.Path, pageBookmark, auth.AuthRequired)
+	}
+}
+
+func pageHome(c *echo.Context) error {
+	return render(c, "")
+}
+
+func renderHelp(c *echo.Context) error {
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "config error")
+	}
+	now := time.Now()
+	locale := options.Locale
+	if locale == "" {
+		locale = "zh"
+	}
+	assets := background.ResolveAssets(options)
+	scriptNonce := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	setCSPHeader(c, scriptNonce)
+	bodyClassName := getBodyClassName(options)
+	m := pool.GetTemplateMap()
+	defer pool.PutTemplateMap(m)
+	m["Locale"] = locale
+	m["PageName"] = "Home"
+	m["PageAppearance"] = pageAppearance(options, assets)
+	m["SettingPages"] = define.SettingPages
+	m["DebugMode"] = define.AppFlags.DebugMode
+	m["PageInlineStyle"] = define.GetPageInlineStyle()
+	m["HeroDate"] = now.Format(i18n.DateFormat(locale))
+	m["HeroTime"] = now.Format("15:04:05")
+	m["HeroDay"] = i18n.Weekday(locale, now.Weekday())
+	m["Greetings"] = i18n.T(locale, "page_help")
+	m["BookmarksURI"] = define.RegularPages.Bookmarks.Path
+	m["ApplicationsURI"] = define.RegularPages.Applications.Path
+	m["SettingsURI"] = define.RegularPages.Settings.Path
+	m["AppsTitle"] = resolveAppsTitle(options, locale)
+	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
+	m["Applications"] = GenerateHelpTemplate()
+	m["SearchKeyword"] = template.HTML(i18n.T(locale, "search_placeholder"))
+	m["HasKeyword"] = false
+	m["ShowSearchComponent"] = options.ShowSearchComponent
+	m["DisabledSearchAutoFocus"] = true
+	m["OptionTitle"] = options.Title
+	m["OptionSiteIcon"] = options.SiteIcon
+	m["OptionFooter"] = template.HTML(options.Footer)
+	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
+	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab
+	m["OptionShowTitle"] = options.ShowTitle
+	m["OptionShowDateTime"] = options.ShowDateTime
+	m["OptionShowApps"] = true
+	m["OptionShowBookmarks"] = false
+	m["OptionHideSettingsButton"] = options.HideSettingsButton
+	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
+	m["BackgroundAssets"] = assets
+	m["HasBackgroundAssets"] = assets.Enabled
+	m["BackgroundHTML"] = renderBackgroundHTML(assets)
+	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["ScriptNonce"] = scriptNonce
+	m["InlineClockScript"] = template.JS(_inlineClockScript)
+	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	return c.Render(http.StatusOK, "home.html", m)
+}
+
+func pageSearch(c *echo.Context) error {
+	var body struct {
+		Search string `form:"search"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return render(c, "")
+	}
+	search := strings.TrimSpace(body.Search)
+	if len(search) > 50 {
+		return render(c, "")
+	}
+	return render(c, search)
+}
+
+func getGreeting(greeting, locale string) string {
+	words := strings.Split(greeting, ";")
+	count := len(words)
+	defaultWord := i18n.T(locale, "greetings_placeholder")
+	if count == 1 {
+		if len(words[0]) > 0 {
+			return words[0]
+		}
+		return defaultWord
+	}
+	hour, _, _ := time.Now().Clock()
+	if hour >= 5 && hour <= 10 && len(words[0]) > 0 {
+		return words[0]
+	}
+	if hour >= 11 && hour <= 13 && len(words[1]) > 0 {
+		return words[1]
+	}
+	if hour >= 14 && hour <= 18 && len(words[2]) > 0 {
+		return words[2]
+	}
+	if len(words) > 3 && len(words[3]) > 0 {
+		return words[3]
+	}
+	return defaultWord
+}
+
+func pageBookmark(c *echo.Context) error {
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "config error")
+	}
+	locale := options.Locale
+	if locale == "" {
+		locale = "zh"
+	}
+	fn.ParseRequestURL(c.Request())
+	assets := background.ResolveAssets(options)
+	scriptNonce := maybeMakeScriptNonce(assets.Enabled)
+	setCSPHeader(c, scriptNonce)
+	bodyClassName := getBodyClassName(options)
+	m := pool.GetTemplateMap()
+	defer pool.PutTemplateMap(m)
+	m["Locale"] = locale
+	m["DebugMode"] = define.AppFlags.DebugMode
+	m["PageInlineStyle"] = define.GetPageInlineStyle()
+	m["PageName"] = i18n.T(locale, "page_bookmarks")
+	m["SubPage"] = true
+	m["PageAppearance"] = pageAppearance(options, assets)
+	m["SettingPages"] = define.SettingPages
+	m["BookmarksURI"] = define.RegularPages.Bookmarks.Path
+	m["ApplicationsURI"] = define.RegularPages.Applications.Path
+	m["SettingsURI"] = define.RegularPages.Settings.Path
+	m["AppsTitle"] = resolveAppsTitle(options, locale)
+	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
+	m["Bookmarks"] = GenerateBookmarkTemplateWithLocal("", &options, fn.RequestLooksLocalNetwork(c.Request()))
+	m["OptionTitle"] = options.Title
+	m["OptionSiteIcon"] = options.SiteIcon
+	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab
+	m["OptionShowBookmarks"] = options.ShowBookmarks
+	m["OptionHideSettingsButton"] = options.HideSettingsButton
+	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
+	m["BackgroundAssets"] = assets
+	m["HasBackgroundAssets"] = assets.Enabled
+	m["BackgroundHTML"] = renderBackgroundHTML(assets)
+	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["ScriptNonce"] = scriptNonce
+	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	return c.Render(http.StatusOK, "home.html", m)
+}
+
+func pageApplication(c *echo.Context) error {
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "config error")
+	}
+	locale := options.Locale
+	if locale == "" {
+		locale = "zh"
+	}
+	fn.ParseRequestURL(c.Request())
+	assets := background.ResolveAssets(options)
+	scriptNonce := maybeMakeScriptNonce(assets.Enabled)
+	setCSPHeader(c, scriptNonce)
+	bodyClassName := getBodyClassName(options)
+	m := pool.GetTemplateMap()
+	defer pool.PutTemplateMap(m)
+	m["Locale"] = locale
+	m["DebugMode"] = define.AppFlags.DebugMode
+	m["PageInlineStyle"] = define.GetPageInlineStyle()
+	m["BookmarksURI"] = define.RegularPages.Bookmarks.Path
+	m["ApplicationsURI"] = define.RegularPages.Applications.Path
+	m["SettingsURI"] = define.RegularPages.Settings.Path
+	m["AppsTitle"] = resolveAppsTitle(options, locale)
+	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
+	m["Applications"] = GenerateApplicationsTemplateWithLocal("", &options, fn.RequestLooksLocalNetwork(c.Request()))
+	m["PageName"] = i18n.T(locale, "page_apps")
+	m["SubPage"] = true
+	m["PageAppearance"] = pageAppearance(options, assets)
+	m["OptionTitle"] = options.Title
+	m["OptionSiteIcon"] = options.SiteIcon
+	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
+	m["OptionShowApps"] = options.ShowApps
+	m["OptionHideSettingsButton"] = options.HideSettingsButton
+	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
+	m["BackgroundAssets"] = assets
+	m["HasBackgroundAssets"] = assets.Enabled
+	m["BackgroundHTML"] = renderBackgroundHTML(assets)
+	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["ScriptNonce"] = scriptNonce
+	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	return c.Render(http.StatusOK, "home.html", m)
+}
+
+func render(c *echo.Context, filter string) error {
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "config error")
+	}
+	fn.ParseRequestURL(c.Request())
+	locale := options.Locale
+	if locale == "" {
+		locale = "zh"
+	}
+	hasKeyword := false
+	searchKeyword := i18n.T(locale, "search_placeholder")
+	if filter != "" {
+		searchKeyword = i18n.Tf(locale, "search_result", filter)
+		hasKeyword = true
+	}
+	now := time.Now()
+	assets := background.ResolveAssets(options)
+	scriptNonce := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	setCSPHeader(c, scriptNonce)
+	bodyClassName := getBodyClassName(options)
+	m := pool.GetTemplateMap()
+	defer pool.PutTemplateMap(m)
+	m["Locale"] = locale
+	m["PageName"] = "Home"
+	m["PageAppearance"] = pageAppearance(options, assets)
+	m["SettingPages"] = define.SettingPages
+	m["DebugMode"] = define.AppFlags.DebugMode
+	m["PageInlineStyle"] = define.GetPageInlineStyle()
+	m["HeroDate"] = now.Format(i18n.DateFormat(locale))
+	m["HeroTime"] = now.Format("15:04:05")
+	m["HeroDay"] = i18n.Weekday(locale, now.Weekday())
+	m["Greetings"] = getGreeting(options.Greetings, locale)
+	m["BookmarksURI"] = define.RegularPages.Bookmarks.Path
+	m["ApplicationsURI"] = define.RegularPages.Applications.Path
+	m["SettingsURI"] = define.RegularPages.Settings.Path
+	m["AppsTitle"] = resolveAppsTitle(options, locale)
+	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
+	preferLocal := fn.RequestLooksLocalNetwork(c.Request())
+	m["Applications"] = GenerateApplicationsTemplateWithLocal(filter, &options, preferLocal)
+	m["Bookmarks"] = GenerateBookmarkTemplateWithLocal(filter, &options, preferLocal)
+	m["SearchKeyword"] = template.HTML(searchKeyword)
+	m["HasKeyword"] = hasKeyword
+	m["ShowSearchComponent"] = options.ShowSearchComponent
+	m["DisabledSearchAutoFocus"] = options.DisabledSearchAutoFocus
+	m["OptionTitle"] = options.Title
+	m["OptionSiteIcon"] = options.SiteIcon
+	m["OptionFooter"] = template.HTML(options.Footer)
+	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
+	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab
+	m["OptionShowTitle"] = options.ShowTitle
+	m["OptionShowDateTime"] = options.ShowDateTime
+	m["OptionShowApps"] = options.ShowApps
+	m["OptionShowBookmarks"] = options.ShowBookmarks
+	m["OptionHideSettingsButton"] = options.HideSettingsButton
+	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
+	m["BackgroundAssets"] = assets
+	m["HasBackgroundAssets"] = assets.Enabled
+	m["BackgroundHTML"] = renderBackgroundHTML(assets)
+	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["ScriptNonce"] = scriptNonce
+	m["InlineClockScript"] = template.JS(_inlineClockScript)
+	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	return c.Render(http.StatusOK, "home.html", m)
+}
+
+func getBodyClassName(options model.Application) string {
+	bodyClassName := ""
+	if !options.KeepLetterCase {
+		bodyClassName += "app-content-uppercase "
+	}
+	if options.GlassEffect == "frosted" || options.GlassEffect == "liquid" {
+		bodyClassName += "glass-" + options.GlassEffect + " "
+	}
+	return bodyClassName
+}
+
+func resolveAppsTitle(options model.Application, locale string) string {
+	if strings.TrimSpace(options.AppsTitle) != "" {
+		return options.AppsTitle
+	}
+	return i18n.T(locale, "apps")
+}
+
+func resolveBookmarksTitle(options model.Application, locale string) string {
+	if strings.TrimSpace(options.BookmarksTitle) != "" {
+		return options.BookmarksTitle
+	}
+	return i18n.T(locale, "bookmarks")
+}
+
+func getCSPValue(scriptNonce string) string {
+	if scriptNonce == "" {
+		return _cspScriptNone + _cspValue
+	}
+	return "script-src 'nonce-" + scriptNonce + "'; " + _cspValue
+}
+
+func maybeMakeScriptNonce(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err == nil {
+		return base64.RawStdEncoding.EncodeToString(buf)
+	}
+	return base64.RawStdEncoding.EncodeToString([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
+}
