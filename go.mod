@@ -6,7 +6,7 @@ require gopkg.in/yaml.v2 v2.4.0
 
 require (
 	github.com/caarlos0/env/v6 v6.10.1
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/gorilla/sessions v1.4.0
 	github.com/jszwec/csvutil v1.10.0
 	github.com/labstack/echo-contrib/v5 v5.0.0
@@ -17,6 +17,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/tdewolff/minify/v2 v2.24.8
+	golang.org/x/image v0.43.0
 	gopkg.in/ini.v1 v1.67.1
 )
 
@@ -38,11 +39,7 @@ require (
 	github.com/tdewolff/parse/v2 v2.8.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.69.0 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/image v0.43.0 // indirect
-	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
