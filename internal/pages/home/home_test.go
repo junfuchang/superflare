@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v5"
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/background"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -60,11 +60,11 @@ func TestCustomHomeStyleWithBackgroundAssets(t *testing.T) {
 		BackgroundBlur:    12,
 	}
 	assets := background.Assets{
-		Enabled:    true,
-		PreviewURL: background.UploadedPreviewPath,
+		Enabled:        true,
+		PreviewURL:     background.UploadedPreviewPath,
 		PreviewDataURL: "data:image/jpeg;base64,abc",
-		FullURL:    background.UploadedFullPath,
-		AccentColor: "#3478c0",
+		FullURL:        background.UploadedFullPath,
+		AccentColor:    "#3478c0",
 	}
 
 	html := string(customHomeStyle(options, assets))
@@ -106,6 +106,7 @@ func TestAppendAdaptiveColumnStyleUsesDesktopWrapAndMobileWaterfall(t *testing.T
 	appendAdaptiveColumnStyle(&b, 4)
 	style := b.String()
 
+	assert.Contains(t, style, "@media (min-width:1201px){#page-home.pageview .container{padding-left:clamp(40px,4vw,250px);padding-right:clamp(40px,4vw,250px);}}")
 	assert.Contains(t, style, "#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-gap:18px;row-gap:0;align-items:start;}")
 	assert.Contains(t, style, "#container-bookmakrs .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-count:auto;column-gap:18px;gap:18px;align-items:start;}")
 	assert.Contains(t, style, "#container-bookmakrs .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;")

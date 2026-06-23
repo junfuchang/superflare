@@ -24,9 +24,6 @@ const (
 	_KEY_VISIBILITY       = "visibility"
 	_KEY_VISIBILITY_SHORT = "s"
 
-	_KEY_ENABLE_DEPRECATED_NOTICE       = "enable_notice"
-	_KEY_ENABLE_DEPRECATED_NOTICE_SHORT = "n"
-
 	_KEY_ENABLE_EDITOR       = "enable_editor"
 	_KEY_ENABLE_EDITOR_SHORT = "e"
 

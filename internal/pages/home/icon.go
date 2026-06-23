@@ -14,13 +14,17 @@ func renderBookmarkIcon(icon string, link string, iconMode string) string {
 		return `<img src="` + template.HTMLEscapeString(icon) + `" alt="">`
 	}
 	if icon != "" {
-		return mdi.GetIconByName(icon)
+		if builtInIcon := mdi.GetIconByName(icon); builtInIcon != "" {
+			return builtInIcon
+		}
 	}
 	if favicon := fn.GetSiteFavicon(link, ""); favicon != "" {
 		return favicon
 	}
 	if iconMode == "FILLING" {
-		return fn.GetYandexFavicon(link, "")
+		if fillingIcon := fn.GetYandexFavicon(link, ""); fillingIcon != "" {
+			return fillingIcon
+		}
 	}
-	return ""
+	return mdi.GetIconByName("bookmark")
 }

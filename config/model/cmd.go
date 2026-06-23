@@ -6,13 +6,12 @@ type Flags struct {
 	ShowVersion bool
 	ShowHelp    bool
 
-	Port                   int
-	EnableGuide            bool
-	EnableEditor           bool
-	EnableOfflineMode      bool
-	EnableMinimumRequest   bool
-	EnableDeprecatedNotice bool
-	DisableCSP             bool
+	Port                 int
+	EnableGuide          bool
+	EnableEditor         bool
+	EnableOfflineMode    bool
+	EnableMinimumRequest bool
+	DisableCSP           bool
 
 	Visibility       string
 	DisableLoginMode bool
@@ -27,13 +26,12 @@ type Flags struct {
 
 // Application Envs Data Model
 type Envs struct {
-	Port                   int  `env:"FLARE_PORT"`
-	EnableGuide            bool `env:"FLARE_GUIDE"`
-	EnableEditor           bool `env:"FLARE_EDITOR"`
-	EnableOfflineMode      bool `env:"FLARE_OFFLINE"`
-	EnableMinimumRequest   bool `env:"FLARE_MINI_REQUEST"`
-	EnableDeprecatedNotice bool `env:"FLARE_DEPRECATED_NOTICE"`
-	DisableCSP             bool `env:"FLARE_DISABLE_CSP,unset"`
+	Port                 int  `env:"FLARE_PORT"`
+	EnableGuide          bool `env:"FLARE_GUIDE"`
+	EnableEditor         bool `env:"FLARE_EDITOR"`
+	EnableOfflineMode    bool `env:"FLARE_OFFLINE"`
+	EnableMinimumRequest bool `env:"FLARE_MINI_REQUEST"`
+	DisableCSP           bool `env:"FLARE_DISABLE_CSP,unset"`
 
 	Visibility       string `env:"FLARE_VISIBILITY"`
 	DisableLoginMode bool   `env:"FLARE_DISABLE_LOGIN"`
@@ -46,13 +44,12 @@ type Envs struct {
 
 // Application Envfile Data Model
 type EnvFile struct {
-	Port                   int  `ini:"FLARE_PORT,omitempty"`
-	EnableGuide            bool `ini:"FLARE_GUIDE,omitempty"`
-	EnableEditor           bool `ini:"FLARE_EDITOR,omitempty"`
-	EnableOfflineMode      bool `ini:"FLARE_OFFLINE,omitempty"`
-	EnableMinimumRequest   bool `ini:"FLARE_MINI_REQUEST,omitempty"`
-	EnableDeprecatedNotice bool `ini:"FLARE_DEPRECATED_NOTICE,omitempty"`
-	DisableCSP             bool `env:"FLARE_DISABLE_CSP,unset"`
+	Port                 int  `ini:"FLARE_PORT,omitempty"`
+	EnableGuide          bool `ini:"FLARE_GUIDE,omitempty"`
+	EnableEditor         bool `ini:"FLARE_EDITOR,omitempty"`
+	EnableOfflineMode    bool `ini:"FLARE_OFFLINE,omitempty"`
+	EnableMinimumRequest bool `ini:"FLARE_MINI_REQUEST,omitempty"`
+	DisableCSP           bool `env:"FLARE_DISABLE_CSP,unset"`
 
 	Visibility       string `ini:"FLARE_VISIBILITY,omitempty"`
 	DisableLoginMode bool   `ini:"FLARE_DISABLE_LOGIN,omitempty"`

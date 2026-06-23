@@ -12,7 +12,6 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/logger"
-	"github.com/junfuchang/superflare/internal/misc/deprecated"
 	"github.com/junfuchang/superflare/internal/misc/health"
 	"github.com/junfuchang/superflare/internal/misc/redir"
 	"github.com/junfuchang/superflare/internal/pages/editor"
@@ -80,6 +79,5 @@ func NewRouter(appFlags *model.Flags) (http.Handler, error) {
 		}
 		editor.RegisterRouting(e)
 	}
-	deprecated.RegisterRouting(e)
 	return e, nil
 }

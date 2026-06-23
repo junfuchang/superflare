@@ -57,7 +57,6 @@ func TestParse(t *testing.T) {
 	expectedFlags.EnableGuide = defaults.EnableGuide
 	expectedFlags.EnableEditor = defaults.EnableEditor
 	expectedFlags.Visibility = defaults.Visibility
-	expectedFlags.EnableDeprecatedNotice = defaults.EnableDeprecatedNotice
 	expectedFlags.EnableMinimumRequest = defaults.EnableMinimumRequest
 	expectedFlags.DisableLoginMode = defaults.DisableLoginMode
 	expectedFlags.CookieName = defaults.CookieName

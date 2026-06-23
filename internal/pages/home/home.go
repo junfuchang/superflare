@@ -257,11 +257,12 @@ func appendAdaptiveColumnStyle(b *strings.Builder, maxColumns int) {
 		maxColumns = 8
 	}
 	const (
-		minColumnWidth   = 180
-		appColumnGap     = 18
+		minColumnWidth    = 180
+		appColumnGap      = 18
 		bookmarkColumnGap = 18
 	)
 	b.WriteString(`<style>`)
+	b.WriteString(`@media (min-width:1201px){#page-home.pageview .container{padding-left:clamp(40px,4vw,250px);padding-right:clamp(40px,4vw,250px);}}`)
 	b.WriteString(fmt.Sprintf(`#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-gap:%dpx;row-gap:0;align-items:start;}#container-apps .apps-container .app-container{float:none;width:auto;min-width:0;}#container-bookmakrs .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-count:auto;column-gap:%dpx;gap:%dpx;align-items:start;}#container-bookmakrs .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;float:none;margin-bottom:0;vertical-align:top;align-self:start;}`,
 		minColumnWidth, maxColumns, appColumnGap, maxColumns, appColumnGap,
 		minColumnWidth, maxColumns, bookmarkColumnGap, maxColumns, bookmarkColumnGap, bookmarkColumnGap,

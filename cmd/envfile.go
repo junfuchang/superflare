@@ -96,7 +96,6 @@ func ParseEnvFile(baseFlags model.Flags) model.Flags {
 
 	baseFlags.DisableLoginMode = GetDotEnvFileBoolOrDefault(envs, "FLARE_DISABLE_LOGIN", baseFlags.DisableLoginMode)
 	baseFlags.DisableCSP = GetDotEnvFileBoolOrDefault(envs, "FLARE_DISABLE_CSP", baseFlags.DisableCSP)
-	baseFlags.EnableDeprecatedNotice = GetDotEnvFileBoolOrDefault(envs, "FLARE_DEPRECATED_NOTICE", baseFlags.EnableDeprecatedNotice)
 	baseFlags.EnableMinimumRequest = GetDotEnvFileBoolOrDefault(envs, "FLARE_MINI_REQUEST", baseFlags.EnableMinimumRequest)
 	baseFlags.EnableOfflineMode = GetDotEnvFileBoolOrDefault(envs, "FLARE_OFFLINE", baseFlags.EnableOfflineMode)
 	baseFlags.EnableEditor = GetDotEnvFileBoolOrDefault(envs, "FLARE_EDITOR", baseFlags.EnableEditor)
