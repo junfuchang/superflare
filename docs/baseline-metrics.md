@@ -72,3 +72,8 @@ go tool pprof -top .benchmark/baseline-<timestamp>/home.cpu.pprof
 ```bash
 go tool pprof -top .benchmark/baseline-<timestamp>/home.mem.pprof
 ```
+
+## 已提交的基线报告
+
+- [`../metrics-reports/baseline-report-echo-v5.md`](../metrics-reports/baseline-report-echo-v5.md)：当前 Echo v5 基线
+- [`../metrics-reports/baseline-report-gin.md`](../metrics-reports/baseline-report-gin.md)：迁移前 Gin 基线，仅用于横向比较

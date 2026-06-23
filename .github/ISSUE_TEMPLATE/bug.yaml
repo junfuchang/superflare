@@ -1,13 +1,11 @@
 name: 错误反馈
-description: 反馈一个八阿哥
-labels: [八阿哥 🐛, 悬而未决 🥷]
-assignees:
-  - soulteary
+description: 反馈一个缺陷或回归问题
+labels: [bug, triage]
 body:
   - type: markdown
     attributes:
       value: |
-        感谢你对于 SuperFlare 感兴趣，请根据你的想法填写下面的表格。
+        请根据实际情况填写下面的信息，尽量包含可复现步骤、配置和截图。
   - type: textarea
     id: what-happened
     attributes:
@@ -26,7 +24,7 @@ body:
     id: app-version
     attributes:
       label: 应用版本
-      description: 你使用的程序或镜像版本是？
+      description: 你使用的程序版本、提交号或构建方式是？
     validations:
       required: true
   - type: checkboxes

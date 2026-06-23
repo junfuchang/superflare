@@ -1,50 +1,45 @@
 # Contributing to SuperFlare
 
-This Page is being perfected. The current content refers to the documentation in the docker project.
+本文档只描述当前 `superflare` 仓库的协作约定。
 
-## Coding Style
+## 基本原则
 
-Unless explicitly stated, we follow all coding guidelines from the Go
-community. While some of these standards may seem arbitrary, they somehow seem
-to result in a solid, consistent codebase.
+- 以当前代码行为为准，不引用已删除的旧截图、旧示例或旧部署文档作为判断依据
+- 默认围绕原生运行方式开发和验证
+- Docker 相关内容只保留兼容性说明，不作为主线能力设计前提
+- 变更应尽量保持小而清晰，避免顺手重构无关模块
 
-It is possible that the code base does not currently comply with these
-guidelines. We are not looking for a massive PR that fixes this, since that
-goes against the spirit of the guidelines. All new contributions should make a
-best effort to clean up and make the code base better than they left it.
-Obviously, apply your best judgement. Remember, the goal here is to make the
-code base easier for humans to navigate and understand. Always keep that in
-mind when nudging others to comply.
+## 提交前检查
 
-The rules:
+在仓库根目录执行：
 
-1. All code should be formatted with `gofmt -s`.
-2. All code should pass the default levels of
-   [`golint`](https://github.com/golang/lint).
-3. All code should follow the guidelines covered in [Effective
-   Go](http://golang.org/doc/effective_go.html) and [Go Code Review
-   Comments](https://github.com/golang/go/wiki/CodeReviewComments).
-4. Comment the code. Tell us the why, the history and the context.
-5. Document _all_ declarations and methods, even private ones. Declare
-   expectations, caveats and anything else that may be important. If a type
-   gets exported, having the comments already there will ensure it's ready.
-6. Variable name length should be proportional to its context and no longer.
-   `noCommaALongVariableNameLikeThisIsNotMoreClearWhenASimpleCommentWouldDo`.
-   In practice, short methods will have short variable names and globals will
-   have longer names.
-7. No underscores in package names. If you need a compound name, step back,
-   and re-examine why you need a compound name. If you still think you need a
-   compound name, lose the underscore.
-8. No utils or helpers packages. If a function is not general enough to
-   warrant its own package, it has not been written generally enough to be a
-   part of a util package. Just leave it unexported and well-documented.
-9. All tests should run with `go test` and outside tooling should not be
-   required. No, we don't need another unit testing framework. Assertion
-   packages are acceptable if they provide _real_ incremental value.
-10. Even though we call these "rules" above, they are actually just
-    guidelines. Since you've read all the rules, you now know that.
+```bash
+go run build/build.go
+go test ./... -count=1
+go build ./...
+```
 
-If you are having trouble getting into the mood of idiomatic Go, we recommend
-reading through [Effective Go](https://golang.org/doc/effective_go.html). The
-[Go Blog](https://blog.golang.org) is also a great resource. Drinking the
-kool-aid is a lot easier than going thirsty.
+## 代码风格
+
+1. 所有 Go 代码使用 `gofmt -s`。
+2. 遵循 [Effective Go](https://go.dev/doc/effective_go) 与 [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)。
+3. 注释只写必要信息，重点说明意图、边界和兼容性约束。
+4. 新增能力优先复用现有结构，不额外引入“万能 helper”包。
+5. 测试应能直接通过 `go test` 运行，不依赖额外测试框架。
+
+## 运行时文件
+
+下列文件或目录属于本地运行数据，不应提交到仓库：
+
+- `config.yml`
+- `apps.yml`
+- `bookmarks.yml`
+- `ports.yaml`
+- `var/`
+
+如果页面、配置模型或编辑器行为发生变化，应同步更新：
+
+- `README.md`
+- `docs/overview.md`
+- `docs/config-reference.md`
+- 相关截图或基线报告

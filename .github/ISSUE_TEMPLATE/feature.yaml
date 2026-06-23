@@ -1,13 +1,11 @@
 name: 功能建议
 description: 请求添加一个功能，或者建议对现有功能进行完善
-labels: [申请功能 🎁, 悬而未决 🥷]
-assignees:
-  - soulteary
+labels: [enhancement, triage]
 body:
   - type: markdown
     attributes:
       value: |
-        感谢你对于 SuperFlare 感兴趣，请根据你的想法填写下面的表格。
+        请围绕当前 SuperFlare 的真实使用场景描述你的建议，避免仅引用历史 docker-flare 行为。
   - type: textarea
     id: is-it-a-problem
     attributes:

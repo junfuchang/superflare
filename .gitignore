@@ -34,5 +34,7 @@ apps.yml
 bookmarks.yml
 config.yml
 ports.yaml
+var/
+tmp-superflare.*
 
 RELEASE_*
