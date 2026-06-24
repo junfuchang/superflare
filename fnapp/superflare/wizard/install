@@ -1,0 +1,57 @@
+[
+  {
+    "stepTitle": "安装前登录设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "建议在安装前先设置 SuperFlare 的初始登录用户名和密码。留空时默认使用 admin / admin，后续也可在应用内或系统设置中修改。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_install_login_user",
+        "label": "初始登录用户名",
+        "initValue": "admin",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入初始登录用户名"
+          },
+          {
+            "min": 1,
+            "max": 64,
+            "message": "用户名长度需在 1-64 个字符之间"
+          }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_install_login_pass",
+        "label": "初始登录密码",
+        "initValue": "admin",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入初始登录密码"
+          },
+          {
+            "min": 1,
+            "max": 128,
+            "message": "密码长度需在 1-128 个字符之间"
+          }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_install_login_pass_confirm",
+        "label": "确认初始登录密码",
+        "initValue": "admin",
+        "rules": [
+          {
+            "required": true,
+            "message": "请再次输入初始登录密码"
+          }
+        ]
+      }
+    ]
+  }
+]

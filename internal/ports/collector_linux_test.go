@@ -38,3 +38,52 @@ func TestGetProcRootCanUseHostProcOverride(t *testing.T) {
 		t.Fatalf("unexpected proc root: %q", got)
 	}
 }
+
+func TestParseSSOutputExtractsPIDAndName(t *testing.T) {
+	raw := `tcp LISTEN 0 4096 0.0.0.0:5668 0.0.0.0:* users:(("superflare",pid=321,fd=9))
+udp UNCONN 0 0 0.0.0.0:5353 0.0.0.0:* users:(("avahi-daemon",pid=112,fd=12))`
+	got := parseSSOutput(raw)
+	if len(got) != 2 {
+		t.Fatalf("unexpected ss items: %#v", got)
+	}
+	if got[0].Port != 5668 || got[0].Protocol != "tcp" || got[0].PID != 321 || got[0].ServiceName != "superflare" {
+		t.Fatalf("unexpected tcp item: %#v", got[0])
+	}
+	if got[1].Port != 5353 || got[1].Protocol != "udp" || got[1].PID != 112 || got[1].ServiceName != "avahi-daemon" {
+		t.Fatalf("unexpected udp item: %#v", got[1])
+	}
+}
+
+func TestParseNetstatOutputExtractsPIDAndName(t *testing.T) {
+	raw := `Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:5668            0.0.0.0:*               LISTEN      321/superflare
+udp        0      0 0.0.0.0:5353            0.0.0.0:*                           112/avahi-daemon`
+	got := parseNetstatOutput(raw)
+	if len(got) != 2 {
+		t.Fatalf("unexpected netstat items: %#v", got)
+	}
+	if got[0].Port != 5668 || got[0].Protocol != "tcp" || got[0].PID != 321 || got[0].ServiceName != "superflare" {
+		t.Fatalf("unexpected tcp item: %#v", got[0])
+	}
+	if got[1].Port != 5353 || got[1].Protocol != "udp" || got[1].PID != 112 || got[1].ServiceName != "avahi-daemon" {
+		t.Fatalf("unexpected udp item: %#v", got[1])
+	}
+}
+
+func TestFillMissingRuntimePortOwnersUsesFallbackNames(t *testing.T) {
+	items := []runtimePort{
+		{Port: 5668, Protocol: "tcp"},
+		{Port: 5353, Protocol: "udp", PID: 112},
+	}
+	fillMissingRuntimePortOwners(items, []runtimePort{
+		{Port: 5668, Protocol: "tcp", PID: 321, ServiceName: "superflare"},
+		{Port: 5353, Protocol: "udp", PID: 112, ServiceName: "avahi-daemon"},
+	})
+	if items[0].PID != 321 || items[0].ServiceName != "superflare" {
+		t.Fatalf("missing fallback owner fill: %#v", items[0])
+	}
+	if items[1].PID != 112 || items[1].ServiceName != "avahi-daemon" {
+		t.Fatalf("missing fallback service name fill: %#v", items[1])
+	}
+}

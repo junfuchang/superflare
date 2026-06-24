@@ -50,11 +50,11 @@ func TestParseRequestURL_NoPort(t *testing.T) {
 }
 
 func TestParseDynamicUrl(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodGet, "http://localhost:5005/", nil)
-	r.Host = "localhost:5005"
+	r, _ := http.NewRequest(http.MethodGet, "http://localhost:3636/", nil)
+	r.Host = "localhost:3636"
 	ParseRequestURL(r)
 	out := ParseDynamicUrl("origin={origin} host={host} path={pathname}")
-	if out != "origin=http://localhost:5005 host=localhost:5005 path=/" {
+	if out != "origin=http://localhost:3636 host=localhost:3636 path=/" {
 		t.Errorf("ParseDynamicUrl: got %q", out)
 	}
 	out2 := ParseDynamicUrl("no placeholders")
@@ -65,11 +65,11 @@ func TestParseDynamicUrl(t *testing.T) {
 
 func TestHostLooksLocalNetwork(t *testing.T) {
 	tests := map[string]bool{
-		"localhost:5005":    true,
-		"127.0.0.1:5005":    true,
-		"192.168.1.20:5005": true,
+		"localhost:3636":    true,
+		"127.0.0.1:3636":    true,
+		"192.168.1.20:3636": true,
 		"10.0.0.3":          true,
-		"[fd00::1]:5005":    true,
+		"[fd00::1]:3636":    true,
 		"fnos.local":        true,
 		"nas":               true,
 		"example.com":       false,

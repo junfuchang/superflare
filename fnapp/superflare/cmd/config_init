@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set +u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+
+if [ -n "${TRIM_PKGETC:-}" ]; then
+    ETC_DIR="${TRIM_PKGETC}"
+else
+    ETC_DIR="$(CDPATH= cd -- "${SCRIPT_DIR}/../etc" 2>/dev/null && pwd)"
+fi
+
+emit_wizard_value() {
+    local key="$1"
+    local value="$2"
+
+    printf '%s=%s\n' "${key}" "${value}"
+}
+
+# App settings should never reveal the current credentials. Leave all fields
+# blank so this screen only acts as a reset form.
+emit_wizard_value "wizard_login_user" ""
+emit_wizard_value "wizard_login_pass" ""
+emit_wizard_value "wizard_login_pass_confirm" ""
+
+exit 0

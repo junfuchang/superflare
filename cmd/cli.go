@@ -28,8 +28,6 @@ func GetCliFlags() (*model.Flags, *flags.FlagSet) {
 	options.BoolVar(&cliFlags.EnableMinimumRequest, _KEY_MINI_REQUEST_OLD, define.DEFAULT_ENABLE_MINI_REQUEST, "minimize asset requests")
 	_ = options.MarkDeprecated(_KEY_MINI_REQUEST_OLD, "please use --"+_KEY_MINI_REQUEST+" instead")
 
-	options.BoolVarP(&cliFlags.EnableOfflineMode, _KEY_ENABLE_OFFLINE, _KEY_ENABLE_OFFLINE_SHORT, define.DEFAULT_ENABLE_OFFLINE, "enable offline mode")
-
 	options.BoolVarP(&cliFlags.DisableLoginMode, _KEY_DISABLE_LOGIN, _KEY_DISABLE_LOGIN_SHORT, define.DEFAULT_DISABLE_LOGIN, "disable login")
 	options.BoolVar(&cliFlags.DisableLoginMode, _KEY_DISABLE_LOGIN_OLD, define.DEFAULT_DISABLE_LOGIN, "disable login")
 	_ = options.MarkDeprecated(_KEY_DISABLE_LOGIN_OLD, "please use --"+_KEY_DISABLE_LOGIN+" instead")
@@ -104,7 +102,6 @@ func parseCLI(baseFlags model.Flags) model.Flags {
 	}
 	baseFlags.Visibility = strings.ToUpper(visibility)
 
-	baseFlags.EnableOfflineMode = configutil.ResolveBoolPflag(fs, _KEY_ENABLE_OFFLINE, "", baseFlags.EnableOfflineMode)
 	baseFlags.EnableGuide = configutil.ResolveBoolPflag(fs, _KEY_ENABLE_GUIDE, "", baseFlags.EnableGuide)
 	baseFlags.EnableEditor = configutil.ResolveBoolPflag(fs, _KEY_ENABLE_EDITOR, "", baseFlags.EnableEditor)
 

@@ -5,25 +5,27 @@ import (
 
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/i18n"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
-func GenerateHelpTemplate() template.HTML {
+func GenerateHelpTemplate(locale string) template.HTML {
+	locale = i18n.NormalizeLocale(locale)
 	apps := []model.Bookmark{
 		{
-			Name: "Home",
+			Name: i18n.T(locale, "page_home"),
 			URL:  define.RegularPages.Home.Path,
 			Icon: "homeCircle",
 			Desc: "",
 		},
 		{
-			Name: "Help",
+			Name: i18n.T(locale, "page_help"),
 			URL:  define.RegularPages.Help.Path,
 			Icon: "helpCircle",
 			Desc: "",
 		},
 		{
-			Name: "Settings",
+			Name: i18n.T(locale, "app_settings"),
 			URL:  define.RegularPages.Settings.Path,
 			Icon: "fireCircle",
 			Desc: "",
@@ -32,7 +34,7 @@ func GenerateHelpTemplate() template.HTML {
 
 	if define.AppFlags.EnableGuide {
 		apps = append(apps, model.Bookmark{
-			Name: "Guide",
+			Name: localeLabel(locale, "使用向导", "Guide"),
 			URL:  define.RegularPages.Guide.Path,
 			Icon: "radioactiveCircleOutline",
 			Desc: "",
@@ -41,21 +43,19 @@ func GenerateHelpTemplate() template.HTML {
 
 	if define.AppFlags.EnableEditor {
 		apps = append(apps, model.Bookmark{
-			Name: "Editor",
+			Name: localeLabel(locale, "在线编辑", "Editor"),
 			URL:  define.RegularPages.Editor.Path,
 			Icon: "pencilCircle",
 			Desc: "",
 		})
 	}
 
-	apps = append(apps, []model.Bookmark{
-		{
-			Name: "Icons",
-			URL:  define.RegularPages.Icons.Path,
-			Icon: "heartCircle",
-			Desc: "",
-		},
-	}...)
+	apps = append(apps, model.Bookmark{
+		Name: localeLabel(locale, "图标库", "Icons"),
+		URL:  define.RegularPages.Icons.Path,
+		Icon: "heartCircle",
+		Desc: "",
+	})
 
 	tpl := ""
 	for _, app := range apps {
@@ -76,4 +76,11 @@ func GenerateHelpTemplate() template.HTML {
 			`
 	}
 	return template.HTML(tpl)
+}
+
+func localeLabel(locale string, zh string, en string) string {
+	if i18n.NormalizeLocale(locale) == "en" {
+		return en
+	}
+	return zh
 }

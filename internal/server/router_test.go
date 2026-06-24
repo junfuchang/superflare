@@ -38,15 +38,14 @@ func withRouterTestWorkingDir(t *testing.T) {
 func newTestFlags(disableLogin bool, visibility string, enableEditor bool) model.Flags {
 	env := define.GetDefaultEnvVars()
 	return model.Flags{
-		Port:              env.Port,
-		EnableGuide:       false,
-		EnableEditor:      enableEditor,
-		EnableOfflineMode: true,
-		DisableLoginMode:  disableLogin,
-		Visibility:        visibility,
-		DebugMode:         false,
-		CookieName:        env.CookieName,
-		CookieSecret:      env.CookieSecret,
+		Port:             env.Port,
+		EnableGuide:      false,
+		EnableEditor:     enableEditor,
+		DisableLoginMode: disableLogin,
+		Visibility:       visibility,
+		DebugMode:        false,
+		CookieName:       env.CookieName,
+		CookieSecret:     env.CookieSecret,
 	}
 }
 
@@ -173,4 +172,22 @@ func TestNewRouter_MissingUploadedBackgroundReturnsNotFound(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestNewRouter_NotFoundHTMLUsesStyledStatusPage(t *testing.T) {
+	withRouterTestWorkingDir(t)
+
+	flags := newTestFlags(true, "DEFAULT", false)
+	handler, err := NewRouter(&flags)
+	require.NoError(t, err)
+	require.NotNil(t, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/missing-page", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "页面不存在")
+	assert.Contains(t, rec.Body.String(), "status-panel")
 }

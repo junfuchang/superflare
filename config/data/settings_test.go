@@ -7,7 +7,23 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 )
 
+func withTempWorkingDir(t *testing.T) {
+	t.Helper()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origWd)
+	})
+}
+
 func TestGetAndSetThemeName(t *testing.T) {
+	withTempWorkingDir(t)
 	const target = "test"
 	UpdateThemeName(target)
 	theme := GetThemeName()
@@ -20,6 +36,7 @@ func TestGetAndSetThemeName(t *testing.T) {
 }
 
 func TestUpdateSearchAndGetAllSettingsOptions(t *testing.T) {
+	withTempWorkingDir(t)
 	showSearchComponent := true
 	disabledSearchAutoFocus := false
 
@@ -41,6 +58,7 @@ func TestUpdateSearchAndGetAllSettingsOptions(t *testing.T) {
 }
 
 func TestUpdateAppearance(t *testing.T) {
+	withTempWorkingDir(t)
 	const Title = "Test"
 	themeUpdate := model.Application{
 		Theme:                 "custom",
@@ -91,6 +109,7 @@ func TestUpdateAppearance(t *testing.T) {
 }
 
 func TestUpdateThemeAndBackgroundSettings(t *testing.T) {
+	withTempWorkingDir(t)
 	update := model.Application{
 		Theme:                 "custom",
 		CustomThemeBackground: "rgba(1, 2, 3, 1)",
@@ -120,6 +139,7 @@ func TestUpdateThemeAndBackgroundSettings(t *testing.T) {
 }
 
 func TestUpdateLoginConfig(t *testing.T) {
+	withTempWorkingDir(t)
 	ok := UpdateLoginConfig("admin", "admin")
 	if !ok {
 		t.Fatal("UpdateLoginConfig Error")

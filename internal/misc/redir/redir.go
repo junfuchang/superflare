@@ -15,11 +15,10 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/background"
 	"github.com/junfuchang/superflare/internal/fn"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 func RegisterRouting(e *echo.Echo) {
-	internalError := []byte(`<html><p>找不到匹配的跳转地址，请确认地址未被人为修改。</p><p>或前往 <a href="https://github.com/junfuchang/superflare/issues/" target="_blank">https://github.com/junfuchang/superflare/issues/</a> 反馈使用中的问题，谢谢！</html>`)
-
 	e.GET(define.MiscPages.RedirHome.Path, func(c *echo.Context) error {
 		return c.Redirect(http.StatusFound, define.RegularPages.Home.Path)
 	})
@@ -27,11 +26,11 @@ func RegisterRouting(e *echo.Echo) {
 	e.GET(define.MiscPages.RedirHelper.Path, func(c *echo.Context) error {
 		encoded := c.QueryParam("go")
 		if len(encoded) < 1 {
-			return c.HTMLBlob(http.StatusBadRequest, internalError)
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
 		}
 		decoded, err := data.Base64DecodeUrl(encoded)
 		if err != nil {
-			return c.HTMLBlob(http.StatusBadRequest, internalError)
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
 		}
 		decodeURL := string(decoded)
 		appsData, errApps := data.LoadFavoriteBookmarks()
@@ -50,17 +49,17 @@ func RegisterRouting(e *echo.Echo) {
 				}
 			}
 		}
-		return c.HTMLBlob(http.StatusOK, internalError)
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
 	})
 
 	e.GET(define.MiscPages.RedirLocal.Path, func(c *echo.Context) error {
 		sourceURL, errSource := decodeRedirectParam(c.QueryParam("go"))
 		localURL, errLocal := decodeRedirectParam(c.QueryParam("local"))
 		if errSource != nil || errLocal != nil || !isHTTPRedirectURL(localURL) {
-			return c.HTMLBlob(http.StatusBadRequest, internalError)
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
 		}
 		if !bookmarkLocalURLPairExists(c.Request(), sourceURL, localURL) {
-			return c.HTMLBlob(http.StatusBadRequest, internalError)
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
 		}
 		if !fn.RequestLooksLocalNetwork(c.Request()) {
 			return c.Redirect(http.StatusFound, sourceURL)

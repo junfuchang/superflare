@@ -1,0 +1,16 @@
+appname=superflare
+version=0.1.7
+display_name=SuperFlare
+desc=SuperFlare 是基于 soulteary/docker-flare 深度增强的原生 Go 导航主页，面向 fnOS 与 NAS 场景，支持登录保护、端口发现、主题与背景定制、图标自动补全和在线编辑，并且无需 Docker。
+platform=x86
+source=thirdparty
+maintainer=junfuchang
+maintainer_url=https://github.com/junfuchang/superflare
+distributor=junfuchang
+distributor_url=https://github.com/junfuchang/superflare
+desktop_uidir=ui
+desktop_applaunchname=superflare.Application
+service_port=3636
+checkport=true
+ctl_stop=true
+disable_authorization_path=true

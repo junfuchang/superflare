@@ -1,0 +1,55 @@
+#!/bin/bash
+
+set -u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/common.sh"
+
+log_and_fail() {
+    local message="$1"
+    log_lifecycle "${message}"
+    exit 1
+}
+
+ensure_runtime_layout || log_and_fail "Failed to prepare runtime layout before applying login settings."
+
+user="$(printf '%s' "${wizard_login_user:-}" | tr -d '\r' | xargs)"
+pass="$(printf '%s' "${wizard_login_pass:-}" | tr -d '\r')"
+confirm="$(printf '%s' "${wizard_login_pass_confirm:-}" | tr -d '\r')"
+current_user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")"
+current_pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
+
+if [ -z "${user}" ]; then
+    user="${current_user}"
+fi
+
+if [ -z "${user}" ]; then
+    log_and_fail "Login username cannot be empty."
+fi
+
+if [ -z "${pass}" ] && [ -z "${confirm}" ]; then
+    pass="${current_pass}"
+    confirm="${current_pass}"
+fi
+
+if [ "${pass}" != "${confirm}" ]; then
+    log_and_fail "Login password confirmation does not match."
+fi
+
+if [ -z "${pass}" ]; then
+    log_and_fail "Login password cannot be empty."
+fi
+
+sync_login_config "${user}" "${pass}"
+
+if ! stop_app; then
+    log_and_fail "SuperFlare stop failed after applying login settings."
+fi
+
+if ! start_app; then
+    log_and_fail "SuperFlare restart failed after applying login settings."
+fi
+
+log_info "SuperFlare login settings updated from fnOS app configuration."
+exit 0

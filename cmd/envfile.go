@@ -50,7 +50,9 @@ func ParseEnvFile(baseFlags model.Flags) model.Flags {
 		return baseFlags
 	}
 
-	envs, err := ini.Load(envPath)
+	envs, err := ini.LoadSources(ini.LoadOptions{
+		IgnoreInlineComment: true,
+	}, envPath)
 	if err != nil {
 		log.Error("解析 .env 文件出错，请检查文件格式或程序是否具备文件读取权限。")
 		log.Warn("程序将使用默认配置继续运行。")
@@ -89,15 +91,14 @@ func ParseEnvFile(baseFlags model.Flags) model.Flags {
 	pass := GetDotEnvFileStringOrDefault(envs, "FLARE_PASS", baseFlags.Pass)
 	baseFlags.Pass = pass
 	if pass == defaults.Pass {
-		baseFlags.UserIsGenerated = false
+		baseFlags.PassIsGenerated = false
 	} else {
-		baseFlags.UserIsGenerated = true
+		baseFlags.PassIsGenerated = true
 	}
 
 	baseFlags.DisableLoginMode = GetDotEnvFileBoolOrDefault(envs, "FLARE_DISABLE_LOGIN", baseFlags.DisableLoginMode)
 	baseFlags.DisableCSP = GetDotEnvFileBoolOrDefault(envs, "FLARE_DISABLE_CSP", baseFlags.DisableCSP)
 	baseFlags.EnableMinimumRequest = GetDotEnvFileBoolOrDefault(envs, "FLARE_MINI_REQUEST", baseFlags.EnableMinimumRequest)
-	baseFlags.EnableOfflineMode = GetDotEnvFileBoolOrDefault(envs, "FLARE_OFFLINE", baseFlags.EnableOfflineMode)
 	baseFlags.EnableEditor = GetDotEnvFileBoolOrDefault(envs, "FLARE_EDITOR", baseFlags.EnableEditor)
 	baseFlags.EnableGuide = GetDotEnvFileBoolOrDefault(envs, "FLARE_GUIDE", baseFlags.EnableGuide)
 	baseFlags.Visibility = GetDotEnvFileStringOrDefault(envs, "FLARE_VISIBILITY", baseFlags.Visibility)

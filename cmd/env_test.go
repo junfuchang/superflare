@@ -18,9 +18,6 @@ func TestParseEnvVars(t *testing.T) {
 	os.Setenv("FLARE_GUIDE", "false")
 	defer os.Unsetenv("FLARE_GUIDE")
 
-	os.Setenv("FLARE_OFFLINE", "true")
-	defer os.Unsetenv("FLARE_OFFLINE")
-
 	os.Setenv("FLARE_USER", "test")
 	defer os.Unsetenv("FLARE_USER")
 
@@ -37,18 +34,10 @@ func TestParseEnvVars(t *testing.T) {
 
 	assert.Equal(t, flags.Port, 5000)
 	assert.Equal(t, flags.EnableGuide, false)
-	assert.Equal(t, flags.EnableOfflineMode, true)
 	assert.Equal(t, flags.Visibility, "private")
 	assert.Equal(t, flags.User, "test")
 	assert.Equal(t, flags.CookieName, "flare_test")
 	assert.Equal(t, flags.CookieSecret, "test_cookie_secret")
-
-	// test error parse
-	os.Setenv("FLARE_OFFLINE", ")))))))@#$%^&*()")
-	defer os.Unsetenv("FLARE_OFFLINE")
-	flags = cmd.ParseEnvVars()
-	defaultEnvs := define.DefaultEnvVars
-	assert.Equal(t, flags.EnableOfflineMode, defaultEnvs.EnableOfflineMode)
 }
 func TestInitAccountFromEnvVars_normal(t *testing.T) {
 	defaultEnvs := define.DefaultEnvVars
@@ -70,8 +59,8 @@ func TestInitAccountFromEnvVars_normal(t *testing.T) {
 	)
 	assert.Equal(t, target.User, "custom")
 	assert.Equal(t, target.UserIsGenerated, false)
-	assert.Equal(t, target.PassIsGenerated, true)
-	assert.Equal(t, len(target.Pass), 8)
+	assert.Equal(t, target.PassIsGenerated, false)
+	assert.Equal(t, target.Pass, define.DEFAULT_LOGIN_PASS)
 }
 
 func TestInitAccountFromEnvVars_EmptyUser(t *testing.T) {
@@ -94,8 +83,8 @@ func TestInitAccountFromEnvVars_EmptyUser(t *testing.T) {
 	)
 	assert.Equal(t, target.User, define.DEFAULT_USER_NAME)
 	assert.Equal(t, target.UserIsGenerated, true)
-	assert.Equal(t, target.PassIsGenerated, true)
-	assert.Equal(t, len(target.Pass), 8)
+	assert.Equal(t, target.PassIsGenerated, false)
+	assert.Equal(t, target.Pass, define.DEFAULT_LOGIN_PASS)
 }
 
 func TestInitAccountFromEnvVars_EmptyPass(t *testing.T) {

@@ -15,9 +15,6 @@ const (
 	_KEY_DISABLE_LOGIN_SHORT = "l"
 	_KEY_DISABLE_LOGIN_OLD   = "nologin"
 
-	_KEY_ENABLE_OFFLINE       = "offline"
-	_KEY_ENABLE_OFFLINE_SHORT = "o"
-
 	_KEY_ENABLE_GUIDE       = "guide"
 	_KEY_ENABLE_GUIDE_SHORT = "g"
 

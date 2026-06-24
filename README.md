@@ -39,6 +39,7 @@ SuperFlare reads these local runtime files from the repository root:
 - `apps.yml`
 - `bookmarks.yml`
 - `ports.yaml`
+- `.env` (optional; only for a small set of startup items such as login and cookie settings)
 
 Local runtime state is stored under `var/`.
 
@@ -61,4 +62,4 @@ ai/         AI-facing repository rules
 
 ## AI Rules
 
-AI-facing maintenance rules live in [ai/README.md](./ai/README.md).
+AI-facing maintenance rules live under `ai/`.

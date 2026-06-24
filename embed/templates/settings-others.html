@@ -53,11 +53,11 @@
             </div>
             <div class="form-group">
                 <label for="settings-login-pass">{{ T .Locale "login_pass_config" }}</label>
-                <input type="password" name="login-pass" id="settings-login-pass" class="option-input" placeholder='{{ T .Locale "login_pass_config_placeholder" }}' value="{{.OptionLoginPass}}">
+                <input type="password" name="login-pass" id="settings-login-pass" class="option-input" placeholder='{{ T .Locale "login_pass_config_placeholder" }}'>
             </div>
             <div class="form-group">
                 <label for="settings-login-pass-confirm">{{ T .Locale "login_pass_confirm_config" }}</label>
-                <input type="password" name="login-pass-confirm" id="settings-login-pass-confirm" class="option-input" placeholder='{{ T .Locale "login_pass_confirm_placeholder" }}' value="{{.OptionLoginPass}}">
+                <input type="password" name="login-pass-confirm" id="settings-login-pass-confirm" class="option-input" placeholder='{{ T .Locale "login_pass_confirm_placeholder" }}'>
             </div>
             {{ if .LoginConfigError }}
             <p class="help-text">{{ T .Locale .LoginConfigError }}</p>
@@ -77,10 +77,10 @@
 
         <br />
 
+        <p>{{ T .Locale "original_project" }}: <a href="https://github.com/soulteary/docker-flare" target="_blank">soulteary/docker-flare</a></p>
         <p>{{ T .Locale "project_link" }}: <a href="https://github.com/junfuchang/superflare" target="_blank">junfuchang/superflare</a></p>
         {{ if .UserIsLogin }}
-        <p>{{ T .Locale "version" }}: {{ .Version }} / {{.COMMIT}}</p>
-        <p>{{ T .Locale "build_date" }}: {{ .BuildDate }}</p>
+        <p>{{ T .Locale "version" }}: {{ .Version }}</p>
         {{ end }}
     </div>
 

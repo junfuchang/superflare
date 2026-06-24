@@ -327,7 +327,7 @@ func renderHelp(c *echo.Context) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	m["Applications"] = GenerateHelpTemplate()
+	m["Applications"] = GenerateHelpTemplate(locale)
 	m["SearchKeyword"] = template.HTML(i18n.T(locale, "search_placeholder"))
 	m["HasKeyword"] = false
 	m["ShowSearchComponent"] = options.ShowSearchComponent

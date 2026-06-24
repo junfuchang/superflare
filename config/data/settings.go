@@ -2,6 +2,7 @@ package data
 
 import (
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/i18n"
 )
 
 func GetThemeName() string {
@@ -73,9 +74,7 @@ func GetAllSettingsOptions() (model.Application, error) {
 	if err != nil {
 		return options, err
 	}
-	if options.Locale == "" {
-		options.Locale = "zh"
-	}
+	options.Locale = i18n.NormalizeLocale(options.Locale)
 	if options.SiteIconMode == "" {
 		options.SiteIconMode = "mdi"
 	}
@@ -126,19 +125,9 @@ func UpdateAppearance(update model.Application) bool {
 	options.EnableEncryptedLink = update.EnableEncryptedLink
 	options.IconMode = update.IconMode
 	options.KeepLetterCase = update.KeepLetterCase
-	options.Locale = update.Locale
+	options.Locale = i18n.NormalizeLocale(update.Locale)
 	options.HomeMaxColumns = update.HomeMaxColumns
 	options.HomeMaxWidth = update.HomeMaxWidth
 
-	return saveAppConfigToYamlFile("config", options)
-}
-
-func UpdateLoginConfig(user string, pass string) bool {
-	options, err := GetAllSettingsOptions()
-	if err != nil {
-		return false
-	}
-	options.LoginUser = user
-	options.LoginPass = pass
 	return saveAppConfigToYamlFile("config", options)
 }

@@ -139,8 +139,29 @@ func TestParseEnvFile_User(t *testing.T) {
 	f, _ := os.Create(envPath)
 	defer os.Remove(envPath)
 	defer f.Close()
-	_, _ = f.Write([]byte("FLARE_PORT=5005\nFLARE_USER=superflare\nFLARE_PASS=\n"))
+	_, _ = f.Write([]byte("FLARE_PORT=3636\nFLARE_USER=superflare\nFLARE_PASS=\n"))
 	flags := cmd.ParseEnvFile(envParsed)
 
+	envParsed.User = "superflare"
+	envParsed.UserIsGenerated = true
 	assert.Equal(t, flags, envParsed)
+}
+
+func TestParseEnvFile_PasswordWithCommentChars(t *testing.T) {
+	os.Setenv("FLARE_DEBUG", "true")
+	defer os.Unsetenv("FLARE_DEBUG")
+
+	envParsed := cmd.ParseEnvVars()
+	envPath := fn.GetWorkDirFile(".env")
+	envParsed.User = "fallback-user"
+	envParsed.Pass = "fallback-pass"
+
+	f, _ := os.Create(envPath)
+	defer os.Remove(envPath)
+	defer f.Close()
+	_, _ = f.Write([]byte("FLARE_USER=test-user\nFLARE_PASS=abc#123;xyz\n"))
+
+	flags := cmd.ParseEnvFile(envParsed)
+	assert.Equal(t, "test-user", flags.User)
+	assert.Equal(t, "abc#123;xyz", flags.Pass)
 }

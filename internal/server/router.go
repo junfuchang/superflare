@@ -26,6 +26,7 @@ import (
 	settingsports "github.com/junfuchang/superflare/internal/settings/ports"
 	"github.com/junfuchang/superflare/internal/settings/search"
 	"github.com/junfuchang/superflare/internal/settings/theme"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 // NewRouter builds the Echo app and returns an http.Handler for the server.
@@ -40,6 +41,7 @@ func NewRouter(appFlags *model.Flags) (http.Handler, error) {
 		define.AppFlags = *appFlags
 	}
 	e := echo.New()
+	e.HTTPErrorHandler = statuspage.HTTPErrorHandler
 	e.Use(middleware.Recover())
 	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{MinLength: 1024}))
 	if os.Getenv("FLARE_BASELINE") != "1" {

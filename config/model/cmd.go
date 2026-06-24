@@ -9,7 +9,6 @@ type Flags struct {
 	Port                 int
 	EnableGuide          bool
 	EnableEditor         bool
-	EnableOfflineMode    bool
 	EnableMinimumRequest bool
 	DisableCSP           bool
 
@@ -29,7 +28,6 @@ type Envs struct {
 	Port                 int  `env:"FLARE_PORT"`
 	EnableGuide          bool `env:"FLARE_GUIDE"`
 	EnableEditor         bool `env:"FLARE_EDITOR"`
-	EnableOfflineMode    bool `env:"FLARE_OFFLINE"`
 	EnableMinimumRequest bool `env:"FLARE_MINI_REQUEST"`
 	DisableCSP           bool `env:"FLARE_DISABLE_CSP,unset"`
 
@@ -47,7 +45,6 @@ type EnvFile struct {
 	Port                 int  `ini:"FLARE_PORT,omitempty"`
 	EnableGuide          bool `ini:"FLARE_GUIDE,omitempty"`
 	EnableEditor         bool `ini:"FLARE_EDITOR,omitempty"`
-	EnableOfflineMode    bool `ini:"FLARE_OFFLINE,omitempty"`
 	EnableMinimumRequest bool `ini:"FLARE_MINI_REQUEST,omitempty"`
 	DisableCSP           bool `env:"FLARE_DISABLE_CSP,unset"`
 

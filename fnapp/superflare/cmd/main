@@ -1,0 +1,31 @@
+#!/bin/bash
+
+set -u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/common.sh"
+
+case "${1:-}" in
+start)
+    if start_app; then
+        exit 0
+    fi
+    exit 1
+    ;;
+stop)
+    if stop_app; then
+        exit 0
+    fi
+    exit 1
+    ;;
+status)
+    if status_app; then
+        exit 0
+    fi
+    exit 3
+    ;;
+*)
+    exit 1
+    ;;
+esac

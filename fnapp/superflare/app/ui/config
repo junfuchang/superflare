@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "superflare.Application": {
+      "title": "SuperFlare",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "3636",
+      "url": "/",
+      "allUsers": false
+    }
+  }
+}

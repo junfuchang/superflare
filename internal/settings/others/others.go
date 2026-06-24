@@ -9,9 +9,9 @@ import (
 
 	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/internal/appver"
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/pool"
-	version "github.com/soulteary/version-kit"
 )
 
 func RegisterRouting(e *echo.Echo) {
@@ -31,6 +31,14 @@ func updateLoginOptions(c *echo.Context) error {
 	user := strings.TrimSpace(body.LoginUser)
 	pass := strings.TrimSpace(body.LoginPass)
 	confirm := strings.TrimSpace(body.LoginPassConfirm)
+	currentUser, currentPass, _ := data.GetLoginConfig()
+	if user == "" {
+		user = strings.TrimSpace(currentUser)
+	}
+	if pass == "" && confirm == "" {
+		pass = strings.TrimSpace(currentPass)
+		confirm = pass
+	}
 	if pass != confirm {
 		return renderOthers(c, "login_pass_confirm_error")
 	}
@@ -93,12 +101,10 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	m["SettingPages"] = define.SettingPages
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
-	m["OptionLoginUser"] = options.LoginUser
-	m["OptionLoginPass"] = options.LoginPass
+	loginUser, _, _ := data.GetLoginConfig()
+	m["OptionLoginUser"] = loginUser
 	m["LoginConfigError"] = loginConfigError
-	m["Version"] = version.Version
-	m["BuildDate"] = version.BuildDate
-	m["COMMIT"] = version.Commit
+	m["Version"] = appver.DisplayVersion()
 	m["OptionFooter"] = template.HTML(options.Footer)
 	return c.Render(http.StatusOK, "settings.html", m)
 }

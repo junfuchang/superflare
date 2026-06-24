@@ -30,6 +30,11 @@ func InitAccountFromEnvVars(
 		*isPassGenerate = false
 		*targetPass = password
 	}
+
+	if username == define.DEFAULT_LOGIN_USER && password == define.DEFAULT_LOGIN_PASS {
+		*isUserGenerate = false
+		*isPassGenerate = false
+	}
 }
 
 func ParseEnvVars() (stor model.Flags) {
@@ -62,7 +67,6 @@ func ParseEnvVars() (stor model.Flags) {
 	stor.EnableMinimumRequest = defaults.EnableMinimumRequest
 	stor.DisableLoginMode = defaults.DisableLoginMode
 	stor.Visibility = defaults.Visibility
-	stor.EnableOfflineMode = defaults.EnableOfflineMode
 	stor.EnableEditor = defaults.EnableEditor
 	stor.DisableCSP = defaults.DisableCSP
 	stor.CookieName = defaults.CookieName

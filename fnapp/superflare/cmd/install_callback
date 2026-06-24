@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/common.sh"
+
+log_and_fail() {
+    local message="$1"
+    log_lifecycle "${message}"
+    exit 1
+}
+
+ensure_runtime_layout || log_and_fail "Failed to prepare runtime layout after install."
+
+user="$(printf '%s' "${wizard_install_login_user:-}" | tr -d '\r' | xargs)"
+pass="$(printf '%s' "${wizard_install_login_pass:-}" | tr -d '\r')"
+confirm="$(printf '%s' "${wizard_install_login_pass_confirm:-}" | tr -d '\r')"
+
+if [ -z "${user}" ]; then
+    user="admin"
+fi
+if [ -z "${pass}" ]; then
+    pass="admin"
+fi
+if [ -z "${confirm}" ]; then
+    confirm="${pass}"
+fi
+if [ "${pass}" != "${confirm}" ]; then
+    log_and_fail "Install login password confirmation does not match."
+fi
+
+sync_login_config "${user}" "${pass}"
+exit 0

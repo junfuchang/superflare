@@ -4,16 +4,18 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/junfuchang/superflare/cmd"
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
-	version "github.com/soulteary/version-kit"
 	flags "github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+var versionDatePattern = regexp.MustCompile(`\d{8}`)
 
 // Mock dependencies
 type EnvParserMock struct {
@@ -43,7 +45,6 @@ func (m *CLIParserMock) parseCLI(envs map[string]string) model.Flags {
 }
 
 func TestParse(t *testing.T) {
-	// Setup mocks with expected behavior
 	envParser := new(EnvParserMock)
 	cliParser := new(CLIParserMock)
 
@@ -72,10 +73,6 @@ func TestParse(t *testing.T) {
 	actualFlags.PassIsGenerated = false
 
 	assert.Equal(t, expectedFlags, actualFlags)
-
-	// Verify that the expectations on the mocks were met
-	// envParser.AssertExpectations(t)
-	// cliParser.AssertExpectations(t)
 }
 
 func captureOutput(f func()) string {
@@ -102,8 +99,8 @@ func TestExecuteCLI_ShowHelp(t *testing.T) {
 		_ = cmd.ExecuteCLI(cliFlags, options)
 	})
 
-	assert.Contains(t, output, "支持命令：", "应该打印出支持命令")
-	assert.True(t, cmd.ExecuteCLI(cliFlags, options), "在 ShowHelp 为 true 时，应该返回 true")
+	assert.Contains(t, output, "支持命令")
+	assert.True(t, cmd.ExecuteCLI(cliFlags, options))
 }
 
 func TestExecuteCLI_ShowVersion(t *testing.T) {
@@ -114,23 +111,19 @@ func TestExecuteCLI_ShowVersion(t *testing.T) {
 		_ = cmd.ExecuteCLI(cliFlags, options)
 	})
 
-	assert.Contains(t, output, version.Version, "应该打印出版本信息")
-	assert.True(t, cmd.ExecuteCLI(cliFlags, options), "在 ShowVersion 为 true 时，应该返回 true")
+	assert.Regexp(t, versionDatePattern, output)
+	assert.True(t, cmd.ExecuteCLI(cliFlags, options))
 }
 
 func TestExecuteCLI_NoFlags(t *testing.T) {
 	cliFlags := &model.Flags{}
 	options := &flags.FlagSet{}
-	assert.False(t, cmd.ExecuteCLI(cliFlags, options), "当没有任何标志被设置时，应该返回 false")
+	assert.False(t, cmd.ExecuteCLI(cliFlags, options))
 }
 
 func TestGetVersionEcho(t *testing.T) {
-	ver := ""
-	// output := captureOutput(func() {
-	ver = cmd.GetVersion(true)
-	// })
-	assert.Contains(t, ver, version.Version, "应该打印出版本信息")
-	// assert.Contains(t, output, "Challenge all bookmarking apps and websites directories, Aim to Be a best performance monster.", "应该打印详细信息")
+	ver := cmd.GetVersion(true)
+	assert.Regexp(t, versionDatePattern, ver)
 }
 
 func TestGetVersionMute(t *testing.T) {
@@ -138,6 +131,6 @@ func TestGetVersionMute(t *testing.T) {
 	output := captureOutput(func() {
 		ver = cmd.GetVersion(false)
 	})
-	assert.Contains(t, ver, version.Version, "应该打印出版本信息")
-	assert.NotContains(t, output, "Challenge all bookmarking apps and websites directories, Aim to Be a best performance monster.", "不应该打印详细信息")
+	assert.Regexp(t, versionDatePattern, ver)
+	assert.NotContains(t, output, "Challenge all bookmarking apps and websites directories")
 }
