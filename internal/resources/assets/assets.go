@@ -2,6 +2,7 @@ package assets
 
 import (
 	"crypto/md5" //#nosec
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -17,22 +18,26 @@ import (
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/internal/background"
 	"github.com/junfuchang/superflare/internal/fn"
+	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
-//go:embed favicon.ico
+//go:embed favicon.ico icons/favicon/*
 var Favicon embed.FS
+
+const (
+	faviconRoutePath          = "/favicon.ico"
+	appleTouchIconRoutePath   = "/apple-touch-icon.png"
+	androidChrome192RoutePath = "/android-chrome-192x192.png"
+	androidChrome512RoutePath = "/android-chrome-512x512.png"
+)
 
 func RegisterRouting(e *echo.Echo) {
 	e.Use(optimizeResourceCacheTime())
 
-	e.GET("/favicon.ico", func(c *echo.Context) error {
-		c.Response().Header().Set("Cache-Control", "public, max-age=31536000")
-		data, err := fs.ReadFile(Favicon, "favicon.ico")
-		if err != nil {
-			return err
-		}
-		return c.Blob(http.StatusOK, "image/x-icon", data)
-	})
+	e.GET(faviconRoutePath, serveEmbeddedWebsiteIcon("favicon.ico", "image/x-icon"))
+	e.GET(appleTouchIconRoutePath, serveEmbeddedWebsiteIcon("icons/favicon/apple-touch-icon.png", "image/png"))
+	e.GET(androidChrome192RoutePath, serveEmbeddedWebsiteIcon("icons/favicon/android-chrome-192x192.png", "image/png"))
+	e.GET(androidChrome512RoutePath, serveEmbeddedWebsiteIcon("icons/favicon/android-chrome-512x512.png", "image/png"))
 
 	if define.AppFlags.DebugMode {
 		e.Static("/assets/css", "embed/assets/css")
@@ -42,6 +47,59 @@ func RegisterRouting(e *echo.Echo) {
 	e.GET(background.UploadedFullPath, serveUploadedBackground)
 	e.GET(background.UploadedPreviewPath, serveUploadedBackgroundPreview)
 	e.GET("/user-assets/:file", serveUserAsset)
+}
+
+func SiteIconURL(iconURLResolver func(string) string, name string) string {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		return iconURLResolver(name)
+	}
+	return versionedIconURL(faviconRoutePath, "favicon.ico")
+}
+
+func AppleTouchIconURL() string {
+	return versionedIconURL(appleTouchIconRoutePath, "icons/favicon/apple-touch-icon.png")
+}
+
+func AndroidChrome192URL() string {
+	return versionedIconURL(androidChrome192RoutePath, "icons/favicon/android-chrome-192x192.png")
+}
+
+func AndroidChrome512URL() string {
+	return versionedIconURL(androidChrome512RoutePath, "icons/favicon/android-chrome-512x512.png")
+}
+
+func versionedIconURL(routePath string, assetPath string) string {
+	version := embeddedAssetVersion(assetPath)
+	if version == "" {
+		return routePath
+	}
+	return routePath + "?v=" + version
+}
+
+func embeddedAssetVersion(assetPath string) string {
+	data, err := fs.ReadFile(Favicon, assetPath)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:6])
+}
+
+func serveEmbeddedWebsiteIcon(assetPath string, contentType string) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		data, err := fs.ReadFile(Favicon, assetPath)
+		if err != nil {
+			return err
+		}
+		if define.AppFlags.DebugMode {
+			c.Response().Header().Set("Cache-Control", "no-store")
+		} else {
+			c.Response().Header().Set("Cache-Control", "public, max-age=604800, immutable")
+		}
+		c.Response().Header().Del("ETag")
+		return c.Blob(http.StatusOK, contentType, data)
+	}
 }
 
 func serveUploadedBackground(c *echo.Context) error {
@@ -97,24 +155,51 @@ func serveSiteFavicon(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing site favicon source")
 	}
 
-	data, contentType, err := fn.FetchPublicSiteFavicon(iconURL)
-	if err != nil {
-		c.Response().Header().Set("Cache-Control", "no-store")
-		c.Response().Header().Del("ETag")
-		fallback, readErr := fs.ReadFile(Favicon, "favicon.ico")
-		if readErr != nil {
-			return err
+	if data, contentType, err := fn.ReadCachedPublicSiteFavicon(iconURL); err == nil {
+		if define.AppFlags.DebugMode {
+			c.Response().Header().Set("Cache-Control", "no-store")
+		} else {
+			c.Response().Header().Set("Cache-Control", "public, max-age=604800")
 		}
-		return c.Blob(http.StatusOK, "image/x-icon", fallback)
+		c.Response().Header().Del("ETag")
+		return c.Blob(http.StatusOK, contentType, data)
 	}
 
-	if define.AppFlags.DebugMode {
-		c.Response().Header().Set("Cache-Control", "no-store")
-	} else {
-		c.Response().Header().Set("Cache-Control", "public, max-age=604800")
-	}
+	fn.WarmSiteFaviconURL(iconURL)
+	c.Response().Header().Set("Cache-Control", "no-store")
 	c.Response().Header().Del("ETag")
-	return c.Blob(http.StatusOK, contentType, data)
+	fallback, fallbackContentType, fallbackErr := readBuiltinBookmarkIcon()
+	if fallbackErr != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "site favicon fetch failed")
+	}
+	return c.Blob(http.StatusOK, fallbackContentType, fallback)
+}
+
+func readBuiltinBookmarkIcon() ([]byte, string, error) {
+	if mdi.MemFs == nil {
+		return nil, "", fmt.Errorf("mdi cache is not initialized")
+	}
+
+	iconURL := mdi.GetIconURLByName("bookmark")
+	if iconURL == "" || iconURL == "/favicon.ico" {
+		return nil, "", fmt.Errorf("bookmark icon url unavailable")
+	}
+
+	if idx := strings.Index(iconURL, "?"); idx >= 0 {
+		iconURL = iconURL[:idx]
+	}
+
+	iconPath := strings.TrimPrefix(iconURL, "/")
+	if iconPath == "" {
+		return nil, "", fmt.Errorf("bookmark icon path unavailable")
+	}
+
+	data, err := fs.ReadFile(mdi.MemFs, iconPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return data, "image/svg+xml", nil
 }
 
 func serveRemoteBackground(c *echo.Context) error {
@@ -151,7 +236,7 @@ func optimizeResourceCacheTime() echo.MiddlewareFunc {
 			if strings.HasPrefix(uri, "/assets/site-icons") {
 				return next(c)
 			}
-			if strings.HasPrefix(uri, "/assets/") || strings.HasPrefix(uri, "/favicon.ico") {
+			if strings.HasPrefix(uri, "/assets/") {
 				if define.AppFlags.DebugMode {
 					c.Response().Header().Set("Cache-Control", "no-store")
 				} else {

@@ -1,0 +1,13 @@
+[Unit]
+Description=SuperFlare
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/superflare
+ExecStart=/opt/superflare/superflare --enable_editor
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -72,8 +72,8 @@ func updateAppearanceOptions(c *echo.Context) error {
 	update.EnableEncryptedLink = body.EnableEncryptedLink
 	update.KeepLetterCase = body.KeepLetterCase
 	requestIconMode := strings.ToUpper(body.IconMode)
-	if requestIconMode != "DEFAULT" && requestIconMode != "FILLING" {
-		update.IconMode = "DEFAULT"
+	if requestIconMode != define.IconModeMissingBlank && requestIconMode != define.IconModeMissingFill && requestIconMode != define.IconModeHidden {
+		update.IconMode = define.IconModeMissingFill
 	} else {
 		update.IconMode = requestIconMode
 	}
@@ -106,8 +106,10 @@ func pageAppearance(c *echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "config error")
 	}
-	IconModeDefault := options.IconMode == "DEFAULT"
-	IconModeFilling := options.IconMode == "FILLING"
+	iconMode := strings.ToUpper(strings.TrimSpace(options.IconMode))
+	if iconMode == "" {
+		iconMode = define.IconModeMissingFill
+	}
 	showLoginInfo := false
 	if !define.AppFlags.DisableLoginMode {
 		showLoginInfo = auth.CheckUserIsLogin(c)
@@ -143,8 +145,7 @@ func pageAppearance(c *echo.Context) error {
 	m["OptionHideHelpButton"] = options.HideHelpButton
 	m["OptionEnableEncryptedLink"] = options.EnableEncryptedLink
 	m["OptionKeepLetterCase"] = options.KeepLetterCase
-	m["OptionIconModeDefault"] = IconModeDefault
-	m["OptionIconModeFilling"] = IconModeFilling
+	m["OptionIconMode"] = iconMode
 	m["OptionLocale"] = options.Locale
 	m["OptionHomeMaxColumns"] = options.HomeMaxColumns
 	m["OptionHomeMaxWidth"] = options.HomeMaxWidth

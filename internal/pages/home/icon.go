@@ -4,11 +4,18 @@ import (
 	"html/template"
 	"strings"
 
+	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
 func renderBookmarkIcon(icon string, link string, iconMode string) string {
+	iconMode = strings.ToUpper(strings.TrimSpace(iconMode))
+	if iconMode == define.IconModeHidden {
+		return ""
+	}
+	defaultBookmarkIcon := mdi.GetIconByName("bookmark")
+
 	icon = strings.TrimSpace(icon)
 	if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") {
 		return `<img src="` + template.HTMLEscapeString(icon) + `" alt="">`
@@ -17,14 +24,21 @@ func renderBookmarkIcon(icon string, link string, iconMode string) string {
 		if builtInIcon := mdi.GetIconByName(icon); builtInIcon != "" {
 			return builtInIcon
 		}
-	}
-	if favicon := fn.GetSiteFavicon(link, ""); favicon != "" {
-		return favicon
-	}
-	if iconMode == "FILLING" {
-		if fillingIcon := fn.GetYandexFavicon(link, ""); fillingIcon != "" {
-			return fillingIcon
+		if iconMode == define.IconModeMissingFill {
+			if favicon := fn.GetSiteFaviconFast(link, defaultBookmarkIcon); favicon != "" {
+				return favicon
+			}
+			return defaultBookmarkIcon
 		}
+		return ""
 	}
-	return mdi.GetIconByName("bookmark")
+
+	if iconMode == define.IconModeMissingFill {
+		if favicon := fn.GetSiteFaviconFast(link, defaultBookmarkIcon); favicon != "" {
+			return favicon
+		}
+		return defaultBookmarkIcon
+	}
+
+	return ""
 }

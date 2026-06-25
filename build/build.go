@@ -14,5 +14,6 @@ func main() {
 	builder.TaskForEditorAssets("embed/assets/vendor/editor-assets", "internal/pages/editor/editor-assets")
 	builder.TaskForStyles("config/define/style.go")
 	builder.TaskForFavicon("embed/assets/favicon.ico", "internal/resources/assets/favicon.ico")
+	builder.TaskForFavicon("embed/assets/icons/favicon", "internal/resources/assets/icons/favicon")
 	builder.TaskForTemplates("embed/templates", "internal/resources/templates/html")
 }

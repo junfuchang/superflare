@@ -3,4 +3,5 @@
 <a href="{{ .SettingPages.Search.Path }}" {{if eq .PageName .SettingPages.Search.Name}}class="active" {{end}}>{{ T .Locale "nav_search" }}</a>
 <a href="{{ .SettingPages.Appearance.Path }}" {{if eq .PageName .SettingPages.Appearance.Name}}class="active"{{end}}>{{ T .Locale "nav_appearance" }}</a>
 <a href="{{ .SettingPages.Ports.Path }}" {{if eq .PageName .SettingPages.Ports.Name}}class="active" {{end}}>{{ T .Locale "nav_ports" }}</a>
+<a href="/editor" target="_blank" rel="noopener noreferrer">{{ T .Locale "nav_editor" }}</a>
 <a href="{{ .SettingPages.Others.Path }}" {{if eq .PageName .SettingPages.Others.Name}}class="active" {{end}}>{{ T .Locale "nav_others" }}</a></div>{{ end }}

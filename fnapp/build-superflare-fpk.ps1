@@ -71,6 +71,20 @@ function Ensure-Directory {
     }
 }
 
+function Reset-PackageRuntimeDirs {
+    param(
+        [string]$EtcDir,
+        [string]$VarDir
+    )
+
+    foreach ($dir in @($EtcDir, $VarDir)) {
+        if (Test-Path $dir) {
+            Remove-Item -LiteralPath $dir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+}
+
 function Copy-DefaultConfigFiles {
     param(
         [string]$RepoRoot,
@@ -95,6 +109,8 @@ $fnpackExe = Resolve-FnpackExe
 $packageRoot = Join-Path $repoRoot "fnapp\superflare"
 $serverDir = Join-Path $packageRoot "app\server"
 $defaultsDir = Join-Path $serverDir "defaults"
+$packageEtcDir = Join-Path $packageRoot "etc"
+$packageVarDir = Join-Path $packageRoot "var"
 $linuxBinary = Join-Path $serverDir "superflare"
 $fpkFile = Join-Path $packageRoot "superflare.fpk"
 
@@ -124,6 +140,9 @@ try {
 
     Write-Host "Syncing package defaults..."
     Copy-DefaultConfigFiles -RepoRoot $repoRoot -DefaultsDir $defaultsDir
+
+    Write-Host "Resetting package runtime directories..."
+    Reset-PackageRuntimeDirs -EtcDir $packageEtcDir -VarDir $packageVarDir
 
     Write-Host "Building Linux binary..."
     $oldCgo = $env:CGO_ENABLED

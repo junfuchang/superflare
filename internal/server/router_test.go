@@ -142,7 +142,7 @@ func TestNewRouter_CompressesHomeWhenClientSupportsGzip(t *testing.T) {
 	assert.Contains(t, string(body), `<div class="pageview" id="page-home">`)
 }
 
-func TestNewRouter_SiteIconProxyFallbacksToBundledFavicon(t *testing.T) {
+func TestNewRouter_SiteIconProxyFallbacksToBuiltinBookmarkIcon(t *testing.T) {
 	withRouterTestWorkingDir(t)
 
 	flags := newTestFlags(true, "DEFAULT", false)
@@ -156,7 +156,8 @@ func TestNewRouter_SiteIconProxyFallbacksToBundledFavicon(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.NotEmpty(t, rec.Body.Bytes())
-	assert.NotEmpty(t, rec.Header().Get("Content-Type"))
+	assert.Contains(t, rec.Header().Get("Content-Type"), "image/svg+xml")
+	assert.Contains(t, rec.Body.String(), "<svg")
 }
 
 func TestNewRouter_MissingUploadedBackgroundReturnsNotFound(t *testing.T) {

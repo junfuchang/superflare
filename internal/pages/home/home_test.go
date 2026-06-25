@@ -113,3 +113,32 @@ func TestAppendAdaptiveColumnStyleUsesDesktopWrapAndMobileWaterfall(t *testing.T
 	assert.Contains(t, style, "@media (max-width:767px){#container-bookmakrs .bookmark-groups{display:block;column-count:2;column-gap:18px;}")
 	assert.NotContains(t, style, ";};}")
 }
+
+func TestSplitGreetingOptions(t *testing.T) {
+	got := splitGreetingOptions(" 你好 ; ; 中午好; 下午好 ; ")
+	assert.Equal(t, []string{"你好", "中午好", "下午好"}, got)
+}
+
+func TestGetGreeting_EmptyFallsBackToDefault(t *testing.T) {
+	assert.Equal(t, "Hello", getGreeting("", "en"))
+}
+
+func TestGetGreeting_SingleReturnsValue(t *testing.T) {
+	assert.Equal(t, "你好", getGreeting("你好", "zh"))
+}
+
+func TestGetGreeting_RandomModeAlwaysReturnsProvidedValue(t *testing.T) {
+	options := map[string]bool{
+		"甲": false,
+		"乙": false,
+		"丙": false,
+	}
+	for i := 0; i < 50; i++ {
+		got := getGreeting("甲;乙;丙", "zh")
+		_, ok := options[got]
+		if !ok {
+			t.Fatalf("unexpected random greeting: %q", got)
+		}
+		options[got] = true
+	}
+}

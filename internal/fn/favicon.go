@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"html"
@@ -66,6 +67,21 @@ func GetSiteFaviconAssetURL(bookmarkLink string) string {
 	return iconURL
 }
 
+func GetSiteFaviconAssetURLFast(bookmarkLink string) string {
+	iconURL := GetSiteFaviconURL(bookmarkLink)
+	if iconURL == "" {
+		return ""
+	}
+	if isProxyableSiteFaviconURL(iconURL) {
+		if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
+			return siteIconProxyPath + "?src=" + url.QueryEscape(iconURL)
+		}
+		WarmSiteFaviconURL(iconURL)
+		return ""
+	}
+	return iconURL
+}
+
 func GetSiteFavicon(bookmarkLink string, fallback string) string {
 	iconURL := GetSiteFaviconAssetURL(bookmarkLink)
 	if iconURL == "" {
@@ -74,16 +90,91 @@ func GetSiteFavicon(bookmarkLink string, fallback string) string {
 	return `<img src="` + html.EscapeString(iconURL) + `" referrerpolicy="no-referrer" decoding="async" alt="">`
 }
 
+func GetSiteFaviconFast(bookmarkLink string, fallback string) string {
+	iconURL := GetSiteFaviconAssetURLFast(bookmarkLink)
+	if iconURL == "" {
+		return fallback
+	}
+	return `<img src="` + html.EscapeString(iconURL) + `" referrerpolicy="no-referrer" decoding="async" alt="">`
+}
+
 func GetYandexFavicon(bookmarkLink string, fallback string) string {
 	u, err := url.Parse(bookmarkLink)
-	if err != nil {
+	if err != nil || u.Hostname() == "" {
 		return fallback
 	}
 	return `<img src="https://favicon.yandex.net/favicon/` + u.Hostname() + `/"/>`
 }
 
+func detectSiteFaviconContentType(data []byte, headerContentType string) (string, bool) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return "", false
+	}
+
+	lower := bytes.ToLower(trimmed)
+	if bytes.Contains(lower, []byte("<svg")) {
+		return "image/svg+xml", true
+	}
+	if bytes.HasPrefix(trimmed, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+		return "image/png", true
+	}
+	if len(trimmed) >= 3 && trimmed[0] == 0xff && trimmed[1] == 0xd8 && trimmed[2] == 0xff {
+		return "image/jpeg", true
+	}
+	if bytes.HasPrefix(trimmed, []byte("GIF87a")) || bytes.HasPrefix(trimmed, []byte("GIF89a")) {
+		return "image/gif", true
+	}
+	if len(trimmed) >= 12 && bytes.Equal(trimmed[:4], []byte("RIFF")) && bytes.Equal(trimmed[8:12], []byte("WEBP")) {
+		return "image/webp", true
+	}
+	if bytes.HasPrefix(trimmed, []byte("BM")) {
+		return "image/bmp", true
+	}
+	if len(trimmed) >= 12 && bytes.Equal(trimmed[:4], []byte{0x00, 0x00, 0x01, 0x00}) {
+		return "image/x-icon", true
+	}
+	if len(trimmed) >= 12 && bytes.Equal(trimmed[:4], []byte{0x00, 0x00, 0x02, 0x00}) {
+		return "image/x-icon", true
+	}
+	if len(trimmed) >= 12 && bytes.Equal(trimmed[4:8], []byte("ftyp")) {
+		brand := string(trimmed[8:12])
+		switch brand {
+		case "avif", "avis":
+			return "image/avif", true
+		}
+	}
+
+	detected := strings.TrimSpace(http.DetectContentType(trimmed))
+	if idx := strings.Index(detected, ";"); idx >= 0 {
+		detected = detected[:idx]
+	}
+	if strings.HasPrefix(detected, "image/") {
+		return detected, true
+	}
+
+	headerContentType = strings.TrimSpace(headerContentType)
+	if idx := strings.Index(headerContentType, ";"); idx >= 0 {
+		headerContentType = headerContentType[:idx]
+	}
+	headerContentType = strings.TrimSpace(headerContentType)
+	if strings.HasPrefix(headerContentType, "image/") {
+		lowerText := strings.ToLower(string(trimmed))
+		if strings.HasPrefix(lowerText, "<!doctype html") || strings.HasPrefix(lowerText, "<html") {
+			return "", false
+		}
+		return headerContentType, true
+	}
+
+	return "", false
+}
+
 func WarmSiteFavicon(bookmarkLink string) {
 	iconURL := GetSiteFaviconURL(bookmarkLink)
+	WarmSiteFaviconURL(iconURL)
+}
+
+func WarmSiteFaviconURL(iconURL string) {
 	if !isProxyableSiteFaviconURL(iconURL) {
 		return
 	}
@@ -93,6 +184,13 @@ func WarmSiteFavicon(bookmarkLink string) {
 	go func() {
 		_, _, _ = fetchAndCacheSiteFavicon(iconURL)
 	}()
+}
+
+func ReadCachedPublicSiteFavicon(iconURL string) ([]byte, string, error) {
+	if !isProxyableSiteFaviconURL(iconURL) {
+		return nil, "", fmt.Errorf("unsupported site favicon url")
+	}
+	return readCachedSiteFavicon(iconURL)
 }
 
 func FetchPublicSiteFavicon(iconURL string) ([]byte, string, error) {
@@ -160,15 +258,8 @@ func downloadSiteFavicon(iconURL string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("favicon too large")
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if idx := strings.Index(contentType, ";"); idx >= 0 {
-		contentType = contentType[:idx]
-	}
-	contentType = strings.TrimSpace(contentType)
-	if contentType == "" {
-		contentType = http.DetectContentType(data)
-	}
-	if !strings.HasPrefix(contentType, "image/") && contentType != "application/octet-stream" {
+	contentType, ok := detectSiteFaviconContentType(data, resp.Header.Get("Content-Type"))
+	if !ok {
 		return nil, "", fmt.Errorf("unexpected content type: %s", contentType)
 	}
 
@@ -184,7 +275,11 @@ func readCachedSiteFavicon(iconURL string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return data, http.DetectContentType(data), nil
+	contentType, ok := detectSiteFaviconContentType(data, "")
+	if !ok {
+		return nil, "", fmt.Errorf("unexpected cached content type")
+	}
+	return data, contentType, nil
 }
 
 func writeCachedSiteFavicon(iconURL string, data []byte) error {
@@ -209,4 +304,8 @@ func siteFaviconCachePath(iconURL string) (string, error) {
 func siteFaviconCacheKey(iconURL string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(iconURL)))
 	return fmt.Sprintf("%x", sum)
+}
+
+func SiteFaviconCacheKeyForTest(iconURL string) string {
+	return siteFaviconCacheKey(iconURL)
 }

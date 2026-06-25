@@ -13,6 +13,7 @@ log_and_fail() {
 }
 
 ensure_runtime_layout || log_and_fail "Failed to prepare runtime layout after install."
+reset_runtime_defaults_for_install || log_and_fail "Failed to reset runtime defaults during install."
 
 user="$(printf '%s' "${wizard_install_login_user:-}" | tr -d '\r' | xargs)"
 pass="$(printf '%s' "${wizard_install_login_pass:-}" | tr -d '\r')"

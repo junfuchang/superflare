@@ -1,0 +1,14 @@
+services:
+  superflare:
+    image: superflare:latest
+    container_name: superflare
+    restart: unless-stopped
+    ports:
+      - "3636:3636"
+    volumes:
+      - superflare-data:/data
+    environment:
+      FLARE_PORT: "3636"
+
+volumes:
+  superflare-data:

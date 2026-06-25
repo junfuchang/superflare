@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	mathrand "math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -369,29 +370,41 @@ func pageSearch(c *echo.Context) error {
 }
 
 func getGreeting(greeting, locale string) string {
-	words := strings.Split(greeting, ";")
-	count := len(words)
 	defaultWord := i18n.T(locale, "greetings_placeholder")
-	if count == 1 {
-		if len(words[0]) > 0 {
-			return words[0]
-		}
+	words := splitGreetingOptions(greeting)
+	count := len(words)
+	if count == 0 {
 		return defaultWord
 	}
-	hour, _, _ := time.Now().Clock()
-	if hour >= 5 && hour <= 10 && len(words[0]) > 0 {
+	if count == 1 {
 		return words[0]
 	}
-	if hour >= 11 && hour <= 13 && len(words[1]) > 0 {
+	if count != 4 {
+		return words[mathrand.Intn(count)] //#nosec G404 -- non-crypto randomness is sufficient for rotating greetings
+	}
+	hour, _, _ := time.Now().Clock()
+	if hour >= 5 && hour <= 10 {
+		return words[0]
+	}
+	if hour >= 11 && hour <= 13 {
 		return words[1]
 	}
-	if hour >= 14 && hour <= 18 && len(words[2]) > 0 {
+	if hour >= 14 && hour <= 18 {
 		return words[2]
 	}
-	if len(words) > 3 && len(words[3]) > 0 {
-		return words[3]
+	return words[3]
+}
+
+func splitGreetingOptions(greeting string) []string {
+	parts := strings.Split(greeting, ";")
+	result := make([]string, 0, len(parts))
+	for _, item := range parts {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
+		}
 	}
-	return defaultWord
+	return result
 }
 
 func pageBookmark(c *echo.Context) error {

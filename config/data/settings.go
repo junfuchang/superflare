@@ -78,6 +78,9 @@ func GetAllSettingsOptions() (model.Application, error) {
 	if options.SiteIconMode == "" {
 		options.SiteIconMode = "mdi"
 	}
+	if options.IconMode == "" {
+		options.IconMode = "FILLING"
+	}
 	if options.BackgroundImageMode == "" {
 		options.BackgroundImageMode = "url"
 	}

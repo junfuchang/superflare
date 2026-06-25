@@ -1,0 +1,6 @@
+services:
+  superflare:
+    volumes:
+      - /proc:/host/proc:ro
+    environment:
+      FLARE_PORT_PROC_ROOT: /host/proc

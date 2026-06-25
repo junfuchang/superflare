@@ -11,6 +11,7 @@ import (
 
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/internal/i18n"
+	"github.com/junfuchang/superflare/internal/resources/assets"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
@@ -48,8 +49,12 @@ func (r *Renderer) Render(c *echo.Context, w io.Writer, templateName string, dat
 }
 
 var templateFuncMap = template.FuncMap{
-	"T":       i18n.T,
-	"IconURL": mdi.GetIconURLByName,
+	"T":                   i18n.T,
+	"IconURL":             mdi.GetIconURLByName,
+	"SiteIconURL":         func(name string) string { return assets.SiteIconURL(mdi.GetIconURLByName, name) },
+	"AppleTouchIconURL":   assets.AppleTouchIconURL,
+	"AndroidChrome192URL": assets.AndroidChrome192URL,
+	"AndroidChrome512URL": assets.AndroidChrome512URL,
 }
 
 func RegisterRouting(e *echo.Echo) error {

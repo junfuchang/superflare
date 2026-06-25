@@ -247,6 +247,8 @@ type linkCheckResult struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+const linkCheckUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+
 func checkLinks(c *echo.Context) error {
 	var body struct {
 		Bookmarks string `json:"bookmarks" form:"bookmarks"`
@@ -334,20 +336,17 @@ func runLinkChecks(items []linkCheckItem) []linkCheckResult {
 }
 
 func checkOneLink(client *http.Client, item linkCheckItem) linkCheckResult {
-	req, err := http.NewRequest(http.MethodHead, item.URL, nil)
+	req, err := http.NewRequest(http.MethodGet, item.URL, nil)
 	if err != nil {
 		return linkCheckResult{Row: item.Row, URL: item.URL, Status: "invalid", Reason: err.Error()}
 	}
-	req.Header.Set("User-Agent", "SuperFlare-Link-Checker")
+	req.Header.Set("User-Agent", linkCheckUserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
 	resp, err := client.Do(req)
-	if err != nil {
-		req, err = http.NewRequest(http.MethodGet, item.URL, nil)
-		if err != nil {
-			return linkCheckResult{Row: item.Row, URL: item.URL, Status: "invalid", Reason: err.Error()}
-		}
-		req.Header.Set("User-Agent", "SuperFlare-Link-Checker")
-		resp, err = client.Do(req)
-	}
 	if err != nil {
 		return linkCheckResult{Row: item.Row, URL: item.URL, Status: "invalid", Reason: err.Error()}
 	}
@@ -381,6 +380,8 @@ func render(c *echo.Context) error {
 	m["DataPorts"] = template.HTML(marshalEditorPorts(portsConfig.Items))
 	m["LocalLANHost"] = portscollector.LocalLANHost()
 	m["OptionTitle"] = options.Title
+	m["OptionSiteIcon"] = options.SiteIcon
+	m["Locale"] = options.Locale
 	m["OptionFooter"] = template.HTML(options.Footer)
 	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
 	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab

@@ -14,6 +14,9 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 
 	for _, expected := range []string{
 		`id="check-links"`,
+		`editor-page`,
+		`editor-backup-file`,
+		`SiteIconURL .OptionSiteIcon`,
 		`FLARE_FIX_CATEGORY = ["[SuperFlare \u5e94\u7528]"]`,
 		`\u4e66\u7b7e\u540d\u79f0`,
 		`\u5185\u7f51\u5730\u5740`,

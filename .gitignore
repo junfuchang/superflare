@@ -29,6 +29,7 @@ internal/pages/editor/editor-assets/*
 internal/weather/icons
 .DS_Store
 tmp
+tmp-fnapp-unpack/
 .benchmark
 apps.yml
 bookmarks.yml
@@ -48,6 +49,10 @@ fnapp/fnnas.superflare/app/server/defaults/apps.yml
 fnapp/fnnas.superflare/app/server/defaults/bookmarks.yml
 fnapp/fnnas.superflare/app/server/defaults/ports.yaml
 fnapp/superflare/app/server/superflare
+fnapp/superflare/app/server/defaults/apps.yml
+fnapp/superflare/app/server/defaults/bookmarks.yml
+fnapp/superflare/app/server/defaults/config.yml
+fnapp/superflare/app/server/defaults/ports.yaml
 fnapp/superflare/etc/
 fnapp/superflare/var/
 

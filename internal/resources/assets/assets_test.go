@@ -1,0 +1,137 @@
+package assets
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v5"
+
+	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/internal/fn"
+	"github.com/junfuchang/superflare/internal/resources/mdi"
+)
+
+func TestDefaultIconURLsContainVersion(t *testing.T) {
+	if got := SiteIconURL(func(string) string { return "/mdi.svg" }, ""); !strings.HasPrefix(got, "/favicon.ico?v=") {
+		t.Fatalf("SiteIconURL default = %q", got)
+	}
+	if got := AppleTouchIconURL(); !strings.HasPrefix(got, "/apple-touch-icon.png?v=") {
+		t.Fatalf("AppleTouchIconURL = %q", got)
+	}
+	if got := AndroidChrome192URL(); !strings.HasPrefix(got, "/android-chrome-192x192.png?v=") {
+		t.Fatalf("AndroidChrome192URL = %q", got)
+	}
+	if got := AndroidChrome512URL(); !strings.HasPrefix(got, "/android-chrome-512x512.png?v=") {
+		t.Fatalf("AndroidChrome512URL = %q", got)
+	}
+}
+
+func TestWebsiteIconRoutesServeEmbeddedAssets(t *testing.T) {
+	define.Init()
+	define.AppFlags.DebugMode = true
+
+	e := echo.New()
+	RegisterRouting(e)
+
+	for _, path := range []string{
+		"/favicon.ico",
+		"/apple-touch-icon.png",
+		"/android-chrome-192x192.png",
+		"/android-chrome-512x512.png",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", path, rec.Code)
+		}
+		if rec.Body.Len() == 0 {
+			t.Fatalf("%s returned empty body", path)
+		}
+	}
+}
+
+func TestSiteIconProxyFallsBackToBuiltinBookmarkIcon(t *testing.T) {
+	define.Init()
+	define.AppFlags.DebugMode = true
+	define.ThemeCurrent = "blackboard"
+	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
+	if err := mdi.Init(); err != nil {
+		t.Fatalf("mdi.Init: %v", err)
+	}
+
+	e := echo.New()
+	RegisterRouting(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/site-icons?src=https://example.invalid/favicon.ico", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("site icon proxy fallback status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
+		t.Fatalf("site icon proxy fallback content-type = %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<svg") {
+		t.Fatalf("site icon proxy fallback should return builtin svg icon, got %q", body)
+	}
+	if strings.Contains(strings.ToLower(body), "superflare") {
+		t.Fatalf("site icon proxy fallback should not return project favicon, got %q", body)
+	}
+}
+
+func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
+	define.Init()
+	define.AppFlags.DebugMode = true
+	define.ThemeCurrent = "blackboard"
+	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
+	if err := mdi.Init(); err != nil {
+		t.Fatalf("mdi.Init: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWD)
+	}()
+
+	cacheDir := filepath.Join(tmpDir, "var", "cache", "site-icons")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	iconURL := "https://example.com/favicon.ico"
+	cacheFile := filepath.Join(cacheDir, fn.SiteFaviconCacheKeyForTest(iconURL)+".bin")
+	cachedSVG := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16"/></svg>`)
+	if err := os.WriteFile(cacheFile, cachedSVG, 0644); err != nil {
+		t.Fatalf("WriteFile cache: %v", err)
+	}
+
+	e := echo.New()
+	RegisterRouting(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/site-icons?src=https://example.com/favicon.ico", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("site icon proxy cache-hit status = %d", rec.Code)
+	}
+	if rec.Body.String() != string(cachedSVG) {
+		t.Fatalf("site icon proxy cache-hit body = %q", rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
+		t.Fatalf("site icon proxy cache-hit content-type = %q", got)
+	}
+}

@@ -92,18 +92,11 @@
 
         <div class="form-group">
             <label for="settings-icon-mode">{{ T .Locale "icon_mode" }}</label>
-            {{ if .OptionIconModeDefault }}
             <select name="icon-mode" id="settings-icon-mode">
-                <option value="DEFAULT" selected>{{ T .Locale "icon_mode_default" }}</option>
-                <option value="FILLING">{{ T .Locale "icon_mode_filling" }}</option>
+                <option value="FILLING" {{ if eq .OptionIconMode "FILLING" }}selected{{ end }}>{{ T .Locale "icon_mode_filling" }}</option>
+                <option value="DEFAULT" {{ if eq .OptionIconMode "DEFAULT" }}selected{{ end }}>{{ T .Locale "icon_mode_default" }}</option>
+                <option value="NONE" {{ if eq .OptionIconMode "NONE" }}selected{{ end }}>{{ T .Locale "icon_mode_none" }}</option>
             </select>
-            {{ end }}
-            {{ if .OptionIconModeFilling }}
-            <select name="icon-mode" id="settings-icon-mode">
-                <option value="DEFAULT">{{ T .Locale "icon_mode_default" }}</option>
-                <option value="FILLING" selected>{{ T .Locale "icon_mode_filling" }}</option>
-            </select>
-            {{ end }}
         </div>
 
         <h2>{{ T .Locale "module_settings" }}</h2>

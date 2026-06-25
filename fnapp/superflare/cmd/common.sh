@@ -108,6 +108,16 @@ copy_default_file() {
     fi
 }
 
+overwrite_default_file() {
+    local name="$1"
+    local src="${DEFAULTS_DIR}/${name}"
+    local dst="${ETC_DIR}/${name}"
+
+    if [ -f "${src}" ]; then
+        cp "${src}" "${dst}"
+    fi
+}
+
 upsert_env_value() {
     local file="$1"
     local key="$2"
@@ -356,6 +366,20 @@ ensure_runtime_layout() {
 
     relink_path "${ETC_DIR}/var" "${VAR_DIR}"
     cleanup_legacy_runtime_layout
+}
+
+reset_runtime_defaults_for_install() {
+    ensure_dir "${ETC_DIR}"
+    overwrite_default_file "config.yml"
+    overwrite_default_file "apps.yml"
+    overwrite_default_file "bookmarks.yml"
+    overwrite_default_file "ports.yaml"
+
+    if [ -f "${ETC_DIR}/.env" ]; then
+        rm -f "${ETC_DIR}/.env"
+    fi
+
+    ensure_env_file
 }
 
 read_pid_file() {

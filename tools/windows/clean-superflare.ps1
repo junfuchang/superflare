@@ -55,6 +55,9 @@ $runDir = Join-Path $repoRoot "var\run"
 $cacheDir = Join-Path $repoRoot "var\cache"
 $pidFile = Join-Path $runDir "superflare.pid"
 $exePath = Join-Path $repoRoot "superflare.exe"
+$tmpFnappUnpackDir = Join-Path $repoRoot "tmp-fnapp-unpack"
+$fnappBinary = Join-Path $repoRoot "fnapp\superflare\app\server\superflare"
+$fnappPackage = Join-Path $repoRoot "fnapp\superflare\superflare.fpk"
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Port: $port"
@@ -90,6 +93,18 @@ foreach ($repoProc in $repoProcesses) {
 if (Test-Path $exePath) {
     Remove-Item $exePath -Force -ErrorAction SilentlyContinue
     Write-Host "Removed $exePath"
+}
+
+foreach ($artifact in @($fnappBinary, $fnappPackage)) {
+    if (Test-Path $artifact) {
+        Remove-Item $artifact -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed $artifact"
+    }
+}
+
+if (Test-Path $tmpFnappUnpackDir) {
+    Remove-Item -LiteralPath $tmpFnappUnpackDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "Removed $tmpFnappUnpackDir"
 }
 
 Get-ChildItem -Path $repoRoot -Filter "tmp-superflare*" -Force -ErrorAction SilentlyContinue |

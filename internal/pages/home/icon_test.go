@@ -17,11 +17,11 @@ func prepareIconTest(t *testing.T) {
 	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
 }
 
-func TestRenderBookmarkIcon_EmptyIconUsesSiteFavicon(t *testing.T) {
+func TestRenderBookmarkIcon_EmptyIconUsesSiteFaviconInFillingMode(t *testing.T) {
 	prepareIconTest(t)
-	out := renderBookmarkIcon("", "https://example.com/path?q=1", "DEFAULT")
-	if !strings.Contains(out, `src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
-		t.Fatalf("empty bookmark icon should use site favicon, got %q", out)
+	out := renderBookmarkIcon("", "https://example.com/path?q=1", "FILLING")
+	if !strings.Contains(out, `/assets/mdi/`) || !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("empty bookmark icon should return builtin bookmark icon before cache is ready, got %q", out)
 	}
 }
 
@@ -39,27 +39,62 @@ func TestRenderBookmarkIcon_ExplicitImageWins(t *testing.T) {
 
 func TestRenderBookmarkIcon_InvalidMDIIconFallsBackToSiteFavicon(t *testing.T) {
 	prepareIconTest(t)
-	out := renderBookmarkIcon("definitely-not-a-real-mdi-icon", "https://example.com/path", "DEFAULT")
-	if !strings.Contains(out, `src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
-		t.Fatalf("invalid mdi icon should fall back to site favicon, got %q", out)
+	out := renderBookmarkIcon("definitely-not-a-real-mdi-icon", "https://example.com/path", "FILLING")
+	if !strings.Contains(out, `/assets/mdi/`) || !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("invalid mdi icon should fall back to builtin bookmark icon before cache is ready, got %q", out)
 	}
 }
 
-func TestRenderBookmarkIcon_UnsupportedURLFallsBackToFillingMode(t *testing.T) {
+func TestRenderBookmarkIcon_InvalidURLFallsBackToBuiltinIconInFillingMode(t *testing.T) {
 	prepareIconTest(t)
-	out := renderBookmarkIcon("", "chrome-extension://abc/index.html", "FILLING")
-	if !strings.Contains(out, "https://favicon.yandex.net/favicon/abc/") {
-		t.Fatalf("unsupported site favicon URL should keep filling-mode fallback, got %q", out)
-	}
-}
-
-func TestRenderBookmarkIcon_InvalidURLFallsBackToBuiltinIcon(t *testing.T) {
-	prepareIconTest(t)
-	out := renderBookmarkIcon("", "not-a-valid-url", "DEFAULT")
+	out := renderBookmarkIcon("", "not-a-valid-url", "FILLING")
 	if !strings.Contains(out, `/assets/mdi/`) {
-		t.Fatalf("invalid bookmark url should fall back to builtin icon, got %q", out)
+		t.Fatalf("filling mode should fall back to builtin icon when favicon fetch fails, got %q", out)
 	}
 	if !strings.Contains(out, `bookmark.svg`) {
-		t.Fatalf("invalid bookmark url should use builtin bookmark icon, got %q", out)
+		t.Fatalf("filling mode should use builtin bookmark icon when favicon fetch fails, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_InvalidExplicitIconFallsBackToBuiltinIconInFillingMode(t *testing.T) {
+	prepareIconTest(t)
+	out := renderBookmarkIcon("definitely-not-a-real-mdi-icon", "not-a-valid-url", "FILLING")
+	if !strings.Contains(out, `/assets/mdi/`) {
+		t.Fatalf("invalid explicit icon should fall back to builtin icon in filling mode, got %q", out)
+	}
+	if !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("invalid explicit icon should use builtin bookmark icon in filling mode, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_DefaultModeKeepsEmptyIconBlank(t *testing.T) {
+	prepareIconTest(t)
+	out := renderBookmarkIcon("", "https://example.com/path?q=1", "DEFAULT")
+	if out != "" {
+		t.Fatalf("default mode should keep empty icon blank, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_DefaultModeKeepsInvalidIconBlank(t *testing.T) {
+	prepareIconTest(t)
+	out := renderBookmarkIcon("definitely-not-a-real-mdi-icon", "https://example.com/path", "DEFAULT")
+	if out != "" {
+		t.Fatalf("default mode should keep invalid icon blank, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_NoneModeHidesExplicitImageIcon(t *testing.T) {
+	prepareIconTest(t)
+	out := renderBookmarkIcon("https://cdn.example.com/icon.png", "https://example.com/path", "NONE")
+	if out != "" {
+		t.Fatalf("none mode should hide all icons, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_NoneModeHidesBuiltInIcon(t *testing.T) {
+	prepareIconTest(t)
+	out := renderBookmarkIcon("git", "https://example.com/path", "NONE")
+	if out != "" {
+		t.Fatalf("none mode should hide built-in icons, got %q", out)
 	}
 }

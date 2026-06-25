@@ -38,7 +38,7 @@ HideSettingButton: false
 HideHelpButton: false
 # Link display
 EnableEncryptedLink: false
-IconMode: "DEFAULT"
+IconMode: "FILLING"
 KeepLetterCase: false
 # Theme
 Theme: "blackboard"

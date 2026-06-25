@@ -5,8 +5,10 @@
         <div class="form-group">
             <p class="help-text">{{ T .Locale "ports_help" }}</p>
         </div>
-        <div class="form-group">
+        <div class="form-group ports-actions">
             <input class="btn-submit" type="button" value='{{ T .Locale "refresh_ports" }}' id="refresh-ports">
+            <input class="btn-submit" type="button" value='{{ T .Locale "hide_all_ports" }}' id="hide-all-ports">
+            <input class="btn-submit" type="button" value='{{ T .Locale "unhide_all_ports" }}' id="unhide-all-ports">
             <input class="btn-submit" type="submit" value='{{ T .Locale "save_changes" }}'>
             <label class="ports-toggle">
                 <input type="checkbox" id="show-hidden-ports">
@@ -50,6 +52,21 @@
 
         .ports-status.error {
             color: #ff9d9d;
+        }
+
+        .ports-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px 12px;
+        }
+
+        .ports-actions .btn-submit {
+            margin: 0 !important;
+        }
+
+        .ports-actions .ports-toggle {
+            margin: 0 0 0 auto;
         }
 
         .ports-table-shell {
@@ -142,6 +159,13 @@
                 transform: rotate(360deg);
             }
         }
+
+        @media (max-width: 720px) {
+            .ports-actions .ports-toggle {
+                margin-left: 0;
+                width: 100%;
+            }
+        }
     </style>
     <script>
         (function () {
@@ -151,6 +175,8 @@
             const fieldPorts = document.getElementById('field-ports');
             const status = document.getElementById('ports-status');
             const showHidden = document.getElementById('show-hidden-ports');
+            const hideAllButton = document.getElementById('hide-all-ports');
+            const unhideAllButton = document.getElementById('unhide-all-ports');
             const initialData = JSON.parse(document.getElementById('data-ports').textContent || '[]');
 
             function normalizeData(items) {
@@ -171,6 +197,14 @@
             function setStatus(text, loading, error) {
                 status.textContent = text || '';
                 status.className = 'ports-status' + (loading ? ' loading' : '') + (error ? ' error' : '');
+            }
+
+            function setHiddenStateForAll(nextHidden) {
+                const data = hot.getSourceData().map(function (item) {
+                    return Object.assign({}, item, { Hidden: !!nextHidden });
+                });
+                hot.loadData(data);
+                setStatus(nextHidden ? '{{ T .Locale "ports_all_hidden" }}' : '{{ T .Locale "ports_all_unhidden" }}', false, false);
             }
 
             const hot = new Handsontable(document.getElementById('container-ports'), {
@@ -258,6 +292,12 @@
 
             document.getElementById('refresh-ports').addEventListener('click', function () {
                 loadPorts();
+            });
+            hideAllButton.addEventListener('click', function () {
+                setHiddenStateForAll(true);
+            });
+            unhideAllButton.addEventListener('click', function () {
+                setHiddenStateForAll(false);
             });
             showHidden.addEventListener('change', function () {
                 loadPorts();

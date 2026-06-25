@@ -1,65 +1,80 @@
 # SuperFlare
 
-SuperFlare is a lean fork of `soulteary/docker-flare` focused on native Go runtime and long-term maintainability.
+SuperFlare 是一个轻量、自托管、可长期维护的导航首页项目，适合个人主页、家庭实验室、NAS 和局域网环境。它可以把应用入口、常用书签、内网地址和跳转逻辑集中管理在一个页面中，方便作为浏览器主页或内网门户长期使用。
 
-This repository keeps only the code, assets, and minimal instructions needed for development and operation. Docker packaging, screenshots, historical branch notes, and loosely related documents are intentionally removed from the mainline.
+相较于单纯静态导航页，SuperFlare 更强调“可维护性”和“本地运行体验”。当前版本已经支持登录保护、在线编辑、数据备份与恢复、端口发现、主题和背景定制、图标自动补全、子目录、多语言界面，以及面向 fnOS / NAS 的原生部署适配。
 
-## Positioning
+本项目 fork 自 `soulteary/docker-flare`，并在原项目基础上持续增强原生 Go 运行方式、配置管理、交互体验，以及 fnOS / 飞牛 NAS 场景下的适配能力。当前仓库只保留开发和运行所必需的代码、资源与最小文档；Docker 相关打包文件统一放在 `tools/docker`，不再占用项目根目录。
 
-- Default runtime: native binary
-- Primary development mode: local native debugging
-- Deployment direction: adapt for fnOS / Feiniu NAS later, but not as a Docker-first project
-- Source of truth: current code and current configuration model
+## 核心特性
 
-## Quick Start
+- 轻量自托管，无需数据库，默认使用本地 YAML 配置
+- 原生 Go 运行与调试，适合本机、Linux 主机和 NAS 环境
+- 登录保护、配置页管理、在线编辑、备份与恢复导入
+- 自动补全图标、主题配色、背景图片、玻璃效果和首页布局控制
+- 端口发现与备注管理，可配合局域网地址和跳转页使用
+- 支持子目录、多语言界面，以及更适合长期维护的交互细节
 
-Requirements:
+## 项目定位
+
+- 默认运行方式：原生二进制
+- 主要开发方式：本地原生调试
+- 部署方向：优先原生部署，其次再处理 Docker / fnOS 打包
+- 当前事实来源：以现有代码和现有配置模型为准
+
+## 快速开始
+
+环境要求：
 
 - Go `1.26.x`
 
-Commands:
+执行命令：
 
 ```bash
 go run build/build.go
 go run .
 ```
 
-Validation:
+校验命令：
 
 ```bash
 go test ./... -count=1
 go build ./...
 ```
 
-## Runtime Files
+## 运行时文件
 
-SuperFlare reads these local runtime files from the repository root:
+SuperFlare 默认从仓库根目录读取这些本地运行时文件：
 
 - `config.yml`
 - `apps.yml`
 - `bookmarks.yml`
 - `ports.yaml`
-- `.env` (optional; only for a small set of startup items such as login and cookie settings)
+- `.env`（可选，仅用于少量启动项，例如登录和 Cookie 配置）
 
-Local runtime state is stored under `var/`.
+本地运行状态数据存放在 `var/` 目录下。
 
-## Repository Layout
+## 仓库结构
 
 ```text
-build/      asset generation helpers
-cmd/        startup flags and runtime entry helpers
-config/     config models and defaults
-embed/      source templates and static assets
-internal/   application code
-ai/         AI-facing repository rules
+build/      资源生成辅助脚本
+cmd/        启动参数和运行入口辅助代码
+config/     配置模型与默认值
+embed/      源模板和静态资源
+internal/   应用主体代码
+fnapp/      fnOS 原生应用打包文件
+tools/      Docker、Linux、Windows 等辅助脚本
+ai/         面向 AI 的仓库规则
 ```
 
-## Notes
+## 说明
 
-- Re-run `go run build/build.go` after changing embedded assets or templates.
-- Site/app icons can use a custom image URL, a built-in MDI icon name, or automatic favicon fallback.
-- Login credentials can be supplied from configuration.
+- 修改嵌入资源或模板后，需要重新执行 `go run build/build.go`
+- 网站或应用图标支持自定义图片 URL、内置 MDI 图标名，或自动回退为站点 favicon / 默认书签图标
+- 登录用户名和密码支持通过配置文件、`.env`、启动参数和设置页统一管理
+- Docker 兼容构建文件位于 `tools/docker/`
+- Linux 原生部署脚本与说明位于 `tools/linux/`
 
-## AI Rules
+## AI 规则
 
-AI-facing maintenance rules live under `ai/`.
+面向 AI 的维护规则集中存放在 `ai/` 目录下。

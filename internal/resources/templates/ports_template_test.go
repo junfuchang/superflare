@@ -13,8 +13,11 @@ func TestPortsTemplateUsesAsyncLoadingAndHiddenControls(t *testing.T) {
 	page := string(raw)
 	for _, expected := range []string{
 		`{{.PortsDataURI}}`,
-		`id="show-hidden-ports"`,
+		`show-hidden-ports`,
+		`hide-all-ports`,
+		`unhide-all-ports`,
 		`includeHidden`,
+		`ports_all_hidden`,
 		`ports_load_failed`,
 		`colWidths: [82, 68, 130, 92, 72, 72, 320]`,
 	} {

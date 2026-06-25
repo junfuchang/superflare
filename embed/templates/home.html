@@ -7,7 +7,13 @@
   <meta name="google" content="notranslate">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{.OptionTitle}}</title>
-  <link rel="shortcut icon" href="{{ IconURL .OptionSiteIcon }}"/>
+  <link rel="icon" href="{{ SiteIconURL .OptionSiteIcon }}"/>
+  <link rel="shortcut icon" href="{{ SiteIconURL .OptionSiteIcon }}"/>
+  {{ if eq .OptionSiteIcon "" }}
+  <link rel="apple-touch-icon" href="{{ AppleTouchIconURL }}"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ AndroidChrome192URL }}"/>
+  <link rel="icon" type="image/png" sizes="512x512" href="{{ AndroidChrome512URL }}"/>
+  {{ end }}
   {{ if .DebugMode }}
   <link rel="stylesheet" href="/assets/css/base.css">
   <link rel="stylesheet" href="/assets/css/home/search.css">
