@@ -37,11 +37,15 @@ config.yml
 ports.yaml
 var/
 tmp-superflare.*
-.tools/
+.tools/*
+!.tools/README.md
+!.tools/fnpack/
+.tools/fnpack/*
+!.tools/fnpack/fnpack.exe
+.tools/go/
 tmp-fn-*.html
 .env
 *.fpk
-fnapp/fnpack.exe
 fnapp/fnnas.superflare/app/server/superflare
 fnapp/fnnas.superflare/app/server/defaults/.env
 fnapp/fnnas.superflare/app/server/defaults/config.yml

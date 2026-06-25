@@ -44,7 +44,7 @@ function Resolve-FnpackExe {
         $candidates += $env:SUPERFLARE_FNPACK_BIN
     }
 
-    $candidates += (Join-Path $repoRoot "fnapp\fnpack.exe")
+    $candidates += (Join-Path $repoRoot ".tools\fnpack\fnpack.exe")
 
     foreach ($candidate in $candidates) {
         if ([string]::IsNullOrWhiteSpace($candidate)) {
@@ -60,7 +60,7 @@ function Resolve-FnpackExe {
         return $cmd.Source
     }
 
-    throw "fnpack not found. Place fnpack.exe under fnapp\\ or set SUPERFLARE_FNPACK_BIN."
+    throw "fnpack not found. Set SUPERFLARE_FNPACK_BIN, place fnpack.exe under .tools\\fnpack\\, or add fnpack to PATH."
 }
 
 function Ensure-Directory {
