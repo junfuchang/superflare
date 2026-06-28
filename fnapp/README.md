@@ -43,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\fnapp\build-superflare-fpk.ps1
 
 - 端口：`3636`
 - 登录：默认启用
-- 默认用户名和密码来自打包时的 `config.yml` 默认值，目前为 `admin / admin`
+- 默认用户名和密码来自打包时的 `config.yml` 默认值，首次安装后建议尽快在应用设置或 SuperFlare 设置页中修改
 - 编辑页：默认启用
 - fnOS 权限：`run-as: root`，用于让端口页在 NAS 上读取完整的系统端口归属名称
 - fnOS 应用设置：`系统设置 -> 应用设置` 现已支持修改 `FLARE_USER` / `FLARE_PASS`，会持久化到 `etc/.env` 并通过自动重启生效

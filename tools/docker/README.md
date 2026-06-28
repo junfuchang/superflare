@@ -25,6 +25,7 @@
 - `/data/var/`
 
 镜像本身不会打包你本地仓库根目录下的运行时数据文件。
+镜像内只包含一份默认模板；容器启动时仅在 `/data` 中缺少同名文件时补齐，不会覆盖已经存在的配置。
 
 ## 构建
 
@@ -68,6 +69,12 @@ docker run -d \
 ```bash
 docker compose -f ./tools/docker/docker-compose.yml up -d
 ```
+
+首次部署前建议先编辑 `tools/docker/docker-compose.yml`：
+
+- `FLARE_DISABLE_LOGIN`：`false` 表示启用登录，`true` 表示关闭登录
+- `FLARE_COOKIE_SECRET`：登录 Cookie 签名密钥，请替换为稳定且足够随机的值，避免容器重建后登录会话失效
+- 登录用户名和密码来自容器数据目录 `/data/config.yml`、`/data/.env` 或设置页保存结果
 
 如果你希望 Docker 部署时读取宿主机端口信息并用于 `/settings/ports`，需要显式挂载宿主机 `/proc`，并设置 `FLARE_PORT_PROC_ROOT`：
 

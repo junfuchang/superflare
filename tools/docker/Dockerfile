@@ -31,6 +31,7 @@ WORKDIR /data
 
 COPY --from=builder /out/superflare /opt/superflare/superflare
 COPY tools/docker/docker-entrypoint.sh /opt/superflare/docker-entrypoint.sh
+COPY config.yml apps.yml bookmarks.yml ports.yaml /opt/superflare/defaults/
 
 RUN chmod +x /opt/superflare/superflare /opt/superflare/docker-entrypoint.sh && \
     mkdir -p /data /data/var/uploads /data/var/cache /data/var/tools /data/var/lighthouse /data/var/screens

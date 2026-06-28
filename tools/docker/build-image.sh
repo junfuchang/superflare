@@ -36,6 +36,10 @@ for item in \
   embed \
   internal \
   tools/docker \
+  config.yml \
+  apps.yml \
+  bookmarks.yml \
+  ports.yaml \
   go.mod \
   go.sum \
   main.go \

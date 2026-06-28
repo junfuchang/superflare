@@ -91,6 +91,12 @@ function Get-EnableLogin {
     }
 }
 
+function New-CookieSecret {
+    $bytes = [byte[]]::new(32)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    return ([System.BitConverter]::ToString($bytes) -replace "-", "").ToLowerInvariant()
+}
+
 function Invoke-CheckedNative {
     param(
         [string]$FilePath,
@@ -107,10 +113,16 @@ function Invoke-CheckedNative {
 function Stop-TrackedProcess {
     param(
         [int]$ProcessId,
-        [System.Collections.Generic.HashSet[int]]$Seen
+        [System.Collections.Generic.HashSet[int]]$Seen,
+        [string]$ExpectedPath
     )
 
     if ($ProcessId -le 0 -or $Seen.Contains($ProcessId)) {
+        return
+    }
+
+    if (-not (Test-SuperflareProcess -ProcessId $ProcessId -ExpectedPath $ExpectedPath)) {
+        Write-Host "Skipped PID $ProcessId because it is not this checkout's superflare.exe."
         return
     }
 
@@ -123,6 +135,28 @@ function Stop-TrackedProcess {
     }
 }
 
+function Test-SuperflareProcess {
+    param(
+        [int]$ProcessId,
+        [string]$ExpectedPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedPath)) {
+        return $false
+    }
+
+    $expected = [System.IO.Path]::GetFullPath($ExpectedPath).ToLowerInvariant()
+    try {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+        if ($null -eq $proc -or $null -eq $proc.ExecutablePath) {
+            return $false
+        }
+        return ([System.IO.Path]::GetFullPath($proc.ExecutablePath).ToLowerInvariant() -eq $expected)
+    } catch {
+        return $false
+    }
+}
+
 function Stop-Superflare {
     param(
         [string]$RepoRoot,
@@ -131,44 +165,47 @@ function Stop-Superflare {
     )
 
     $seen = [System.Collections.Generic.HashSet[int]]::new()
+    $exePath = Join-Path $RepoRoot "superflare.exe"
 
     if (Test-Path $PidFile) {
         $rawPid = (Get-Content $PidFile -Raw).Trim()
         $pidValue = 0
         if ([int]::TryParse($rawPid, [ref]$pidValue)) {
-            Stop-TrackedProcess -ProcessId $pidValue -Seen $seen
+            Stop-TrackedProcess -ProcessId $pidValue -Seen $seen -ExpectedPath $exePath
         }
         Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
     }
 
-    try {
-        $listenerPids = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
-            Select-Object -ExpandProperty OwningProcess -Unique
-        foreach ($listenerPid in $listenerPids) {
-            Stop-TrackedProcess -ProcessId ([int]$listenerPid) -Seen $seen
-        }
-    } catch {
-    }
-
-    $exePath = (Join-Path $RepoRoot "superflare.exe").ToLowerInvariant()
     $repoProcesses = Get-CimInstance Win32_Process -Filter "Name = 'superflare.exe'" -ErrorAction SilentlyContinue
     foreach ($repoProc in $repoProcesses) {
-        if ($null -ne $repoProc.ExecutablePath -and $repoProc.ExecutablePath.ToLowerInvariant() -eq $exePath) {
-            Stop-TrackedProcess -ProcessId ([int]$repoProc.ProcessId) -Seen $seen
+        if ($null -ne $repoProc.ExecutablePath -and $repoProc.ExecutablePath.ToLowerInvariant() -eq $exePath.ToLowerInvariant()) {
+            Stop-TrackedProcess -ProcessId ([int]$repoProc.ProcessId) -Seen $seen -ExpectedPath $exePath
         }
     }
 
     for ($i = 0; $i -lt 20; $i++) {
-        $busy = $false
-        try {
-            $busy = [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
-        } catch {
-            $busy = $false
-        }
-        if (-not $busy) {
+        if (-not (Test-TcpPortOpen -Port $Port)) {
             break
         }
         Start-Sleep -Milliseconds 250
+    }
+}
+
+function Test-TcpPortOpen {
+    param([int]$Port)
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $async = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(200)) {
+            return $false
+        }
+        $client.EndConnect($async)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
     }
 }
 
@@ -198,7 +235,11 @@ $goExe = Resolve-GoExe
 $goBinDir = Split-Path -Parent $goExe
 $port = Get-TargetPort
 $enableLogin = Get-EnableLogin
-$cookieSecret = if ([string]::IsNullOrWhiteSpace($env:SUPERFLARE_COOKIE_SECRET)) { "superflare-local-secret" } else { $env:SUPERFLARE_COOKIE_SECRET }
+$cookieSecret = if ([string]::IsNullOrWhiteSpace($env:SUPERFLARE_COOKIE_SECRET)) { New-CookieSecret } else { $env:SUPERFLARE_COOKIE_SECRET }
+
+if ([string]::IsNullOrWhiteSpace($env:SUPERFLARE_COOKIE_SECRET)) {
+    Write-Host "SUPERFLARE_COOKIE_SECRET is not set. A temporary random cookie secret will be used for this run."
+}
 
 $env:PATH = "$goBinDir;$env:PATH"
 
@@ -289,7 +330,7 @@ Write-Host "PID file: $pidFile"
 Write-Host "Stdout log: $stdoutLog"
 Write-Host "Stderr log: $stderrLog"
 if ($enableLogin) {
-    Write-Host "Login is enabled. Use credentials from config.yml (currently admin/admin)."
+    Write-Host "Login is enabled. Use credentials from config.yml or .env."
 } else {
     Write-Host "Login is disabled for this run."
 }

@@ -75,7 +75,11 @@ chmod +x ./tools/linux/*.sh
 
 ## 生产环境建议
 
-生产环境不建议直接使用默认的 `superflare-local-secret`。至少应明确设置：
+`run-superflare.sh` 与 `restart-superflare.sh` 在未设置 `SUPERFLARE_COOKIE_SECRET` 时，会为本次运行生成临时随机 Cookie 密钥；重启后已登录会话会失效。
+
+`install-systemd.sh` 在未设置 `SUPERFLARE_COOKIE_SECRET` 且目标 `.env` 中也没有 `FLARE_COOKIE_SECRET` 时，会生成随机 Cookie 密钥并写入目标 `.env`。如果目标 `.env` 已经存在密钥，脚本会继续沿用，避免破坏已有登录会话。
+
+生产环境建议显式设置稳定且足够随机的 Cookie 密钥：
 
 ```bash
 export SUPERFLARE_COOKIE_SECRET='请替换为足够随机的生产密钥'
@@ -100,8 +104,7 @@ export SUPERFLARE_PORT=3636
 然后以 root 安装：
 
 ```bash
-sudo SUPERFLARE_COOKIE_SECRET='请替换为生产密钥' \
-  SUPERFLARE_ENABLE_LOGIN=true \
+sudo SUPERFLARE_ENABLE_LOGIN=true \
   SUPERFLARE_PORT=3636 \
   ./tools/linux/install-systemd.sh
 ```

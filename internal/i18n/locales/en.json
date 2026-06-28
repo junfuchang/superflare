@@ -145,6 +145,7 @@
   "login_pass_confirm_error": "The two login passwords do not match.",
   "login_config_runtime_fallback": "Persistent login config could not be read. This page is showing the runtime credentials instead. Check config.yml and .env content and permissions.",
   "login_config_runtime_source": "config.yml login fields are empty. This page is showing the active runtime credentials; saving will persist them to config.yml and .env.",
+  "default_login_credentials_warning": "The factory default login credentials are still active. Change the username and password before exposing this service.",
   "login_config_help": "Leave the username empty to keep the current value. Leave both password fields empty to keep the current password. Saving syncs both config.yml and .env.",
   "settings_ports": "Ports",
   "ports_help": "Ports are collected only when this page is opened or refreshed. Only remarks and hidden state are editable and saved to ports.yaml. Docker scans the container network by default; mount the host /proc and set FLARE_PORT_PROC_ROOT to scan host ports.",

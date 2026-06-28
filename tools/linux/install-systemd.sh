@@ -7,7 +7,6 @@ TARGET_DIR="${SUPERFLARE_INSTALL_DIR:-/opt/superflare}"
 SERVICE_NAME="${SUPERFLARE_SERVICE_NAME:-superflare}"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 PORT="${SUPERFLARE_PORT:-3636}"
-COOKIE_SECRET="${SUPERFLARE_COOKIE_SECRET:-superflare-production-secret}"
 ENABLE_LOGIN="${SUPERFLARE_ENABLE_LOGIN:-true}"
 ENV_FILE=""
 
@@ -36,6 +35,36 @@ upsert_env_value() {
   mv "$TMP_FILE" "$ENV_FILE"
 }
 
+read_env_value() {
+  KEY="$1"
+  if [ ! -f "$ENV_FILE" ]; then
+    return 0
+  fi
+  sed -n "s/^${KEY}=//p" "$ENV_FILE" | tail -n 1
+}
+
+generate_cookie_secret() {
+  if [ -n "${SUPERFLARE_COOKIE_SECRET:-}" ]; then
+    printf '%s\n' "$SUPERFLARE_COOKIE_SECRET"
+    return 0
+  fi
+  EXISTING_SECRET=$(read_env_value FLARE_COOKIE_SECRET)
+  if [ -n "$EXISTING_SECRET" ]; then
+    printf '%s\n' "$EXISTING_SECRET"
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return 0
+  fi
+  if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    return 0
+  fi
+  printf '%s%s%s\n' "$(date +%s 2>/dev/null || printf 0)" "$$" "$PORT"
+}
+
 if [ ! -x "$REPO_ROOT/superflare" ]; then
   echo "未找到已构建的 superflare 可执行文件，请先执行 ./tools/linux/build-superflare.sh" >&2
   exit 1
@@ -55,6 +84,10 @@ for file in config.yml apps.yml bookmarks.yml ports.yaml .env; do
 done
 
 touch "$ENV_FILE"
+COOKIE_SECRET=$(generate_cookie_secret)
+if [ -z "${SUPERFLARE_COOKIE_SECRET:-}" ] && [ -z "$(read_env_value FLARE_COOKIE_SECRET)" ]; then
+  echo "未设置 SUPERFLARE_COOKIE_SECRET，已为 systemd 安装生成随机 Cookie 密钥并写入 $ENV_FILE。"
+fi
 upsert_env_value FLARE_PORT "$PORT"
 upsert_env_value FLARE_DISABLE_LOGIN "$DISABLE_LOGIN"
 upsert_env_value FLARE_COOKIE_SECRET "$COOKIE_SECRET"

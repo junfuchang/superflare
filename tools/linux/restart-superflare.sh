@@ -8,8 +8,24 @@ PID_FILE="$RUN_DIR/superflare.pid"
 STDOUT_LOG="$RUN_DIR/superflare.stdout.log"
 STDERR_LOG="$RUN_DIR/superflare.stderr.log"
 PORT="${SUPERFLARE_PORT:-3636}"
-COOKIE_SECRET="${SUPERFLARE_COOKIE_SECRET:-superflare-local-secret}"
 ENABLE_LOGIN="${SUPERFLARE_ENABLE_LOGIN:-}"
+
+generate_cookie_secret() {
+  if [ -n "${SUPERFLARE_COOKIE_SECRET:-}" ]; then
+    printf '%s\n' "$SUPERFLARE_COOKIE_SECRET"
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return 0
+  fi
+  if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    return 0
+  fi
+  printf '%s%s%s\n' "$(date +%s 2>/dev/null || printf 0)" "$$" "$PORT"
+}
 
 resolve_go() {
   if [ -n "${SUPERFLARE_GO_BIN:-}" ]; then
@@ -70,9 +86,37 @@ resolve_disable_login() {
   esac
 }
 
+process_matches_superflare() {
+  TARGET_PID="$1"
+  BIN_PATH="$REPO_ROOT/superflare"
+  if [ -z "$TARGET_PID" ]; then
+    return 1
+  fi
+  case "$TARGET_PID" in
+    *[!0-9]*) return 1 ;;
+  esac
+  if [ -L "/proc/$TARGET_PID/exe" ]; then
+    EXE_PATH=$(readlink "/proc/$TARGET_PID/exe" 2>/dev/null || true)
+    if [ "$EXE_PATH" = "$BIN_PATH" ]; then
+      return 0
+    fi
+  fi
+  if [ -r "/proc/$TARGET_PID/cmdline" ]; then
+    CMDLINE=$(tr '\0' ' ' <"/proc/$TARGET_PID/cmdline" 2>/dev/null || true)
+    case "$CMDLINE" in
+      *"$BIN_PATH"*) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
 kill_pid() {
   TARGET_PID="$1"
   if [ -z "$TARGET_PID" ]; then
+    return 0
+  fi
+  if ! process_matches_superflare "$TARGET_PID"; then
+    echo "跳过 PID $TARGET_PID：该进程不属于当前 SuperFlare 可执行文件。"
     return 0
   fi
   if kill -0 "$TARGET_PID" >/dev/null 2>&1; then
@@ -95,15 +139,6 @@ stop_existing() {
     OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
     kill_pid "${OLD_PID:-}"
     rm -f "$PID_FILE"
-  fi
-
-  if command -v ss >/dev/null 2>&1; then
-    PIDS=$(ss -ltnp "( sport = :$PORT )" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u)
-    for pid in $PIDS; do
-      kill_pid "$pid"
-    done
-  elif command -v netstat >/dev/null 2>&1; then
-    :
   fi
 
   if [ -f "$REPO_ROOT/superflare" ] && command -v pgrep >/dev/null 2>&1; then
@@ -137,6 +172,11 @@ mkdir -p "$RUN_DIR"
 GO_BIN=$(resolve_go)
 ask_login
 DISABLE_LOGIN=$(resolve_disable_login)
+COOKIE_SECRET=$(generate_cookie_secret)
+
+if [ -z "${SUPERFLARE_COOKIE_SECRET:-}" ]; then
+  echo "未设置 SUPERFLARE_COOKIE_SECRET，本次运行将使用临时随机 Cookie 密钥；重启后已登录会话会失效。"
+fi
 
 echo "仓库目录: $REPO_ROOT"
 echo "Go: $GO_BIN"

@@ -5,8 +5,24 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 PORT="${SUPERFLARE_PORT:-3636}"
-COOKIE_SECRET="${SUPERFLARE_COOKIE_SECRET:-superflare-local-secret}"
 ENABLE_LOGIN="${SUPERFLARE_ENABLE_LOGIN:-}"
+
+generate_cookie_secret() {
+  if [ -n "${SUPERFLARE_COOKIE_SECRET:-}" ]; then
+    printf '%s\n' "$SUPERFLARE_COOKIE_SECRET"
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return 0
+  fi
+  if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    return 0
+  fi
+  printf '%s%s%s\n' "$(date +%s 2>/dev/null || printf 0)" "$$" "$PORT"
+}
 
 if [ -z "$ENABLE_LOGIN" ]; then
   printf '本次运行是否启用登录？[Y/n] '
@@ -31,6 +47,11 @@ case "$ENABLE_LOGIN" in
 esac
 
 cd "$REPO_ROOT"
+COOKIE_SECRET=$(generate_cookie_secret)
+
+if [ -z "${SUPERFLARE_COOKIE_SECRET:-}" ]; then
+  echo "未设置 SUPERFLARE_COOKIE_SECRET，本次运行将使用临时随机 Cookie 密钥；重启后已登录会话会失效。"
+fi
 
 if [ ! -x ./superflare ]; then
   echo "未找到 ./superflare，请先执行 tools/linux/build-superflare.sh" >&2

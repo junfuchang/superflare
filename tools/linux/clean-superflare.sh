@@ -11,9 +11,37 @@ TMP_FNAPP_UNPACK_DIR="$REPO_ROOT/tmp-fnapp-unpack"
 FNAPP_BINARY="$REPO_ROOT/fnapp/superflare/app/server/superflare"
 FNAPP_PACKAGE="$REPO_ROOT/fnapp/superflare/superflare.fpk"
 
+process_matches_superflare() {
+  TARGET_PID="$1"
+  BIN_PATH="$REPO_ROOT/superflare"
+  if [ -z "$TARGET_PID" ]; then
+    return 1
+  fi
+  case "$TARGET_PID" in
+    *[!0-9]*) return 1 ;;
+  esac
+  if [ -L "/proc/$TARGET_PID/exe" ]; then
+    EXE_PATH=$(readlink "/proc/$TARGET_PID/exe" 2>/dev/null || true)
+    if [ "$EXE_PATH" = "$BIN_PATH" ]; then
+      return 0
+    fi
+  fi
+  if [ -r "/proc/$TARGET_PID/cmdline" ]; then
+    CMDLINE=$(tr '\0' ' ' <"/proc/$TARGET_PID/cmdline" 2>/dev/null || true)
+    case "$CMDLINE" in
+      *"$BIN_PATH"*) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
 kill_pid() {
   TARGET_PID="$1"
   if [ -z "$TARGET_PID" ]; then
+    return 0
+  fi
+  if ! process_matches_superflare "$TARGET_PID"; then
+    echo "Skipped PID $TARGET_PID: it is not this checkout's SuperFlare process."
     return 0
   fi
   if kill -0 "$TARGET_PID" >/dev/null 2>&1; then
@@ -46,13 +74,6 @@ if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
   kill_pid "${OLD_PID:-}"
   rm -f "$PID_FILE"
-fi
-
-if command -v ss >/dev/null 2>&1; then
-  PIDS=$(ss -ltnp "( sport = :$PORT )" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u)
-  for pid in $PIDS; do
-    kill_pid "$pid"
-  done
 fi
 
 if [ -f "$REPO_ROOT/superflare" ]; then

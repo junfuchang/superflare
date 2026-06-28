@@ -22,10 +22,16 @@ function Get-TargetPort {
 function Stop-TrackedProcess {
     param(
         [int]$ProcessId,
-        [System.Collections.Generic.HashSet[int]]$Seen
+        [System.Collections.Generic.HashSet[int]]$Seen,
+        [string]$ExpectedPath
     )
 
     if ($ProcessId -le 0 -or $Seen.Contains($ProcessId)) {
+        return
+    }
+
+    if (-not (Test-SuperflareProcess -ProcessId $ProcessId -ExpectedPath $ExpectedPath)) {
+        Write-Host "Skipped PID $ProcessId because it is not this checkout's superflare.exe."
         return
     }
 
@@ -35,6 +41,28 @@ function Stop-TrackedProcess {
         Write-Host "Stopped PID $ProcessId"
     } catch {
         Write-Host "PID $ProcessId was already gone or could not be stopped."
+    }
+}
+
+function Test-SuperflareProcess {
+    param(
+        [int]$ProcessId,
+        [string]$ExpectedPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedPath)) {
+        return $false
+    }
+
+    $expected = [System.IO.Path]::GetFullPath($ExpectedPath).ToLowerInvariant()
+    try {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+        if ($null -eq $proc -or $null -eq $proc.ExecutablePath) {
+            return $false
+        }
+        return ([System.IO.Path]::GetFullPath($proc.ExecutablePath).ToLowerInvariant() -eq $expected)
+    } catch {
+        return $false
     }
 }
 
@@ -69,24 +97,15 @@ if (Test-Path $pidFile) {
     $rawPid = (Get-Content $pidFile -Raw).Trim()
     $pidValue = 0
     if ([int]::TryParse($rawPid, [ref]$pidValue)) {
-        Stop-TrackedProcess -ProcessId $pidValue -Seen $seen
+        Stop-TrackedProcess -ProcessId $pidValue -Seen $seen -ExpectedPath $exePath
     }
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-}
-
-try {
-    $listenerPids = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop |
-        Select-Object -ExpandProperty OwningProcess -Unique
-    foreach ($listenerPid in $listenerPids) {
-        Stop-TrackedProcess -ProcessId ([int]$listenerPid) -Seen $seen
-    }
-} catch {
 }
 
 $repoProcesses = Get-CimInstance Win32_Process -Filter "Name = 'superflare.exe'" -ErrorAction SilentlyContinue
 foreach ($repoProc in $repoProcesses) {
     if ($null -ne $repoProc.ExecutablePath -and $repoProc.ExecutablePath.ToLowerInvariant() -eq $exePath.ToLowerInvariant()) {
-        Stop-TrackedProcess -ProcessId ([int]$repoProc.ProcessId) -Seen $seen
+        Stop-TrackedProcess -ProcessId ([int]$repoProc.ProcessId) -Seen $seen -ExpectedPath $exePath
     }
 }
 
