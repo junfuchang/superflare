@@ -7,21 +7,22 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
 	"time"
 )
 
-func jsonStringify(data interface{}) string {
+var jsonStringify = func(data interface{}) (string, error) {
 	buff := bytes.NewBuffer([]byte{})
 	encoder := json.NewEncoder(buff)
 	encoder.SetEscapeHTML(false)
 	err := encoder.Encode(data)
 	if err != nil {
-		return "{}"
+		return "", fmt.Errorf("json stringify failed: %w", err)
 	}
-	return strings.TrimSpace(buff.String())
+	return strings.TrimSpace(buff.String()), nil
 }
 
 func MaskTextWithStars(input string) string {

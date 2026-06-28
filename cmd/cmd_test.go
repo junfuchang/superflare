@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/junfuchang/superflare/cmd"
@@ -12,66 +15,42 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 	flags "github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
 
 var versionDatePattern = regexp.MustCompile(`\d{8}`)
 
-// Mock dependencies
-type EnvParserMock struct {
-	mock.Mock
-}
-
-func (m *EnvParserMock) ParseEnvVars() map[string]string {
-	args := m.Called()
-	return args.Get(0).(map[string]string)
-}
-
-func (m *EnvParserMock) ParseEnvFile(envVars map[string]string) map[string]string {
-	args := m.Called(envVars)
-	return args.Get(0).(map[string]string)
-}
-
-type CLIParserMock struct {
-	mock.Mock
-}
-
-// parseCLI is used by testify/mock when On("parseCLI", ...) is set.
-//
-//nolint:unused
-func (m *CLIParserMock) parseCLI(envs map[string]string) model.Flags {
-	args := m.Called(envs)
-	return args.Get(0).(model.Flags)
-}
-
 func TestParse(t *testing.T) {
-	envParser := new(EnvParserMock)
-	cliParser := new(CLIParserMock)
-
-	envVars := map[string]string{}
-	parsedEnvs := map[string]string{}
-	expectedFlags := model.Flags{}
-
-	defaults := define.DefaultEnvVars
-	expectedFlags.User = defaults.User
-	expectedFlags.Port = defaults.Port
-	expectedFlags.EnableGuide = defaults.EnableGuide
-	expectedFlags.EnableEditor = defaults.EnableEditor
-	expectedFlags.Visibility = defaults.Visibility
-	expectedFlags.EnableMinimumRequest = defaults.EnableMinimumRequest
-	expectedFlags.DisableLoginMode = defaults.DisableLoginMode
-	expectedFlags.CookieName = defaults.CookieName
-	expectedFlags.CookieSecret = defaults.CookieSecret
-
-	envParser.On("ParseEnvVars").Return(envVars)
-	envParser.On("ParseEnvFile", envVars).Return(parsedEnvs)
-	cliParser.On("parseCLI", parsedEnvs).Return(expectedFlags)
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	origArgs := os.Args
+	origAppFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	defer func() {
+		os.Args = origArgs
+		define.AppFlags = origAppFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+	}()
+	os.Args = []string{"superflare"}
 
 	actualFlags := cmd.Parse()
 
-	actualFlags.Pass = ""
-	actualFlags.PassIsGenerated = false
-
+	expectedFlags := model.Flags{
+		Port:                 define.DEFAULT_PORT,
+		EnableGuide:          define.DEFAULT_ENABLE_GUIDE,
+		EnableEditor:         define.DEFAULT_ENABLE_EDITOR,
+		EnableMinimumRequest: define.DEFAULT_ENABLE_MINI_REQUEST,
+		DisableCSP:           define.DEFAULT_DISABLE_CSP,
+		Visibility:           define.DEFAULT_VISIBILITY,
+		DisableLoginMode:     define.DEFAULT_DISABLE_LOGIN,
+		User:                 define.DEFAULT_LOGIN_USER,
+		Pass:                 define.DEFAULT_LOGIN_PASS,
+		UserIsGenerated:      false,
+		PassIsGenerated:      false,
+		CookieName:           define.DEFAULT_COOKIE_NAME,
+		CookieSecret:         define.DEFAULT_COOKIE_SECRET,
+	}
 	assert.Equal(t, expectedFlags, actualFlags)
 }
 
@@ -133,4 +112,191 @@ func TestGetVersionMute(t *testing.T) {
 	})
 	assert.Regexp(t, versionDatePattern, ver)
 	assert.NotContains(t, output, "Challenge all bookmarking apps and websites directories")
+}
+
+func TestParseLogsWarningWhenAccountConfigReadFails(t *testing.T) {
+	resetCmdEnv(t)
+	tmpDir := withTempCmdWorkDir(t)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: [broken"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"superflare"}
+
+	_, err := cmd.ParseE()
+	if err == nil {
+		t.Fatal("expected ParseE to fail")
+	}
+	if !strings.Contains(err.Error(), "read account config failed") {
+		t.Fatalf("expected account config error, got %v", err)
+	}
+}
+
+func TestParseKeepsBaseFlagsInSyncWhenConfigOverridesLoginAccount(t *testing.T) {
+	resetCmdEnv(t)
+	tmpDir := withTempCmdWorkDir(t)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: config-user\nLoginPass: config-pass\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"superflare"}
+
+	origAppFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	defer func() {
+		define.AppFlags = origAppFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+	}()
+
+	flags := cmd.Parse()
+	if flags.User != "config-user" || flags.Pass != "config-pass" {
+		t.Fatalf("expected parsed flags to use config login account, got user=%q pass=%q", flags.User, flags.Pass)
+	}
+	if define.AppBaseFlags.User != "config-user" || define.AppBaseFlags.Pass != "config-pass" {
+		t.Fatalf("expected base flags to stay in sync, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	}
+	if define.AppFlags.User != "config-user" || define.AppFlags.Pass != "config-pass" {
+		t.Fatalf("expected app flags to stay in sync, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
+	}
+}
+
+func TestParsePreservesSourceFlagsBeforeConfigOverridesLoginAccount(t *testing.T) {
+	resetCmdEnv(t)
+	tmpDir := withTempCmdWorkDir(t)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("FLARE_USER=env-user\nFLARE_PASS=env-pass\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: config-user\nLoginPass: config-pass\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"superflare"}
+
+	origAppFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	defer func() {
+		define.AppFlags = origAppFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+	}()
+
+	flags := cmd.Parse()
+	if flags.User != "config-user" || flags.Pass != "config-pass" {
+		t.Fatalf("expected parsed flags to use config login account, got user=%q pass=%q", flags.User, flags.Pass)
+	}
+	if define.AppSourceFlags.User != "env-user" || define.AppSourceFlags.Pass != "env-pass" {
+		t.Fatalf("expected source flags to preserve pre-config account, got user=%q pass=%q", define.AppSourceFlags.User, define.AppSourceFlags.Pass)
+	}
+}
+
+func TestParseEFailsWhenDotEnvContainsInvalidConfiguredValues(t *testing.T) {
+	resetCmdEnv(t)
+	tmpDir := withTempCmdWorkDir(t)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("FLARE_PORT=9999999\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"superflare"}
+
+	_, err := cmd.ParseE()
+	if err == nil {
+		t.Fatal("expected ParseE to fail")
+	}
+	if !strings.Contains(err.Error(), "FLARE_PORT must be between 1 and 65535") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseEFailsWhenDotEnvLoginCredentialsIncomplete(t *testing.T) {
+	resetCmdEnv(t)
+	tmpDir := withTempCmdWorkDir(t)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("FLARE_USER=env-user\nFLARE_PASS=\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"superflare"}
+
+	_, err := cmd.ParseE()
+	if err == nil {
+		t.Fatal("expected ParseE to fail")
+	}
+	if !strings.Contains(err.Error(), "parse .env login config failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "login credentials are incomplete") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseEFailsWhenConfigLoginCredentialsIncomplete(t *testing.T) {
+	resetCmdEnv(t)
+	tmpDir := withTempCmdWorkDir(t)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: config-user\nLoginPass: \"\"\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"superflare"}
+
+	_, err := cmd.ParseE()
+	if err == nil {
+		t.Fatal("expected ParseE to fail")
+	}
+	if !strings.Contains(err.Error(), "read account config failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "login credentials are incomplete") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseEHelpBypassesDotEnvResolutionError(t *testing.T) {
+	if os.Getenv("SUPERFLARE_PARSE_HELP_HELPER") == "1" {
+		originalResolve := cmd.ResolveDotEnvPathForTest()
+		defer cmd.SetResolveDotEnvPathForTest(originalResolve)
+		cmd.SetResolveDotEnvPathForTest(func() (string, error) {
+			return "", os.ErrPermission
+		})
+
+		originalArgs := os.Args
+		defer func() { os.Args = originalArgs }()
+		os.Args = []string{"superflare", "--help"}
+
+		_, _ = cmd.ParseE()
+		t.Fatal("ParseE returned without exiting for --help")
+	}
+
+	proc := exec.Command(os.Args[0], "-test.run=TestParseEHelpBypassesDotEnvResolutionError$")
+	proc.Env = append(os.Environ(), "SUPERFLARE_PARSE_HELP_HELPER=1")
+	output, err := proc.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper process failed: %v\n%s", err, string(output))
+	}
+	text := string(output)
+	if !strings.Contains(text, "支持命令") {
+		t.Fatalf("expected help output, got %s", text)
+	}
+	if strings.Contains(text, "resolve .env path failed") {
+		t.Fatalf("help path should not attempt .env resolution, got %s", text)
+	}
 }

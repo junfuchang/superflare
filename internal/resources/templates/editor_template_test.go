@@ -1,6 +1,9 @@
 package templates
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,7 +17,15 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 
 	for _, expected := range []string{
 		`id="check-links"`,
+		`id="editor-theme-toggle"`,
+		`id="editor-operation-notice"`,
+		`id="editor-operation-notice-text"`,
+		`id="editor-operation-notice-close"`,
+		`id="editor-backup-download"`,
+		`id="editor-restore-submit"`,
+		`runtime.js{{.DebugAssetVersion}}`,
 		`editor-page`,
+		`editor-render-warning`,
 		`editor-backup-file`,
 		`SiteIconURL .OptionSiteIcon`,
 		`FLARE_FIX_CATEGORY = ["[SuperFlare \u5e94\u7528]"]`,
@@ -23,6 +34,26 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 		`\u5b50\u76ee\u5f55`,
 		`type: 'autocomplete'`,
 		`local-url-empty`,
+		`--editor-table-surface`,
+		`superflare-editor-theme`,
+		`body{--editor-page-background:#14181d;`,
+		`data-editor-theme`,
+		`function parseEditorJSONFailure(response, fallbackMessage)`,
+		`function summarizeEditorErrorMessage(message, fallbackMessage)`,
+		`function showEditorOperationNotice(type, message, autoHide)`,
+		`function stripEditorNoticeQuery()`,
+		`function parseDownloadFilename(disposition)`,
+		`function replaceEditorDocumentWithHTML(html)`,
+		`btn.title = detail;`,
+		`setButtonState(btn, 'editor-button-state-error', '\u68c0\u67e5\u5931\u8d25');`,
+		`backupSuccess`,
+		`restoreMissingFile`,
+		`saveRunning`,
+		`--editor-table-input-text`,
+		`--editor-table-accent-text`,
+		`.handsontable.listbox`,
+		`.htMenu.htContextMenu`,
+		`<body>`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("editor template missing %q", expected)
@@ -32,9 +63,203 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 	for _, broken := range []string{
 		"? id=",
 		"SuperFlare \ufffd",
+		`style="{{.PageAppearance}}"`,
+		`Handsontable.renderers.TextRenderer.apply(this, arguments);return;if`,
+		`setButtonState(btn, 'editor-button-state-error', detail);`,
+		`window.alert(`,
 	} {
 		if strings.Contains(page, broken) {
 			t.Fatalf("editor template contains broken marker %q", broken)
 		}
+	}
+}
+
+func TestEditorTemplateAppliesLinkCheckResultsInBatch(t *testing.T) {
+	raw, err := TPL.ReadFile("html/editor.html")
+	if err != nil {
+		t.Fatalf("read editor template: %v", err)
+	}
+	page := string(raw)
+
+	for _, expected := range []string{
+		`function applyLinkCheckResults(results) {`,
+		`const nextRows = getVisualBookmarkRows();`,
+		`bookmarks = nextRows;`,
+		`instanceBookmarks.updateData(bookmarks);`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor template missing %q", expected)
+		}
+	}
+
+	for _, broken := range []string{
+		`instanceBookmarks.setDataAtRowProp(visualRow, 'CheckResult', checkResult, 'link-check-result');`,
+		`instanceBookmarks.setDataAtRowProp(visualRow, 'CheckStatus', result.status || 'invalid', 'link-check-result');`,
+	} {
+		if strings.Contains(page, broken) {
+			t.Fatalf("editor template still uses fragile row-by-row link-check writes: %q", broken)
+		}
+	}
+}
+
+func TestGeneratedEditorTemplateMatchesSourceTemplate(t *testing.T) {
+	src, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", "editor.html")))
+	if err != nil {
+		t.Fatalf("read source editor template: %v", err)
+	}
+	gen, err := ReadEmbeddedTemplate("editor.html")
+	if err != nil {
+		t.Fatalf("read generated editor template: %v", err)
+	}
+	minifiedSource, err := MinifyTemplateBytes(src)
+	if err != nil {
+		t.Fatalf("minify source editor template: %v", err)
+	}
+	if !bytes.Equal(bytes.ReplaceAll(minifiedSource, []byte("\r\n"), []byte("\n")), bytes.ReplaceAll(gen, []byte("\r\n"), []byte("\n"))) {
+		t.Fatal("generated editor template is out of sync with embed/templates/editor.html")
+	}
+}
+
+func TestGeneratedSettingsTemplateMatchesSourceTemplate(t *testing.T) {
+	for _, name := range []string{"settings.html", "settings-appearance.html", "settings-theme.html"} {
+		src, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", name)))
+		if err != nil {
+			t.Fatalf("read source template %s: %v", name, err)
+		}
+		gen, err := ReadEmbeddedTemplate(name)
+		if err != nil {
+			t.Fatalf("read generated template %s: %v", name, err)
+		}
+		minifiedSource, err := MinifyTemplateBytes(src)
+		if err != nil {
+			t.Fatalf("minify source template %s: %v", name, err)
+		}
+		if !bytes.Equal(bytes.ReplaceAll(minifiedSource, []byte("\r\n"), []byte("\n")), bytes.ReplaceAll(gen, []byte("\r\n"), []byte("\n"))) {
+			t.Fatalf("generated template %s is out of sync with embed/templates/%s", name, name)
+		}
+	}
+}
+
+func TestSettingsTemplateIncludesColorPickerHooks(t *testing.T) {
+	shared, err := TPL.ReadFile("html/settings.html")
+	if err != nil {
+		t.Fatalf("read settings template: %v", err)
+	}
+	sharedPage := string(shared)
+	for _, expected := range []string{
+		`settings-color-trigger`,
+		`settings-color-panel`,
+		`settings-color-input-row`,
+		`runtime.js{{.DebugAssetVersion}}`,
+	} {
+		if !strings.Contains(sharedPage, expected) {
+			t.Fatalf("settings template missing %q", expected)
+		}
+	}
+
+	for _, name := range []string{"html/settings-theme.html", "html/settings-appearance.html"} {
+		raw, err := TPL.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		page := string(raw)
+		if !strings.Contains(page, `data-color-picker="true"`) {
+			t.Fatalf("%s missing color picker hook", name)
+		}
+	}
+
+	searchRaw, err := TPL.ReadFile("html/settings-search.html")
+	if err != nil {
+		t.Fatalf("read html/settings-search.html: %v", err)
+	}
+	searchPage := string(searchRaw)
+	for _, expected := range []string{
+		`search-mode`,
+		`search-engine`,
+		`search-engine-open-mode`,
+		`search-engine-custom-template`,
+	} {
+		if !strings.Contains(searchPage, expected) {
+			t.Fatalf("settings search template missing %q", expected)
+		}
+	}
+}
+
+func TestSettingsColorPickerUsesAccentDrivenBorders(t *testing.T) {
+	raw, err := TPL.ReadFile("html/settings.html")
+	if err != nil {
+		t.Fatalf("read settings template: %v", err)
+	}
+	page := strings.NewReplacer("\n", "", "\r", "", "\t", "", " ", "").Replace(string(raw))
+
+	for _, expected := range []string{
+		`border:1pxsolidcolor-mix(insrgb,var(--color-accent)76%,rgba(255,255,255,.18));`,
+		`box-shadow:inset0001pxcolor-mix(insrgb,var(--color-accent)22%,transparent)`,
+		`border:1pxsolidcolor-mix(insrgb,var(--color-accent)70%,rgba(255,255,255,.18));`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("settings color picker missing accent border style %q", expected)
+		}
+	}
+}
+
+func TestSettingsTemplatesSeparateRawAndRenderedFooterFields(t *testing.T) {
+	settingsRaw, err := TPL.ReadFile("html/settings.html")
+	if err != nil {
+		t.Fatalf("read settings template: %v", err)
+	}
+	settingsPage := string(settingsRaw)
+	if !strings.Contains(settingsPage, `{{.RenderedFooter}}`) {
+		t.Fatalf("expected settings template to use sanitized rendered footer, got %s", settingsPage)
+	}
+	if strings.Contains(settingsPage, `<div class="footer-container">{{.OptionFooter}}`) || strings.Contains(settingsPage, `{{.OptionFooter}}</div>`) {
+		t.Fatalf("expected settings footer display to stop using raw footer field, got %s", settingsPage)
+	}
+
+	appearanceRaw, err := TPL.ReadFile("html/settings-appearance.html")
+	if err != nil {
+		t.Fatalf("read settings appearance template: %v", err)
+	}
+	appearancePage := string(appearanceRaw)
+	if !strings.Contains(appearancePage, `>{{.OptionFooter}}</textarea>`) {
+		t.Fatalf("expected settings appearance textarea to keep raw footer text, got %s", appearancePage)
+	}
+}
+
+func TestSettingsLayoutKeepsFooterAtViewportBottomWhenContentIsShort(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "assets", "css", "settings", "layout.css")))
+	if err != nil {
+		t.Fatalf("read settings layout css: %v", err)
+	}
+	css := string(raw)
+	for _, expected := range []string{
+		`#page-settings {`,
+		`display: flex;`,
+		`flex-direction: column;`,
+		`min-height: 100vh;`,
+		`#page-settings .container {`,
+		`min-height: 100%;`,
+		`display: flex;`,
+		`flex-direction: column;`,
+		`#page-settings .footer-container {`,
+		`margin-top: auto;`,
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("expected settings sticky footer css fragment %q, got %s", expected, css)
+		}
+	}
+}
+
+func TestToolbarStylesDoNotBreakFollowingSettingsRules(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "assets", "css", "home", "toolbar.css")))
+	if err != nil {
+		t.Fatalf("read toolbar css: %v", err)
+	}
+	css := string(raw)
+	if strings.Contains(css, ".toolbar-btn-settings{\n  margin: 0 0 10px 0;\n}\n}") {
+		t.Fatalf("toolbar css still contains trailing unmatched brace: %s", css)
+	}
+	if strings.Count(css, "{") != strings.Count(css, "}") {
+		t.Fatalf("toolbar css brace count mismatch: %s", css)
 	}
 }

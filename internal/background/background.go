@@ -2,8 +2,9 @@ package background
 
 import (
 	"bytes"
-	"encoding/base64"
 	"crypto/sha256"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -29,16 +30,19 @@ import (
 )
 
 const (
-	UploadedFullPath          = "/user-assets/background"
-	UploadedPreviewPath       = "/user-assets/background-preview"
-	RemoteAssetPath           = "/assets/background-image"
-	uploadDir                 = "var/uploads"
-	cacheDir                  = "var/cache/backgrounds"
-	previewLongEdge           = 320
-	fullLongEdge              = 2200
-	sourceMaxBytes      int64 = 32 << 20
-	uploadedVariantVersion    = "2"
+	UploadedFullPath             = "/user-assets/background"
+	UploadedPreviewPath          = "/user-assets/background-preview"
+	RemoteAssetPath              = "/assets/background-image"
+	uploadDir                    = "var/uploads"
+	uploadStageDir               = "var/uploads-stage"
+	cacheDir                     = "var/cache/backgrounds"
+	previewLongEdge              = 320
+	fullLongEdge                 = 2200
+	sourceMaxBytes         int64 = 32 << 20
+	uploadedVariantVersion       = "2"
 )
+
+const backgroundFileMode = 0644
 
 const InlineLoaderScript = `(function(){var bg=document.querySelector('.page-background');if(!bg){return;}var preview=bg.querySelector('.page-background-preview');var full=bg.querySelector('.page-background-full');if(!full){return;}function usePreviewLayer(){if(bg.classList.contains('has-preview')){return;}bg.classList.add('has-preview');if(document.body){document.body.classList.add('has-preview-background');}}function settleBody(){if(document.body){document.body.classList.add('has-loaded-background');}}function afterReveal(){if(typeof window.requestAnimationFrame==='function'){window.requestAnimationFrame(function(){window.requestAnimationFrame(settleBody);});return;}settleBody();}function startReveal(){if(bg.classList.contains('is-loaded')){return;}usePreviewLayer();bg.classList.add('is-loaded');afterReveal();}function reveal(){if(typeof full.decode==='function'){full.decode().catch(function(){}).then(startReveal);return;}startReveal();}if(preview){if(preview.complete&&preview.naturalWidth>0){usePreviewLayer();}else{preview.addEventListener('load',usePreviewLayer,{once:true});preview.addEventListener('error',function(){if(document.body){document.body.classList.add('has-preview-background');}},{once:true});}}if(full.complete&&full.naturalWidth>0){reveal();return;}full.addEventListener('load',reveal,{once:true});full.addEventListener('error',function(){bg.classList.add('is-failed');},{once:true});}());`
 
@@ -48,6 +52,13 @@ type Assets struct {
 	PreviewDataURL string
 	FullURL        string
 	AccentColor    string
+}
+
+type StagedUploadedBackgroundActivation struct {
+	activeDir string
+	backupDir string
+	hasBackup bool
+	finalized bool
 }
 
 var (
@@ -167,6 +178,17 @@ func WarmRemoteVariants(source string) {
 }
 
 func PrepareUploadedBackground(fileName string, reader io.Reader) (string, error) {
+	if _, err := PrepareUploadedBackgroundStage(fileName, reader); err != nil {
+		return "", err
+	}
+	if err := PromoteStagedUploadedBackground(); err != nil {
+		_ = DiscardStagedUploadedBackgrounds()
+		return "", err
+	}
+	return UploadedFullPath, nil
+}
+
+func PrepareUploadedBackgroundStage(fileName string, reader io.Reader) (string, error) {
 	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(fileName)))
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".webp", ".gif":
@@ -186,43 +208,107 @@ func PrepareUploadedBackground(fileName string, reader io.Reader) (string, error
 	if err != nil {
 		return "", err
 	}
-	targetDir := filepath.Join(root, uploadDir)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return "", err
-	}
-	if err := deleteUploadedFilesIn(targetDir); err != nil {
-		return "", err
-	}
-
-	return writeUploadedVariants(targetDir, ext, data)
-}
-
-func writeUploadedVariants(targetDir string, ext string, data []byte) (string, error) {
-	fullData, fullType, previewData, previewType, err := makeVariants(data, "")
-	if err != nil {
-		return "", err
-	}
-
-	if err := os.WriteFile(filepath.Join(targetDir, "background-source"+ext), data, 0644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-full.bin"), fullData, 0644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-full.type"), []byte(fullType), 0644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-preview.bin"), previewData, 0644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-preview.type"), []byte(previewType), 0644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background.version"), []byte(uploadedVariantVersion), 0644); err != nil {
+	targetDir := filepath.Join(root, uploadStageDir)
+	if err := replaceUploadedVariantDir(targetDir, "background-source"+ext, data); err != nil {
 		return "", err
 	}
 
 	return UploadedFullPath, nil
+}
+
+func PromoteStagedUploadedBackground() error {
+	activation, err := BeginStagedUploadedBackgroundActivation()
+	if err != nil {
+		return err
+	}
+	return activation.Commit()
+}
+
+func BeginStagedUploadedBackgroundActivation() (*StagedUploadedBackgroundActivation, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	activeDir := filepath.Join(root, uploadDir)
+	stageDir := filepath.Join(root, uploadStageDir)
+	backupDir := filepath.Join(root, uploadDir+"-backup")
+
+	hasStageFiles, err := hasUploadedFilesIn(stageDir)
+	if err != nil {
+		return nil, err
+	}
+	if !hasStageFiles {
+		return nil, os.ErrNotExist
+	}
+
+	if err := os.RemoveAll(backupDir); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	activation := &StagedUploadedBackgroundActivation{
+		activeDir: activeDir,
+		backupDir: backupDir,
+	}
+	activeExists := false
+	if stat, err := os.Stat(activeDir); err == nil && stat.IsDir() {
+		activeExists = true
+		activation.hasBackup = true
+		if err := os.Rename(activeDir, backupDir); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := os.Rename(stageDir, activeDir); err != nil {
+		if activeExists {
+			_ = os.Rename(backupDir, activeDir)
+		}
+		return nil, err
+	}
+
+	return activation, nil
+}
+
+func (activation *StagedUploadedBackgroundActivation) Commit() error {
+	if activation == nil || activation.finalized {
+		return nil
+	}
+	activation.finalized = true
+	if activation.hasBackup {
+		if err := os.RemoveAll(activation.backupDir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (activation *StagedUploadedBackgroundActivation) Rollback() error {
+	if activation == nil || activation.finalized {
+		return nil
+	}
+	activation.finalized = true
+	var rollbackErr error
+	if err := os.RemoveAll(activation.activeDir); err != nil && !os.IsNotExist(err) {
+		rollbackErr = errors.Join(rollbackErr, err)
+	}
+	if activation.hasBackup {
+		if err := os.Rename(activation.backupDir, activation.activeDir); err != nil && !os.IsNotExist(err) {
+			rollbackErr = errors.Join(rollbackErr, err)
+		}
+	}
+	return rollbackErr
+}
+
+func DiscardStagedUploadedBackgrounds() error {
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	stageDir := filepath.Join(root, uploadStageDir)
+	if err := os.RemoveAll(stageDir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func DeleteUploadedBackgrounds() error {
@@ -230,7 +316,10 @@ func DeleteUploadedBackgrounds() error {
 	if err != nil {
 		return err
 	}
-	return deleteUploadedFilesIn(filepath.Join(root, uploadDir))
+	if err := deleteUploadedFilesIn(filepath.Join(root, uploadDir)); err != nil {
+		return err
+	}
+	return DiscardStagedUploadedBackgrounds()
 }
 
 func DeleteRemoteVariants(source string) error {
@@ -368,6 +457,14 @@ func deleteUploadedFilesIn(targetDir string) error {
 	return nil
 }
 
+func hasUploadedFilesIn(targetDir string) (bool, error) {
+	matches, err := filepath.Glob(filepath.Join(targetDir, "background*"))
+	if err != nil {
+		return false, err
+	}
+	return len(matches) > 0, nil
+}
+
 func ensureUploadedVariantsIn(targetDir string) error {
 	versionPath := filepath.Join(targetDir, "background.version")
 	if versionData, err := os.ReadFile(versionPath); err == nil {
@@ -413,29 +510,7 @@ func findUploadedSourceFile(targetDir string) (string, error) {
 }
 
 func regenUploadedVariants(targetDir string, ext string, data []byte) error {
-	fullData, fullType, previewData, previewType, err := makeVariants(data, "")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(filepath.Join(targetDir, "background-full.bin"), fullData, 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-full.type"), []byte(fullType), 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-preview.bin"), previewData, 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, "background-preview.type"), []byte(previewType), 0644); err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(targetDir, "background-source"+ext)); os.IsNotExist(err) {
-		if err := os.WriteFile(filepath.Join(targetDir, "background-source"+ext), data, 0644); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(filepath.Join(targetDir, "background.version"), []byte(uploadedVariantVersion), 0644)
+	return replaceUploadedVariantDir(targetDir, "background-source"+ext, data)
 }
 
 func readUploadedOriginal(targetDir string) ([]byte, string, error) {
@@ -833,10 +908,133 @@ func writeCachedVariant(source string, variant string, data []byte, contentType 
 		return err
 	}
 	prefix := filepath.Join(dir, remoteCacheKey(source)+"-"+variant)
-	if err := os.WriteFile(prefix+".bin", data, 0644); err != nil {
+	if err := writeFileAtomic(prefix+".bin", data); err != nil {
 		return err
 	}
-	return os.WriteFile(prefix+".type", []byte(contentType), 0644)
+	return writeFileAtomic(prefix+".type", []byte(contentType))
+}
+
+func replaceUploadedVariantDir(targetDir string, sourceFileName string, data []byte) error {
+	parentDir := filepath.Dir(targetDir)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return err
+	}
+
+	stagedDir, err := os.MkdirTemp(parentDir, filepath.Base(targetDir)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	if err := writeUploadedVariantFiles(stagedDir, sourceFileName, data); err != nil {
+		_ = os.RemoveAll(stagedDir)
+		return err
+	}
+	if err := replaceDirectoryAtomically(targetDir, stagedDir); err != nil {
+		_ = os.RemoveAll(stagedDir)
+		return err
+	}
+	return nil
+}
+
+func writeUploadedVariantFiles(targetDir string, sourceFileName string, data []byte) error {
+	fullData, fullType, previewData, previewType, err := makeVariants(data, "")
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(targetDir, sourceFileName), data); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(targetDir, "background-full.bin"), fullData); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(targetDir, "background-full.type"), []byte(fullType)); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(targetDir, "background-preview.bin"), previewData); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(targetDir, "background-preview.type"), []byte(previewType)); err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(targetDir, "background.version"), []byte(uploadedVariantVersion))
+}
+
+func replaceDirectoryAtomically(targetDir string, replacementDir string) error {
+	targetDir = filepath.Clean(targetDir)
+	replacementDir = filepath.Clean(replacementDir)
+	if targetDir == replacementDir {
+		return nil
+	}
+
+	backupDir := targetDir + ".backup"
+	if err := os.RemoveAll(backupDir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	targetExists := false
+	if stat, err := os.Stat(targetDir); err == nil {
+		if !stat.IsDir() {
+			return fmt.Errorf("target path is not a directory: %s", targetDir)
+		}
+		targetExists = true
+		if err := os.Rename(targetDir, backupDir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.Rename(replacementDir, targetDir); err != nil {
+		if targetExists {
+			_ = os.Rename(backupDir, targetDir)
+		}
+		return err
+	}
+
+	if targetExists {
+		if err := os.RemoveAll(backupDir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func writeFileAtomic(filePath string, data []byte) error {
+	dir := filepath.Dir(filePath)
+	temp, err := os.CreateTemp(dir, "."+filepath.Base(filePath)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	cleanup := func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}
+	if _, err := temp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Chmod(backgroundFileMode); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	if err := os.Rename(tempPath, filePath); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	return nil
 }
 
 func remoteCacheKey(source string) string {

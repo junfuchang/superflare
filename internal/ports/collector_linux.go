@@ -4,11 +4,15 @@ package ports
 
 import (
 	"bufio"
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type procSocket struct {
@@ -19,15 +23,36 @@ type procSocket struct {
 
 const envPortProcRoot = "FLARE_PORT_PROC_ROOT"
 
+const portCommandTimeout = 2 * time.Second
+
+var runPortCommand = func(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), portCommandTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Output()
+}
+
 func collectRuntimePorts() []runtimePort {
+	return collectRuntimePortsResult().Ports
+}
+
+func collectRuntimePortsResult() runtimeCollectorResult {
 	procRoot := getProcRoot()
-	sockets := collectProcSockets(procRoot)
+	sockets, procErr := collectProcSockets(procRoot)
+	if procErr != nil {
+		items, err := collectCommandRuntimePortsErr()
+		if err == nil {
+			return runtimeCollectorResult{Ports: items}
+		}
+		return runtimeCollectorResult{Err: errors.Join(procErr, err)}
+	}
 	if len(sockets) == 0 {
-		return collectCommandRuntimePorts()
+		items, err := collectCommandRuntimePortsErr()
+		return runtimeCollectorResult{Ports: items, Err: err}
 	}
 	inodeOwners := collectProcSocketOwners(procRoot)
 	items := make([]runtimePort, 0, len(sockets))
 	needsFallback := false
+	var warnings []CollectionWarning
 	for _, socket := range sockets {
 		owner := inodeOwners[socket.inode]
 		if owner.pid <= 0 || strings.TrimSpace(owner.name) == "" {
@@ -41,9 +66,19 @@ func collectRuntimePorts() []runtimePort {
 		})
 	}
 	if needsFallback {
-		fillMissingRuntimePortOwners(items, collectCommandRuntimePorts())
+		fallback, err := collectCommandRuntimePortsErr()
+		if err == nil {
+			fillMissingRuntimePortOwners(items, fallback)
+		} else if countOwnedRuntimePorts(items) == 0 {
+			return runtimeCollectorResult{Err: fmt.Errorf("collect runtime port owners failed: %w", err)}
+		} else {
+			warnings = append(warnings, ownerResolutionWarning(items, err.Error()))
+		}
 	}
-	return items
+	if missingOwners := countRuntimePortsMissingOwnerInfo(items); missingOwners > 0 && len(warnings) == 0 {
+		warnings = append(warnings, ownerResolutionWarning(items, "resolved runtime ports but could not determine complete owner info for all ports"))
+	}
+	return runtimeCollectorResult{Ports: items, Warnings: warnings}
 }
 
 func getProcRoot() string {
@@ -54,7 +89,7 @@ func getProcRoot() string {
 	return filepath.Clean(procRoot)
 }
 
-func collectProcSockets(procRoot string) []procSocket {
+func collectProcSockets(procRoot string) ([]procSocket, error) {
 	var result []procSocket
 	for _, source := range []struct {
 		name       string
@@ -66,15 +101,22 @@ func collectProcSockets(procRoot string) []procSocket {
 		{"udp", "udp", false},
 		{"udp6", "udp", false},
 	} {
-		result = append(result, parseProcNet(filepath.Join(procRoot, "net", source.name), source.protocol, source.listenOnly)...)
+		items, err := parseProcNet(filepath.Join(procRoot, "net", source.name), source.protocol, source.listenOnly)
+		if err != nil {
+			return result, err
+		}
+		result = append(result, items...)
 	}
-	return result
+	return result, nil
 }
 
-func parseProcNet(path string, protocol string, listenOnly bool) []procSocket {
+func parseProcNet(path string, protocol string, listenOnly bool) ([]procSocket, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open proc socket file %s failed: %w", path, err)
 	}
 	defer f.Close()
 	var result []procSocket
@@ -99,7 +141,10 @@ func parseProcNet(path string, protocol string, listenOnly bool) []procSocket {
 		}
 		result = append(result, procSocket{port: port, protocol: protocol, inode: fields[9]})
 	}
-	return result
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan proc socket file %s failed: %w", path, err)
+	}
+	return result, nil
 }
 
 func parseProcAddressPort(addr string) (int, bool) {
@@ -210,6 +255,16 @@ func fillMissingRuntimePortOwners(items []runtimePort, fallback []runtimePort) {
 	}
 }
 
+func countOwnedRuntimePorts(items []runtimePort) int {
+	count := 0
+	for _, item := range items {
+		if item.PID > 0 || strings.TrimSpace(item.ServiceName) != "" {
+			count++
+		}
+	}
+	return count
+}
+
 func runtimePortOwnerScore(item runtimePort) int {
 	score := 0
 	if item.PID > 0 {
@@ -222,10 +277,17 @@ func runtimePortOwnerScore(item runtimePort) int {
 }
 
 func collectCommandRuntimePorts() []runtimePort {
+	items, _ := collectCommandRuntimePortsErr()
+	return items
+}
+
+func collectCommandRuntimePortsErr() ([]runtimePort, error) {
 	merged := map[string]runtimePort{}
+	ssItems, ssErr := collectSSRuntimePortsErr()
+	netstatItems, netstatErr := collectNetstatRuntimePortsErr()
 	for _, source := range [][]runtimePort{
-		collectSSRuntimePorts(),
-		collectNetstatRuntimePorts(),
+		ssItems,
+		netstatItems,
 	} {
 		for _, item := range source {
 			if item.Port <= 0 || item.Port > 65535 {
@@ -239,24 +301,38 @@ func collectCommandRuntimePorts() []runtimePort {
 		}
 	}
 	if len(merged) == 0 {
-		return nil
+		switch {
+		case ssErr != nil && netstatErr != nil:
+			return nil, errors.Join(ssErr, netstatErr)
+		case ssErr != nil:
+			return nil, ssErr
+		case netstatErr != nil:
+			return nil, netstatErr
+		default:
+			return nil, nil
+		}
 	}
 	items := make([]runtimePort, 0, len(merged))
 	for _, item := range merged {
 		items = append(items, item)
 	}
-	return items
+	return items, nil
 }
 
 func collectSSRuntimePorts() []runtimePort {
-	out, err := exec.Command("ss", "-H", "-lntup").Output()
+	items, _ := collectSSRuntimePortsErr()
+	return items
+}
+
+func collectSSRuntimePortsErr() ([]runtimePort, error) {
+	out, err := runPortCommand("ss", "-H", "-lntup")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	return parseSSOutput(string(out))
 }
 
-func parseSSOutput(raw string) []runtimePort {
+func parseSSOutput(raw string) ([]runtimePort, error) {
 	scanner := bufio.NewScanner(strings.NewReader(raw))
 	var items []runtimePort
 	for scanner.Scan() {
@@ -287,18 +363,26 @@ func parseSSOutput(raw string) []runtimePort {
 			ServiceName: name,
 		})
 	}
-	return items
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan ss output failed: %w", err)
+	}
+	return items, nil
 }
 
 func collectNetstatRuntimePorts() []runtimePort {
-	out, err := exec.Command("netstat", "-tunlp").Output()
+	items, _ := collectNetstatRuntimePortsErr()
+	return items
+}
+
+func collectNetstatRuntimePortsErr() ([]runtimePort, error) {
+	out, err := runPortCommand("netstat", "-tunlp")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	return parseNetstatOutput(string(out))
 }
 
-func parseNetstatOutput(raw string) []runtimePort {
+func parseNetstatOutput(raw string) ([]runtimePort, error) {
 	scanner := bufio.NewScanner(strings.NewReader(raw))
 	var items []runtimePort
 	for scanner.Scan() {
@@ -329,7 +413,10 @@ func parseNetstatOutput(raw string) []runtimePort {
 			ServiceName: name,
 		})
 	}
-	return items
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan netstat output failed: %w", err)
+	}
+	return items, nil
 }
 
 func normalizeCommandProtocol(value string) string {

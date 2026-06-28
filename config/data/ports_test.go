@@ -1,6 +1,10 @@
 package data
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/junfuchang/superflare/config/model"
@@ -26,5 +30,141 @@ func TestNormalizePortBindings(t *testing.T) {
 	}
 	if got[2].Port != 3060 || got[2].Protocol != "tcp" || got[2].Remark != "new" {
 		t.Fatalf("unexpected third binding: %#v", got[2])
+	}
+}
+
+func TestGetPortRemarkMapWithErrorReturnsErrorWhenPortsConfigBroken(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "ports.yaml"), []byte("Items: [broken"), 0644); err != nil {
+		t.Fatalf("write ports.yaml: %v", err)
+	}
+
+	_, err = GetPortRemarkMapWithError()
+	if err == nil {
+		t.Fatal("expected GetPortRemarkMapWithError to fail")
+	}
+}
+
+func TestLoadPortBindingsReturnsErrorWhenConfigMissing(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	_, err = LoadPortBindings()
+	if err == nil {
+		t.Fatal("expected LoadPortBindings to fail")
+	}
+	if !strings.Contains(err.Error(), "ports config is missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPortBindingsReturnsErrorWhenStatFails(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	targetPath := filepath.Join(tmpDir, "ports.yaml")
+	originalStat := osStat
+	defer func() { osStat = originalStat }()
+	osStat = func(path string) (os.FileInfo, error) {
+		if filepath.Clean(path) == filepath.Clean(targetPath) {
+			return nil, errors.New("forced stat failure")
+		}
+		return originalStat(path)
+	}
+
+	_, err = LoadPortBindings()
+	if err == nil {
+		t.Fatal("expected LoadPortBindings to fail")
+	}
+	if !strings.Contains(err.Error(), "stat ports config failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPortBindingsReturnsErrorWhenGetwdFails(t *testing.T) {
+	originalGetwd := osGetwd
+	defer func() { osGetwd = originalGetwd }()
+
+	osGetwd = func() (string, error) {
+		return "", errors.New("forced getwd failure")
+	}
+
+	_, err := LoadPortBindings()
+	if err == nil {
+		t.Fatal("expected LoadPortBindings to fail")
+	}
+	if !strings.Contains(err.Error(), "resolve config working directory failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPortBindingsReturnsErrorWhenProtocolInvalid(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "ports.yaml"), []byte("ports:\n- port: 8080\n  protocol: http\n  remark: bad\n"), 0644); err != nil {
+		t.Fatalf("write ports.yaml: %v", err)
+	}
+
+	_, err = LoadPortBindings()
+	if err == nil {
+		t.Fatal("expected LoadPortBindings to fail for invalid protocol")
+	}
+	if !strings.Contains(err.Error(), "protocol") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPortBindingsReturnsErrorWhenPortOutOfRange(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "ports.yaml"), []byte("ports:\n- port: 70000\n  protocol: tcp\n  remark: bad\n"), 0644); err != nil {
+		t.Fatalf("write ports.yaml: %v", err)
+	}
+
+	_, err = LoadPortBindings()
+	if err == nil {
+		t.Fatal("expected LoadPortBindings to fail for out-of-range port")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 
@@ -11,12 +12,11 @@ import (
 )
 
 func initBookmarks(filePath string, isFavorite bool) (result model.Bookmarks, err error) {
-
 	const exampleName = "示例链接"
-	const exmapleLink = "https://link.example.com"
+	const exampleLink = "https://link.example.com"
 	const exampleDesc = "链接描述文本"
 
-	var exampleIcons = [28]string{
+	exampleIcons := [28]string{
 		"evernote", "FireHydrant", "email", "MicrosoftOnenote",
 		"Robber", "EvPlugType1", "FileImage", "Image",
 		"checkDecagram", "sofaOutline", "foodCroissant", "musicCircleOutline", "eraser",
@@ -26,111 +26,183 @@ func initBookmarks(filePath string, isFavorite bool) (result model.Bookmarks, er
 	}
 
 	if isFavorite {
-		// with desc
 		for i := 0; i < 4; i++ {
-			var bookmark model.Bookmark
-			bookmark.Name = exampleName
-			bookmark.URL = exmapleLink
-			bookmark.Icon = exampleIcons[i]
-			bookmark.Desc = exampleDesc
-			result.Items = append(result.Items, bookmark)
+			result.Items = append(result.Items, model.Bookmark{
+				Name: exampleName,
+				URL:  exampleLink,
+				Icon: exampleIcons[i],
+				Desc: exampleDesc,
+			})
 		}
-		// without desc
 		for i := 0; i < 4; i++ {
-			var bookmark model.Bookmark
-			bookmark.Name = exampleName
-			bookmark.URL = exmapleLink
-			bookmark.Icon = exampleIcons[i+4]
-			result.Items = append(result.Items, bookmark)
+			result.Items = append(result.Items, model.Bookmark{
+				Name: exampleName,
+				URL:  exampleLink,
+				Icon: exampleIcons[i+4],
+			})
 		}
 	} else {
-		var categories []model.Category
-		var bookmarks []model.Bookmark
 		const prefix = "cate-id-"
-
 		for i := 0; i < 4; i++ {
-			var category model.Category
-			category.Name = "链接分类" + strconv.Itoa(i+1)
-			category.ID = prefix + strconv.Itoa(i)
-			categories = append(categories, category)
+			result.Categories = append(result.Categories, model.Category{
+				ID:   prefix + strconv.Itoa(i),
+				Name: "链接分类" + strconv.Itoa(i+1),
+			})
 		}
-		result.Categories = categories
-
 		for i := 0; i < 20; i++ {
-			var bookmark model.Bookmark
-			bookmark.Name = exampleName
-			bookmark.URL = exmapleLink
-			bookmark.Icon = exampleIcons[8+i]
-			bookmark.Category = prefix + strconv.Itoa(i%4)
-			bookmarks = append(bookmarks, bookmark)
+			result.Items = append(result.Items, model.Bookmark{
+				Name:     exampleName,
+				URL:      exampleLink,
+				Icon:     exampleIcons[8+i],
+				Category: prefix + strconv.Itoa(i%4),
+			})
 		}
-		result.Items = bookmarks
+	}
+
+	if err := validateBookmarks(result, isFavorite); err != nil {
+		return result, fmt.Errorf("validate default bookmarks failed: %w", err)
 	}
 
 	out, err := yaml.Marshal(result)
 	if err != nil {
-		log.Println("初始化程序时出错。")
-		return result, err
+		log.Println("marshal default bookmarks failed")
+		return result, fmt.Errorf("marshal default bookmarks failed: %w", err)
 	}
 
-	ok := saveFile(filePath, out)
-	if !ok {
-		log.Println("保存初始配置失败。")
-		return result, fmt.Errorf("保存初始配置失败: %s", filePath)
+	if err := saveFile(filePath, out); err != nil {
+		log.Println("save default bookmarks failed")
+		return result, fmt.Errorf("save default bookmarks failed: %w", err)
 	}
 
 	return result, nil
 }
 
-func saveBookmarksToYamlFile(name string, data model.Bookmarks) (bool, error) {
-	out, err := yaml.Marshal(data)
-	if err != nil {
-		log.Println("转换数据格式失败", name)
-		return false, err
+func saveBookmarksToYamlFile(name string, data model.Bookmarks, isFavorite bool) error {
+	if err := validateBookmarks(data, isFavorite); err != nil {
+		return err
 	}
 
-	filePath := getConfigPath(name)
-	ok := saveFile(filePath, out)
-	if !ok {
-		log.Println("保存数据为书签失败")
-		return false, err
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		log.Println("marshal bookmarks failed", name)
+		return fmt.Errorf("marshal bookmarks %s failed: %w", name, err)
 	}
-	invalidateFileCache(name)
-	return true, nil
+
+	filePath, err := configPath(name)
+	if err != nil {
+		return err
+	}
+	if err := saveFile(filePath, out); err != nil {
+		log.Println("save bookmarks failed", name)
+		return fmt.Errorf("save bookmarks %s failed: %w", name, err)
+	}
+	invalidateFileCachePath(filePath)
+	return nil
 }
 
 func loadBookmarksFromYamlFile(name string, isFavorite bool) (model.Bookmarks, error) {
 	var result model.Bookmarks
-	filePath := getConfigPath(name)
-
-	if !checkExists(filePath) {
-		fmt.Println("找不到配置文件" + name + "，创建默认配置。")
-		var createErr error
-		result, createErr = initBookmarks(filePath, isFavorite)
-		if createErr != nil {
-			return result, fmt.Errorf("尝试创建应用配置文件 %s 失败: %w", name, createErr)
-		}
-		return result, nil
-	}
-	configFile, err := readFileCached(name, func() ([]byte, error) { return readFile(filePath) })
+	filePath, err := configPath(name)
 	if err != nil {
-		return result, fmt.Errorf("读取配置文件 %s: %w", name, err)
+		return result, err
 	}
-	parseErr := yaml.Unmarshal(configFile, &result)
-	if parseErr != nil {
-		return result, fmt.Errorf("解析配置文件 %s 错误，请检查配置文件内容: %w", name, parseErr)
+
+	exists, err := pathExists(filePath)
+	if err != nil {
+		return result, fmt.Errorf("stat bookmarks config %s failed: %w", name, err)
+	}
+	if !exists {
+		return result, fmt.Errorf("bookmarks config %s is missing", name)
+	}
+
+	configFile, err := readFileCached(filePath, func() ([]byte, error) { return readFile(filePath) })
+	if err != nil {
+		return result, fmt.Errorf("read bookmarks config %s failed: %w", name, err)
+	}
+	if err := yaml.Unmarshal(configFile, &result); err != nil {
+		return result, fmt.Errorf("parse bookmarks config %s failed: %w", name, err)
+	}
+	if err := validateBookmarks(result, isFavorite); err != nil {
+		return result, err
 	}
 	return result, nil
 }
 
-func SaveFavoriteBookmarks(data model.Bookmarks) bool {
-	result, err := saveBookmarksToYamlFile("apps", data)
-	return err == nil && result
+func loadBookmarksFromRaw(raw []byte, isFavorite bool) (model.Bookmarks, error) {
+	var result model.Bookmarks
+	if err := yaml.Unmarshal(raw, &result); err != nil {
+		return result, fmt.Errorf("parse bookmarks raw failed: %w", err)
+	}
+	if err := validateBookmarks(result, isFavorite); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
-func SaveNormalBookmarks(data model.Bookmarks) bool {
-	result, err := saveBookmarksToYamlFile("bookmarks", data)
-	return err == nil && result
+func validateBookmarks(data model.Bookmarks, isFavorite bool) error {
+	for index, bookmark := range data.Items {
+		if strings.TrimSpace(bookmark.Name) == "" {
+			return fmt.Errorf("invalid bookmark at row %d: missing bookmark name", index+1)
+		}
+		if strings.TrimSpace(bookmark.URL) == "" {
+			return fmt.Errorf("invalid bookmark at row %d: missing bookmark link", index+1)
+		}
+	}
+
+	if isFavorite {
+		return nil
+	}
+
+	categoryIDs := make(map[string]struct{}, len(data.Categories))
+	categoryNames := make(map[string]struct{}, len(data.Categories))
+	for index, category := range data.Categories {
+		id := strings.TrimSpace(category.ID)
+		name := strings.TrimSpace(category.Name)
+		if id == "" {
+			return fmt.Errorf("invalid bookmark category at row %d: missing category id", index+1)
+		}
+		if name == "" {
+			return fmt.Errorf("invalid bookmark category at row %d: missing category title", index+1)
+		}
+		if _, exists := categoryIDs[id]; exists {
+			return fmt.Errorf("invalid bookmark categories: duplicate category id %q", category.ID)
+		}
+		if _, exists := categoryNames[name]; exists {
+			return fmt.Errorf("invalid bookmark categories: duplicate category title %q", category.Name)
+		}
+		categoryIDs[id] = struct{}{}
+		categoryNames[name] = struct{}{}
+	}
+
+	if len(categoryIDs) == 0 {
+		for index, bookmark := range data.Items {
+			if strings.TrimSpace(bookmark.Category) == "" {
+				continue
+			}
+			return fmt.Errorf("invalid bookmark at row %d: references missing category id %q", index+1, bookmark.Category)
+		}
+		return nil
+	}
+
+	for index, bookmark := range data.Items {
+		categoryID := strings.TrimSpace(bookmark.Category)
+		if categoryID == "" {
+			continue
+		}
+		if _, exists := categoryIDs[categoryID]; !exists {
+			return fmt.Errorf("invalid bookmark at row %d: references unknown category id %q", index+1, bookmark.Category)
+		}
+	}
+
+	return nil
+}
+
+func SaveFavoriteBookmarks(data model.Bookmarks) error {
+	return saveBookmarksToYamlFile("apps", data, true)
+}
+
+func SaveNormalBookmarks(data model.Bookmarks) error {
+	return saveBookmarksToYamlFile("bookmarks", data, false)
 }
 
 func LoadFavoriteBookmarks() (model.Bookmarks, error) {
@@ -139,4 +211,12 @@ func LoadFavoriteBookmarks() (model.Bookmarks, error) {
 
 func LoadNormalBookmarks() (model.Bookmarks, error) {
 	return loadBookmarksFromYamlFile("bookmarks", false)
+}
+
+func LoadFavoriteBookmarksFromRaw(raw []byte) (model.Bookmarks, error) {
+	return loadBookmarksFromRaw(raw, true)
+}
+
+func LoadNormalBookmarksFromRaw(raw []byte) (model.Bookmarks, error) {
+	return loadBookmarksFromRaw(raw, false)
 }

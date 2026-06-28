@@ -1,13 +1,34 @@
 package data
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/junfuchang/superflare/config/model"
 )
 
 func TestGetBookmarksDataAsJSON(t *testing.T) {
-	categories, bookmarks := GetBookmarksForEditor()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := EnsureRuntimeDataFiles(); err != nil {
+		t.Fatalf("EnsureRuntimeDataFiles returned error: %v", err)
+	}
+
+	categories, bookmarks, err := GetBookmarksForEditor()
+	if err != nil {
+		t.Fatalf("GetBookmarksForEditor returned error: %v", err)
+	}
 	if len(categories) == 0 || len(bookmarks) == 0 {
 		t.Fatal("GetBookmarksForEditor Failed")
 	}
@@ -48,9 +69,8 @@ func TestGetAndUpdateBookmarksFromEditor(t *testing.T) {
 27,示例链接,https://link.example.com,链接分类4,accountSupervisorCircle,
 28,示例链接,https://link.example.com,链接分类4,sproutOutline,`
 
-	updated := UpdateBookmarksFromEditor(categories, bookmarks)
-	if !updated {
-		t.Fatal("UpdateBookmarksFromEditor Failed")
+	if err := UpdateBookmarksFromEditor(categories, bookmarks); err != nil {
+		t.Fatalf("UpdateBookmarksFromEditor Failed: %v", err)
 	}
 
 	bookmarkCategories, ok := getCategoriesFromCSV(categories)
@@ -104,6 +124,53 @@ func TestGetBookmarksFromCSVParsesLocalURL(t *testing.T) {
 	}
 }
 
+func TestGetBookmarksFromCSVRejectsUnknownCategoryName(t *testing.T) {
+	const categories = "1,Links"
+	const bookmarks = "1,Broken,https://broken.example.com,,MissingCategory,,link,Broken link"
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatal("getCategoriesFromCSV Failed")
+	}
+	_, _, err = getBookmarksFromCSV(bookmarks, bookmarkCategories)
+	if err == nil {
+		t.Fatal("expected unknown category name to fail")
+	}
+	if !strings.Contains(err.Error(), "MissingCategory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCategoriesFromCSVRejectsDuplicateNames(t *testing.T) {
+	_, err := getCategoriesFromCSV("1,Links\n2,Links")
+	if err == nil {
+		t.Fatal("expected duplicate category name to fail")
+	}
+	if !strings.Contains(err.Error(), "Links") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCategoriesFromCSVRejectsDuplicateIDs(t *testing.T) {
+	_, err := getCategoriesFromCSV("1,Links\n1,Links2")
+	if err == nil {
+		t.Fatal("expected duplicate category ID to fail")
+	}
+	if !strings.Contains(err.Error(), "1") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCategoriesFromCSVRejectsReservedFixedCategoryName(t *testing.T) {
+	_, err := getCategoriesFromCSV("1,[SuperFlare 应用]")
+	if err == nil {
+		t.Fatal("expected reserved category name to fail")
+	}
+	if !strings.Contains(err.Error(), "[SuperFlare 应用]") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestPropsRemoveAndRestore(t *testing.T) {
 	var input []model.Bookmark
 	input = append(input, model.Bookmark{Private: true, LocalURL: "http://192.168.1.10"})
@@ -116,5 +183,198 @@ func TestPropsRemoveAndRestore(t *testing.T) {
 		if removed[i].LocalURL != input[i].LocalURL {
 			t.Fatal("Remove and restore local URL Failed")
 		}
+	}
+}
+
+func TestGetBookmarksForEditorReturnsErrorWhenBookmarksConfigBroken(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "apps.yml"), []byte("items:\n- name: app\n  link: https://app.example.com\n"), 0644); err != nil {
+		t.Fatalf("write apps.yml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "bookmarks.yml"), []byte("Categories: [broken\n"), 0644); err != nil {
+		t.Fatalf("write bookmarks.yml: %v", err)
+	}
+
+	_, _, err = GetBookmarksForEditor()
+	if err == nil {
+		t.Fatal("expected broken bookmarks config to fail")
+	}
+	if !strings.Contains(err.Error(), "load normal bookmarks") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetBookmarksForEditorReturnsErrorWhenEditorJSONMarshalFails(t *testing.T) {
+	original := jsonStringify
+	jsonStringify = func(data interface{}) (string, error) {
+		return "", errors.New("forced json stringify failure")
+	}
+	defer func() { jsonStringify = original }()
+
+	_, _, err := GetBookmarksForEditor()
+	if err == nil {
+		t.Fatal("expected GetBookmarksForEditor to fail")
+	}
+	if !strings.Contains(err.Error(), "marshal editor") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateBookmarksFromEditorRollsBackWhenSecondFileRenameFails(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	originalRename := editorDataRenamePath
+	defer func() { editorDataRenamePath = originalRename }()
+
+	bookmarksPath := filepath.Join(tmpDir, "bookmarks.yml")
+	appsPath := filepath.Join(tmpDir, "apps.yml")
+	if err := os.WriteFile(bookmarksPath, []byte("items:\n- name: old-bookmark\n"), 0644); err != nil {
+		t.Fatalf("write bookmarks: %v", err)
+	}
+	if err := os.WriteFile(appsPath, []byte("items:\n- name: old-app\n"), 0644); err != nil {
+		t.Fatalf("write apps: %v", err)
+	}
+
+	renameCalls := 0
+	editorDataRenamePath = func(oldPath string, newPath string) error {
+		renameCalls++
+		if renameCalls == 3 {
+			return errors.New("forced rename failure")
+		}
+		return originalRename(oldPath, newPath)
+	}
+
+	const categories = "1,Links"
+	const bookmarks = "1,App,https://app.example.com,,[SuperFlare \u5e94\u7528],,home,App link\n2,Bookmark,https://bookmark.example.com,,Links,,link,Bookmark link"
+	err = UpdateBookmarksFromEditor(categories, bookmarks)
+	if err == nil {
+		t.Fatal("expected rename failure")
+	}
+
+	gotBookmarks, err := os.ReadFile(bookmarksPath)
+	if err != nil {
+		t.Fatalf("read bookmarks after rollback: %v", err)
+	}
+	if string(gotBookmarks) != "items:\n- name: old-bookmark\n" {
+		t.Fatalf("bookmarks should be rolled back, got %q", string(gotBookmarks))
+	}
+
+	gotApps, err := os.ReadFile(appsPath)
+	if err != nil {
+		t.Fatalf("read apps after rollback: %v", err)
+	}
+	if string(gotApps) != "items:\n- name: old-app\n" {
+		t.Fatalf("apps should remain original, got %q", string(gotApps))
+	}
+}
+
+func TestUpdateBookmarksFromEditorFailsWhenTargetPathIsDirectory(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	bookmarksPath := filepath.Join(tmpDir, "bookmarks.yml")
+	appsPath := filepath.Join(tmpDir, "apps.yml")
+	if err := os.Mkdir(bookmarksPath, 0755); err != nil {
+		t.Fatalf("mkdir bookmarks target: %v", err)
+	}
+	if err := os.WriteFile(appsPath, []byte("items:\n- name: old-app\n"), 0644); err != nil {
+		t.Fatalf("write apps: %v", err)
+	}
+
+	const categories = "1,Links"
+	const bookmarks = "1,App,https://app.example.com,,[SuperFlare \u5e94\u7528],,home,App link\n2,Bookmark,https://bookmark.example.com,,Links,,link,Bookmark link"
+	err = UpdateBookmarksFromEditor(categories, bookmarks)
+	if err == nil {
+		t.Fatal("expected directory target failure")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	info, statErr := os.Stat(bookmarksPath)
+	if statErr != nil {
+		t.Fatalf("stat bookmarks target: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatal("bookmarks target directory should remain a directory")
+	}
+
+	gotApps, err := os.ReadFile(appsPath)
+	if err != nil {
+		t.Fatalf("read apps after failure: %v", err)
+	}
+	if string(gotApps) != "items:\n- name: old-app\n" {
+		t.Fatalf("apps should remain original, got %q", string(gotApps))
+	}
+}
+
+func TestGetCategoriesFromCSVRejectsHalfFilledRow(t *testing.T) {
+	_, err := getCategoriesFromCSV("1,Links\n2,")
+	if err == nil {
+		t.Fatal("expected half-filled category row to fail")
+	}
+	if !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetBookmarksFromCSVRejectsHalfFilledRow(t *testing.T) {
+	const categories = "1,Links"
+	const bookmarks = "1,Bookmark A,https://bookmark.example.com,,Links,,link,Bookmark link\n2,,https://broken.example.com,,Links,,link,Broken link"
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatal("getCategoriesFromCSV Failed")
+	}
+	_, _, err = getBookmarksFromCSV(bookmarks, bookmarkCategories)
+	if err == nil {
+		t.Fatal("expected half-filled bookmark row to fail")
+	}
+	if !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetBookmarksFromCSVStillAllowsBlankSpacerRows(t *testing.T) {
+	const categories = "1,Links"
+	const bookmarks = "1,Bookmark A,https://bookmark.example.com,,Links,,link,Bookmark link\n,,,,,,\n2,Bookmark B,https://bookmark-b.example.com,,Links,,link,Bookmark link"
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatal("getCategoriesFromCSV Failed")
+	}
+	favorite, normal, err := getBookmarksFromCSV(bookmarks, bookmarkCategories)
+	if err != nil {
+		t.Fatalf("getBookmarksFromCSV Failed: %v", err)
+	}
+	if len(favorite) != 0 {
+		t.Fatalf("expected no favorites, got %#v", favorite)
+	}
+	if len(normal) != 2 {
+		t.Fatalf("expected 2 normal bookmarks, got %#v", normal)
 	}
 }

@@ -26,6 +26,10 @@ ShowTitle: true
 Greetings: "hello"
 ShowSearchComponent: true
 DisabledSearchAutoFocus: false
+SearchMode: "bookmarks"
+SearchEngine: "bing"
+SearchEngineOpenMode: "same-tab"
+SearchEngineCustomTemplate: ""
 ShowDateTime: true
 ShowApps: true
 ShowBookmarks: true
@@ -36,15 +40,17 @@ BookmarkItemColor: ""
 # Home toolbar buttons
 HideSettingButton: false
 HideHelpButton: false
+HideWarningsButton: false
 # Link display
 EnableEncryptedLink: false
 IconMode: "FILLING"
 KeepLetterCase: false
 # Theme
 Theme: "blackboard"
-CustomThemeBackground: "rgba(26, 26, 26, 1)"
-CustomThemePrimary: "rgba(255, 253, 234, 1)"
-CustomThemeAccent: "rgba(92, 92, 92, 1)"
+ThemeBase: "blackboard"
+CustomThemeBackground: ""
+CustomThemePrimary: ""
+CustomThemeAccent: ""
 # UI language (zh / en)
 Locale: "zh"
 # Login config. Leave empty to use environment variables, CLI flags, or generated defaults.
@@ -62,10 +68,9 @@ HomeMaxColumns: 0
 HomeMaxWidth: 0
 `)
 
-	ok := saveFile(filePath, out)
-	if !ok {
+	if err := saveFile(filePath, out); err != nil {
 		log.Println("init default app config failed")
-		return result, fmt.Errorf("init default app config failed: %s", filePath)
+		return result, fmt.Errorf("init default app config failed: %w", err)
 	}
 
 	parseErr := yaml.Unmarshal(out, &result)
@@ -76,43 +81,57 @@ HomeMaxWidth: 0
 	return result, nil
 }
 
-func saveAppConfigToYamlFile(name string, result model.Application) bool {
+func saveAppConfigToYamlFile(name string, result model.Application) error {
 	out, err := yaml.Marshal(result)
 	if err != nil {
 		log.Println("marshal app config failed")
-		return false
+		return fmt.Errorf("marshal app config failed: %w", err)
 	}
 
-	filePath := getConfigPath(name)
-	ok := saveFile(filePath, out)
-	if !ok {
-		log.Println("save app config failed")
-		return false
+	filePath, err := configPath(name)
+	if err != nil {
+		return err
 	}
-	invalidateFileCache(name)
-	return true
+	if err := saveFile(filePath, out); err != nil {
+		log.Println("save app config failed")
+		return fmt.Errorf("save app config failed: %w", err)
+	}
+	invalidateFileCachePath(filePath)
+	return nil
 }
 
 func loadAppConfigFromYaml(name string) (model.Application, error) {
 	var result model.Application
-	filePath := getConfigPath(name)
-
-	if !checkExists(filePath) {
-		fmt.Println("config file not found, creating default config: " + name)
-		var createErr error
-		result, createErr = initAppConfig(filePath)
-		if createErr != nil {
-			return result, fmt.Errorf("create app config %s failed: %w", name, createErr)
-		}
-		return result, nil
+	filePath, err := configPath(name)
+	if err != nil {
+		return result, err
 	}
-	configFile, err := readFileCached(name, func() ([]byte, error) { return readFile(filePath) })
+
+	exists, err := pathExists(filePath)
+	if err != nil {
+		return result, fmt.Errorf("stat config %s failed: %w", name, err)
+	}
+	if !exists {
+		return result, fmt.Errorf("config %s is missing", name)
+	}
+	configFile, err := readFileCached(filePath, func() ([]byte, error) { return readFile(filePath) })
 	if err != nil {
 		return result, fmt.Errorf("read config %s failed: %w", name, err)
 	}
 	parseErr := yaml.Unmarshal(configFile, &result)
 	if parseErr != nil {
 		return result, fmt.Errorf("parse config %s failed: %w", name, parseErr)
+	}
+	return result, nil
+}
+
+func LoadAppConfigFromRaw(raw []byte) (model.Application, error) {
+	var result model.Application
+	if err := yaml.Unmarshal(raw, &result); err != nil {
+		return result, fmt.Errorf("parse config raw failed: %w", err)
+	}
+	if err := validateSettingsOptions(result); err != nil {
+		return result, err
 	}
 	return result, nil
 }

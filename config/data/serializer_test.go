@@ -9,15 +9,18 @@ func TestJSONStringify(t *testing.T) {
 		Project string `json:"project"`
 	}
 	const src = "{\"project\":\"superflare\"}"
-	dest := jsonStringify(testJSON{Project: "superflare"})
+	dest, err := jsonStringify(testJSON{Project: "superflare"})
+	if err != nil {
+		t.Fatalf("jsonStringify returned error: %v", err)
+	}
 
 	if src != dest {
 		t.Fatal("JSON Stringify Error")
 	}
 
 	// mock incorrect data
-	errTest := jsonStringify(make(chan int))
-	if errTest != "{}" {
+	_, err = jsonStringify(make(chan int))
+	if err == nil {
 		t.Fatal("JSON Stringify Error")
 	}
 }

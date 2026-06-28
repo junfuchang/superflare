@@ -6,58 +6,74 @@ import (
 
 	"github.com/junfuchang/superflare/cmd"
 	"github.com/junfuchang/superflare/config/define"
-	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCheckDotEnvFileExist(t *testing.T) {
-	envPath := fn.GetWorkDirFile(".env")
+	withTempCmdWorkDir(t)
+	envPath := ".env"
 
 	// test .env not exist
-	os.Remove(envPath)
-	assert.Equal(t, cmd.CheckDotEnvFileExist(envPath), false)
+	_ = os.Remove(envPath)
+	exists, err := cmd.CheckDotEnvFileExist(envPath)
+	assert.NoError(t, err)
+	assert.Equal(t, false, exists)
 
 	// test .env exist
 	f, _ := os.Create(envPath)
 	filename := f.Name()
+	assert.NoError(t, f.Close())
 	defer os.Remove(filename)
-	defer f.Close()
-	assert.Equal(t, cmd.CheckDotEnvFileExist(envPath), true)
+	exists, err = cmd.CheckDotEnvFileExist(envPath)
+	assert.NoError(t, err)
+	assert.Equal(t, true, exists)
+
+	assert.NoError(t, os.Remove(envPath))
+	assert.NoError(t, os.Mkdir(envPath, 0755))
+	exists, err = cmd.CheckDotEnvFileExist(envPath)
+	assert.Error(t, err)
+	assert.Equal(t, false, exists)
 }
 
 func TestParseEnvFile_NotExist(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 
 	// test .env not exist
-	os.Remove(envPath)
-	flags := cmd.ParseEnvFile(envParsed)
+	_ = os.Remove(envPath)
+	flags, err := cmd.ParseEnvFileE(envParsed)
+	assert.NoError(t, err)
 	assert.Equal(t, flags, envParsed)
 }
 
-func TestParseEnvFile_NotParsed(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+func TestParseEnvFile_DirectoryPathReturnsError(t *testing.T) {
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 
 	// test .env not exist
 	_ = os.Mkdir(envPath, 0755)
 	defer os.Remove(envPath)
-	flags := cmd.ParseEnvFile(envParsed)
+	flags, err := cmd.ParseEnvFileE(envParsed)
 	assert.Equal(t, flags, envParsed)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "is a directory")
 }
 
 func TestParseEnvFile_ParseErr(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 	envParsed.Port = 1234
 	envParsed.User = "123"
 	envParsed.UserIsGenerated = true
@@ -69,16 +85,17 @@ func TestParseEnvFile_ParseErr(t *testing.T) {
 	defer os.Remove(envPath)
 	defer f.Close()
 	_, _ = f.Write([]byte("FLARE_PORT=true\nFLARE_USER=\nFLARE_PASS=\nFLARE_GUIDE=1111"))
-	flags := cmd.ParseEnvFile(envParsed)
-	assert.Equal(t, flags, envParsed)
+	_, err := cmd.ParseEnvFileE(envParsed)
+	assert.Error(t, err)
 }
 
 func TestParseEnvFile_ParseOverwrite(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 	envParsed.Port = 1234
 	envParsed.User = "123"
 	envParsed.UserIsGenerated = true
@@ -90,7 +107,8 @@ func TestParseEnvFile_ParseOverwrite(t *testing.T) {
 	defer os.Remove(envPath)
 	defer f.Close()
 	_, _ = f.Write([]byte("FLARE_PORT=2345\nFLARE_USER=\nFLARE_PASS=\nFLARE_GUIDE=false"))
-	flags := cmd.ParseEnvFile(envParsed)
+	flags, err := cmd.ParseEnvFileE(envParsed)
+	assert.NoError(t, err)
 
 	envParsed.Port = 2345
 	envParsed.EnableGuide = false
@@ -99,11 +117,12 @@ func TestParseEnvFile_ParseOverwrite(t *testing.T) {
 }
 
 func TestParseEnvFile_PortError(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 	envParsed.Port = 1234
 	envParsed.User = "123"
 	envParsed.UserIsGenerated = true
@@ -115,21 +134,19 @@ func TestParseEnvFile_PortError(t *testing.T) {
 	defer os.Remove(envPath)
 	defer f.Close()
 	_, _ = f.Write([]byte("FLARE_PORT=9999999\nFLARE_USER=\nFLARE_PASS=\nFLARE_GUIDE=false"))
-	flags := cmd.ParseEnvFile(envParsed)
-
-	envParsed.EnableGuide = false
-
-	assert.Equal(t, flags, envParsed)
+	_, err := cmd.ParseEnvFileE(envParsed)
+	assert.Error(t, err)
 }
 
-func TestParseEnvFile_User(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+func TestParseEnvFile_ReturnsErrorWhenOnlyUserIsConfigured(t *testing.T) {
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	defaults := define.DefaultEnvVars
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 	envParsed.User = defaults.User
 	envParsed.Pass = defaults.Pass
 	envParsed.UserIsGenerated = false
@@ -140,28 +157,52 @@ func TestParseEnvFile_User(t *testing.T) {
 	defer os.Remove(envPath)
 	defer f.Close()
 	_, _ = f.Write([]byte("FLARE_PORT=3636\nFLARE_USER=superflare\nFLARE_PASS=\n"))
-	flags := cmd.ParseEnvFile(envParsed)
-
-	envParsed.User = "superflare"
-	envParsed.UserIsGenerated = true
-	assert.Equal(t, flags, envParsed)
+	_, err := cmd.ParseEnvFileE(envParsed)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parse .env login config failed")
+	assert.Contains(t, err.Error(), "login credentials are incomplete")
 }
 
 func TestParseEnvFile_PasswordWithCommentChars(t *testing.T) {
-	os.Setenv("FLARE_DEBUG", "true")
-	defer os.Unsetenv("FLARE_DEBUG")
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
 
 	envParsed := cmd.ParseEnvVars()
-	envPath := fn.GetWorkDirFile(".env")
+	envPath := ".env"
 	envParsed.User = "fallback-user"
 	envParsed.Pass = "fallback-pass"
+	envParsed.UserIsGenerated = true
+	envParsed.PassIsGenerated = true
 
 	f, _ := os.Create(envPath)
 	defer os.Remove(envPath)
 	defer f.Close()
 	_, _ = f.Write([]byte("FLARE_USER=test-user\nFLARE_PASS=abc#123;xyz\n"))
 
-	flags := cmd.ParseEnvFile(envParsed)
+	flags, err := cmd.ParseEnvFileE(envParsed)
+	assert.NoError(t, err)
 	assert.Equal(t, "test-user", flags.User)
 	assert.Equal(t, "abc#123;xyz", flags.Pass)
+	assert.Equal(t, false, flags.UserIsGenerated)
+	assert.Equal(t, false, flags.PassIsGenerated)
+}
+
+func TestParseEnvFile_ReturnsErrorWhenLoginCredentialsIncomplete(t *testing.T) {
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	t.Setenv("FLARE_DEBUG", "true")
+
+	envParsed := cmd.ParseEnvVars()
+	envPath := ".env"
+
+	f, _ := os.Create(envPath)
+	defer os.Remove(envPath)
+	defer f.Close()
+	_, _ = f.Write([]byte("FLARE_USER=superflare\nFLARE_PASS=\n"))
+
+	_, err := cmd.ParseEnvFileE(envParsed)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parse .env login config failed")
+	assert.Contains(t, err.Error(), "login credentials are incomplete")
 }

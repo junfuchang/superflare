@@ -1,3 +1,9 @@
+#page-settings {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
 #page-settings .form-group label,
 #page-settings .form-group select,
 #page-settings .form-group input.btn-submit,
@@ -42,6 +48,10 @@
   padding: 25px 20px;
   width: 100%;
   margin: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
 }
 
 #page-settings h1 {
@@ -59,6 +69,11 @@
 #page-settings .main-container {
   margin: 20px 0;
   position: relative;
+}
+
+#page-settings .footer-container {
+  margin-top: auto;
+  padding-top: 18px;
 }
 
 #page-settings .main-container .setting-group-container {

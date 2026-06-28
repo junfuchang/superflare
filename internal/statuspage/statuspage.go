@@ -14,10 +14,18 @@ import (
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/background"
+	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
 const (
-	defaultBodyStyle = "--color-background:#1a1a1a;--color-primary:#effbff;--color-accent:#ffa500;"
+	defaultBodyStyle  = "--color-background:#1a1a1a;--color-primary:#effbff;--color-accent:#ffa500;"
+	optionsContextKey = "superflare.statuspage.options"
+	optionsErrorKey   = "superflare.statuspage.options-error"
+)
+
+var (
+	getAppBodyStyle   = define.GetAppBodyStyle
+	updatePagePalette = define.UpdatePagePalettes
 )
 
 type Action struct {
@@ -39,12 +47,86 @@ type Page struct {
 
 func HTML(c *echo.Context, status int, page Page) error {
 	options := currentOptionsFor(c)
+	if loadErr := boundOptionsLoadError(c); loadErr != nil {
+		page = appendRenderIssues(normalizeLocale(options.Locale), page, []string{formatOptionsLoadIssue(options.Locale, loadErr)})
+	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.HTMLBlob(status, renderPage(options, status, page))
 }
 
 func CurrentLocale(c *echo.Context) string {
 	return normalizeLocale(currentOptionsFor(c).Locale)
+}
+
+func BindCurrentOptions(c *echo.Context) error {
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		BindOptionsLoadError(c, err)
+		return err
+	}
+	BindOptions(c, options)
+	return nil
+}
+
+func BindOptions(c *echo.Context, options model.Application) {
+	if c == nil {
+		return
+	}
+	c.Set(optionsContextKey, normalizeOptions(options))
+}
+
+func BindOptionsLoadError(c *echo.Context, err error) {
+	if c == nil || err == nil {
+		return
+	}
+	c.Set(optionsErrorKey, err)
+}
+
+func RequireConfiguredBodyStyle() (template.CSS, error) {
+	style, _, err := RequireConfiguredBodyStyleForRender("", "")
+	return style, err
+}
+
+func RequireConfiguredBodyStyleForRender(locale string, scope string) (template.CSS, string, error) {
+	style := strings.TrimSpace(string(getAppBodyStyle()))
+	if style != "" {
+		return template.CSS(style), "", nil
+	}
+	if err := updatePagePalette(); err != nil {
+		return "", "", fmt.Errorf("refresh page theme cache failed: %w", err)
+	}
+	style = strings.TrimSpace(string(getAppBodyStyle()))
+	if style == "" {
+		return "", "", fmt.Errorf("page theme cache is empty after refresh")
+	}
+	return template.CSS(style), formatBodyStyleRecoveryIssue(locale, scope), nil
+}
+
+func ValidatePageRenderOptions(options model.Application) error {
+	if err := validateSiteIconOption(options.SiteIcon); err != nil {
+		return err
+	}
+	return nil
+}
+
+func PrepareSettingsOptionsForRender(options model.Application) (model.Application, []string) {
+	options = normalizeOptions(options)
+	warnings := make([]string, 0, 1)
+	if err := validateSiteIconOption(options.SiteIcon); err != nil {
+		warnings = append(warnings, formatSettingsRenderIssue(options.Locale, "site_icon", err))
+		options.SiteIcon = ""
+	}
+	return options, warnings
+}
+
+func PrepareHomeOptionsForRender(options model.Application) (model.Application, []string) {
+	options = normalizeOptions(options)
+	warnings := make([]string, 0, 1)
+	if err := validateSiteIconOption(options.SiteIcon); err != nil {
+		warnings = append(warnings, formatHomeRenderIssue(options.Locale, "site_icon", err))
+		options.SiteIcon = ""
+	}
+	return options, warnings
 }
 
 func HTTPErrorHandler(c *echo.Context, err error) {
@@ -151,9 +233,9 @@ func BuildAuthSessionSaveErrorPage(locale string) Page {
 			Title:       "Session save failed",
 			Eyebrow:     "Authentication",
 			Heading:     "SuperFlare could not save the login session",
-			Lead:        "The request was accepted, but the session state could not be persisted.",
+			Lead:        "SuperFlare hit an internal error while reading or persisting the login session.",
 			Detail:      "Try again from the application settings page. If it keeps failing, verify the cookie secret and write permissions.",
-			StatusLabel: "400 / Session error",
+			StatusLabel: "500 / Session error",
 			Actions: []Action{
 				{Label: "Back to settings", URL: define.SettingPages.Others.Path, Primary: true},
 				{Label: "Back home", URL: define.RegularPages.Home.Path},
@@ -162,12 +244,12 @@ func BuildAuthSessionSaveErrorPage(locale string) Page {
 	}
 
 	return Page{
-		Title:       "登录状态保存失败",
+		Title:       "登录会话保存失败",
 		Eyebrow:     "身份验证",
-		Heading:     "程序内部错误，保存登录状态失败",
-		Lead:        "请求已提交，但当前登录状态没有成功写入会话。",
+		Heading:     "程序内部错误，登录会话无法保存",
+		Lead:        "当前请求在读取或保存登录会话时发生了程序内部错误。",
 		Detail:      "请返回应用设置页重试；若持续失败，请检查 Cookie 密钥和运行目录写权限。",
-		StatusLabel: "400 / 会话错误",
+		StatusLabel: "500 / 会话错误",
 		Actions: []Action{
 			{Label: "返回应用设置", URL: define.SettingPages.Others.Path, Primary: true},
 			{Label: "返回首页", URL: define.RegularPages.Home.Path},
@@ -238,7 +320,7 @@ func BuildHTTPErrorPage(locale string, status int, message string) Page {
 		default:
 			page.Heading = "This page is temporarily unavailable"
 			page.Lead = "SuperFlare could not complete the current request."
-			page.Detail = "Refresh the page or return home and try again."
+			page.Detail = safeDetail(message, "Refresh the page or return home and try again.")
 		}
 		return page
 	}
@@ -268,34 +350,65 @@ func BuildHTTPErrorPage(locale string, status int, message string) Page {
 	default:
 		page.Heading = "页面暂时不可用"
 		page.Lead = "SuperFlare 当前无法完成这次请求。"
-		page.Detail = "请刷新页面重试，或返回首页继续操作。"
+		page.Detail = safeDetail(message, "请刷新页面重试，或返回首页继续操作。")
 	}
 	return page
 }
 
 func currentOptionsFor(c *echo.Context) model.Application {
-	options, err := data.GetAllSettingsOptions()
-	if err == nil {
-		options.Locale = normalizeLocale(options.Locale)
-		if options.GlassEffect == "" {
-			options.GlassEffect = "none"
-		}
+	if options, ok := boundOptions(c); ok {
 		return options
 	}
+	if boundOptionsLoadError(c) != nil {
+		return fallbackOptionsForRequest(c)
+	}
+	// Status/error rendering should only use settings that the request handler
+	// has explicitly bound. If nothing was bound, fall back to request-derived
+	// defaults instead of silently reopening config here.
+	return fallbackOptionsForRequest(c)
+}
 
-	return model.Application{
+func boundOptions(c *echo.Context) (model.Application, bool) {
+	if c == nil {
+		return model.Application{}, false
+	}
+	options, ok := c.Get(optionsContextKey).(model.Application)
+	if !ok {
+		return model.Application{}, false
+	}
+	return normalizeOptions(options), true
+}
+
+func boundOptionsLoadError(c *echo.Context) error {
+	if c == nil {
+		return nil
+	}
+	err, _ := c.Get(optionsErrorKey).(error)
+	return err
+}
+
+func fallbackOptionsForRequest(c *echo.Context) model.Application {
+	return normalizeOptions(model.Application{
 		Locale:            localeFromRequest(c),
 		BackgroundImage:   "",
 		BackgroundBlur:    0,
 		BackgroundOpacity: 100,
 		GlassEffect:       "none",
+	})
+}
+
+func normalizeOptions(options model.Application) model.Application {
+	options.Locale = normalizeLocale(options.Locale)
+	if options.GlassEffect == "" {
+		options.GlassEffect = "none"
 	}
+	return options
 }
 
 func renderPage(options model.Application, status int, page Page) []byte {
 	page = normalizePage(options, status, page)
-	assets := background.ResolveAssets(options)
-	bodyStyle := bodyStyleValue()
+	assets, bodyStyle, renderIssues := resolveStatusPageRenderState(options)
+	page = appendRenderIssues(options.Locale, page, renderIssues)
 	backgroundStyle := renderBackgroundStyle(options, assets)
 
 	var b strings.Builder
@@ -345,6 +458,155 @@ func renderPage(options model.Application, status int, page Page) []byte {
 	}
 	b.WriteString(`</section></main></body></html>`)
 	return []byte(b.String())
+}
+
+func resolveStatusPageRenderState(options model.Application) (background.Assets, string, []string) {
+	bodyStyle := defaultBodyStyle
+	var issues []string
+
+	if style, err := RequireConfiguredBodyStyle(); err != nil {
+		issues = append(issues, formatRenderIssue(options.Locale, "theme", err))
+	} else {
+		bodyStyle = strings.TrimSpace(string(style))
+		if bodyStyle == "" {
+			bodyStyle = defaultBodyStyle
+		}
+	}
+
+	assets, err := resolveStatusPageAssets(options)
+	if err != nil {
+		issues = append(issues, formatRenderIssue(options.Locale, "background", err))
+		return background.Assets{}, bodyStyle, issues
+	}
+	return assets, bodyStyle, issues
+}
+
+func resolveStatusPageAssets(options model.Application) (background.Assets, error) {
+	source := strings.TrimSpace(options.BackgroundImage)
+	if source == "" {
+		return background.Assets{}, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(options.BackgroundImageMode), "upload") || strings.HasPrefix(source, "/user-assets/") {
+		if _, _, err := background.FetchUploadedVariant("full"); err != nil {
+			return background.Assets{}, fmt.Errorf("resolve uploaded background asset failed: %w", err)
+		}
+	}
+	return background.ResolveAssets(options), nil
+}
+
+func appendRenderIssues(locale string, page Page, issues []string) Page {
+	if len(issues) == 0 {
+		return page
+	}
+	note := strings.Join(issues, " ")
+	if strings.TrimSpace(page.Detail) == "" {
+		page.Detail = note
+		return page
+	}
+	page.Detail = strings.TrimSpace(page.Detail) + " " + note
+	return page
+}
+
+func formatRenderIssue(locale string, scope string, err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := strings.TrimSpace(err.Error())
+	if isEnglish(locale) {
+		switch scope {
+		case "theme":
+			return "Theme cache error: " + detail + ". This status page is using the built-in default style."
+		case "background":
+			return "Background asset error: " + detail + ". This status page is rendering without the configured background."
+		default:
+			return detail
+		}
+	}
+	switch scope {
+	case "theme":
+		return "主题缓存异常：" + detail + "。当前错误页已回退到内置默认样式。"
+	case "background":
+		return "背景资源异常：" + detail + "。当前错误页未加载已配置背景。"
+	default:
+		return detail
+	}
+}
+
+func formatSettingsRenderIssue(locale string, scope string, err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := strings.TrimSpace(err.Error())
+	if isEnglish(locale) {
+		switch scope {
+		case "site_icon":
+			return "Site icon config error: " + detail + ". This settings page is temporarily using the default website icon."
+		default:
+			return detail
+		}
+	}
+	switch scope {
+	case "site_icon":
+		return "站点图标配置异常：" + detail + "。当前设置页已临时改用默认网站图标。"
+	default:
+		return detail
+	}
+}
+
+func formatOptionsLoadIssue(locale string, err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := strings.TrimSpace(err.Error())
+	if detail == "" {
+		return ""
+	}
+	if isEnglish(locale) {
+		return "Configuration read failed: " + detail + ". This page is using request-derived defaults until the config becomes readable again."
+	}
+	return "配置读取失败：" + detail + "。当前页面暂时使用请求推导出的默认值，直到配置恢复可读。"
+}
+
+func formatHomeRenderIssue(locale string, scope string, err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := strings.TrimSpace(err.Error())
+	if isEnglish(locale) {
+		switch scope {
+		case "site_icon":
+			return "Site icon config error: " + detail + ". This page is temporarily using the default website icon."
+		default:
+			return detail
+		}
+	}
+	switch scope {
+	case "site_icon":
+		return "站点图标配置异常：" + detail + "。当前页面已临时改用默认网站图标。"
+	default:
+		return detail
+	}
+}
+
+func formatBodyStyleRecoveryIssue(locale string, scope string) string {
+	if isEnglish(locale) {
+		switch scope {
+		case "settings":
+			return "Theme cache was empty and has been rebuilt. This settings page is now using the refreshed theme style."
+		case "home":
+			return "Theme cache was empty and has been rebuilt. This page is now using the refreshed theme style."
+		default:
+			return "Theme cache was empty and has been rebuilt. The refreshed theme style is now active."
+		}
+	}
+	switch scope {
+	case "settings":
+		return "主题样式缓存为空，已自动重建。当前设置页正在使用刷新后的主题样式。"
+	case "home":
+		return "主题样式缓存为空，已自动重建。当前页面正在使用刷新后的主题样式。"
+	default:
+		return "主题样式缓存为空，已自动重建。当前正在使用刷新后的主题样式。"
+	}
 }
 
 func normalizePage(options model.Application, status int, page Page) Page {
@@ -446,14 +708,6 @@ func renderBackgroundStyle(options model.Application, assets background.Assets) 
 	return b.String()
 }
 
-func bodyStyleValue() string {
-	style := strings.TrimSpace(string(define.GetAppBodyStyle()))
-	if style == "" {
-		return defaultBodyStyle
-	}
-	return style
-}
-
 func normalizeLocale(locale string) string {
 	if isEnglish(locale) {
 		return "en"
@@ -511,6 +765,17 @@ func siteBrand(options model.Application) string {
 		return title
 	}
 	return "SuperFlare"
+}
+
+func validateSiteIconOption(siteIcon string) error {
+	siteIcon = strings.TrimSpace(siteIcon)
+	if siteIcon == "" {
+		return nil
+	}
+	if !mdi.IconExists(siteIcon) {
+		return fmt.Errorf("invalid site icon value: %s", siteIcon)
+	}
+	return nil
 }
 
 func clampInt(value int, min int, max int) int {

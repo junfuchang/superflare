@@ -69,6 +69,9 @@ try {
     }
 
     & docker @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker build failed with exit code $LASTEXITCODE."
+    }
 }
 finally {
     if (Test-Path $tempRoot) {

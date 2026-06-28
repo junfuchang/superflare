@@ -3,7 +3,8 @@
 {{ if .DebugMode }}
 <link rel="stylesheet" href="/assets/css/base.css"><link rel="stylesheet" href="/assets/css/settings/sidebar.css"><link rel="stylesheet" href="/assets/css/settings/layout.css"><link rel="stylesheet" href="/assets/css/settings/theme.css">{{ else }}<style>{{.PageInlineStyle}}</style>{{ end }}
 {{ if eq .PageName "Ports" }}
-<link rel="stylesheet" href="/assets/table/grid.css{{.DebugAssetVersion}}"><script src="/assets/table/grid.js{{.DebugAssetVersion}}"></script><script src="/assets/table/grid.zh-CN.js{{.DebugAssetVersion}}"></script>{{ end }}</head><body style="{{.PageAppearance}}"><div class="pageview" id="page-settings"><div class="container">{{ template "settings-header.html" . }}<div class="main-container clearfix">{{ template "settings-sidebar.html" . }}
+<link rel="stylesheet" href="/assets/table/grid.css{{.DebugAssetVersion}}"><script src="/assets/table/runtime.js{{.DebugAssetVersion}}"></script><script src="/assets/table/grid.js{{.DebugAssetVersion}}"></script><script src="/assets/table/grid.zh-CN.js{{.DebugAssetVersion}}"></script>{{ end }}</head><body style="{{.PageAppearance}}"><div class="pageview" id="page-settings"><div class="container">{{ template "settings-header.html" . }}
+{{ if .RenderWarnings }}<div class="settings-render-warnings">{{ range .RenderWarnings }}<div class="settings-render-warning">{{ . }}</div>{{ end }}</div>{{ end }}<div class="main-container clearfix">{{ template "settings-sidebar.html" . }}
 {{ if eq .PageName "Theme" }}
 {{ template "settings-theme.html" . }}
 {{ end }}
@@ -18,4 +19,543 @@
 {{ end }}
 {{ if eq .PageName "Others" }}
 {{ template "settings-others.html" . }}
-{{ end }}</div><div class="footer-container">{{.OptionFooter}}</div></div></div><script>document.addEventListener('keydown',function(e){if(e.key==='Escape')history.back();});</script></body></html>
+{{ end }}</div><div class="footer-container">{{.RenderedFooter}}</div></div></div><style>.settings-color-input-row{display:flex;align-items:center;gap:8px}.settings-color-trigger{width:38px;height:38px;padding:0;border:1px solid color-mix(in srgb,var(--color-accent) 76%,rgba(255,255,255,.18));border-radius:6px;background:0 0;flex:none;cursor:pointer;vertical-align:middle;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-accent) 22%,transparent)}.settings-color-trigger::before{content:"";display:block;width:100%;height:100%;border-radius:5px;background:var(--settings-color-preview,transparent)}.settings-color-trigger.is-transparent::before{background:linear-gradient(45deg,rgba(255,255,255,.18) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.18) 75%,rgba(255,255,255,.18)),linear-gradient(45deg,rgba(255,255,255,.18) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.18) 75%,rgba(255,255,255,.18)),var(--settings-color-preview,transparent);background-size:10px 10px,10px 10px,auto;background-position:0 0,5px 5px,50%}.settings-color-trigger.is-active{border-color:var(--color-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--color-accent) 24%,transparent)}.settings-color-panel{position:fixed;z-index:3000;display:none;width:292px;padding:12px;border:1px solid rgba(255,253,234,.18);border-radius:8px;background:rgba(18,18,18,.98);box-shadow:0 18px 36px rgba(0,0,0,.42)}.settings-color-panel.is-open{display:block}.settings-color-panel-body{display:grid;gap:12px}.settings-color-panel-preview{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,4%)}.settings-color-panel-preview-swatch{width:34px;height:34px;flex:none;border-radius:6px;border:1px solid color-mix(in srgb,var(--color-accent) 70%,rgba(255,255,255,.18));background:var(--settings-color-panel-preview-color,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-accent) 22%,transparent)}.settings-color-panel-preview-swatch.is-transparent{background:linear-gradient(45deg,rgba(255,255,255,.18) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.18) 75%,rgba(255,255,255,.18)),linear-gradient(45deg,rgba(255,255,255,.18) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.18) 75%,rgba(255,255,255,.18)),var(--settings-color-panel-preview-color,transparent);background-size:10px 10px,10px 10px,auto;background-position:0 0,5px 5px,50%}.settings-color-panel-preview-text{min-width:0;font-size:12px;line-height:1.35;color:color-mix(in srgb,var(--color-primary) 84%,transparent);word-break:break-all}.settings-color-wheel-box{position:relative;width:176px;height:176px;margin:0 auto}.settings-color-wheel{display:block;width:176px;height:176px;border:none;border-radius:50%;background:rgba(255,255,255,4%);cursor:crosshair;touch-action:none;box-shadow:inset 0 0 0 1px rgba(255,253,234,.18)}.settings-color-wheel-marker{position:absolute;width:12px;height:12px;margin-left:-6px;margin-top:-6px;border-radius:50%;border:2px solid rgba(255,255,255,.95);box-shadow:0 0 0 1px rgba(0,0,0,.5),0 0 0 2px rgba(0,0,0,.18);pointer-events:none}.settings-color-slider{display:grid;gap:6px}.settings-color-slider-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:color-mix(in srgb,var(--color-primary) 84%,transparent)}.settings-color-slider input[type=range]{width:100%;margin:0;accent-color:var(--color-accent)}.settings-color-panel-actions{display:flex;gap:8px}.settings-color-button{flex:1;min-height:36px;padding:0 12px;border:1px solid color-mix(in srgb,var(--color-primary) 16%,transparent);border-radius:6px;background:rgba(12,12,12,.92);color:var(--color-primary);cursor:pointer;transition:border-color .18s ease,background-color .18s ease,opacity .18s ease}.settings-color-button:hover{border-color:color-mix(in srgb,var(--color-accent) 60%,white 10%);background:rgba(24,24,24,.88)}.settings-color-button:focus{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--color-accent) 24%,transparent)}.settings-color-input-row .option-input{flex:auto;min-width:0}.settings-render-warnings{display:grid;gap:10px;margin:0 0 18px}.settings-render-warning{padding:12px 14px;border:1px solid color-mix(in srgb,var(--color-accent) 36%,transparent);border-radius:6px;background:color-mix(in srgb,var(--color-background) 78%,var(--color-accent) 22%);color:var(--color-primary);line-height:1.5;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-primary) 8%,transparent)}</style><script>(function () {
+var doc = document;
+var I18N = {
+open: "{{ T .Locale "color_picker_open" }}",
+confirm: "{{ T .Locale "color_picker_confirm" }}",
+cancel: "{{ T .Locale "color_picker_cancel" }}",
+brightness: "{{ T .Locale "color_picker_brightness" }}",
+alpha: "{{ T .Locale "color_picker_alpha" }}",
+preview: "{{ T .Locale "color_picker_preview" }}"
+};
+var activeInput = null;
+var activeTrigger = null;
+var panel = null;
+var panelPreviewSwatch = null;
+var panelPreviewText = null;
+var wheelCanvas = null;
+var wheelCtx = null;
+var wheelMarker = null;
+var brightnessSlider = null;
+var alphaSlider = null;
+var confirmButton = null;
+var cancelButton = null;
+var currentState = null;
+var dragMode = "";
+var renderToken = 0;
+var WHEEL_SIZE = 176;
+var WHEEL_RADIUS = 84;
+var WHEEL_CENTER = WHEEL_SIZE / 2;
+function clampByte(n) {
+n = Number(n);
+if (!isFinite(n) || isNaN(n)) { return 0; }
+if (n < 0) { return 0; }
+if (n > 255) { return 255; }
+return Math.round(n);
+}
+function clamp01(n) {
+n = Number(n);
+if (!isFinite(n) || isNaN(n)) { return 0; }
+if (n < 0) { return 0; }
+if (n > 1) { return 1; }
+return n;
+}
+function padHex(n) {
+var s = clampByte(n).toString(16);
+return s.length === 1 ? "0" + s : s;
+}
+function formatAlpha(alpha) {
+return String(Math.round(clamp01(alpha) * 1000) / 1000);
+}
+function hexToRgb(hex) {
+hex = String(hex || "").trim().replace(/^#/, "");
+if (hex.length === 3 || hex.length === 4) {
+var r3 = parseInt(hex[0] + hex[0], 16);
+var g3 = parseInt(hex[1] + hex[1], 16);
+var b3 = parseInt(hex[2] + hex[2], 16);
+var a3 = hex.length === 4 ? parseInt(hex[3] + hex[3], 16) / 255 : 1;
+if (!isFinite(r3) || !isFinite(g3) || !isFinite(b3) || !isFinite(a3)) { return null; }
+return { r: r3, g: g3, b: b3, a: a3, format: hex.length === 4 ? "hex8" : "hex" };
+}
+if (hex.length === 6 || hex.length === 8) {
+var r6 = parseInt(hex.slice(0, 2), 16);
+var g6 = parseInt(hex.slice(2, 4), 16);
+var b6 = parseInt(hex.slice(4, 6), 16);
+var a6 = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1;
+if (!isFinite(r6) || !isFinite(g6) || !isFinite(b6) || !isFinite(a6)) { return null; }
+return { r: r6, g: g6, b: b6, a: a6, format: hex.length === 8 ? "hex8" : "hex" };
+}
+return null;
+}
+function parseRgbParts(parts) {
+if (parts.length < 3) { return null; }
+var r = parts[0].trim();
+var g = parts[1].trim();
+var b = parts[2].trim();
+var a = parts.length > 3 ? parts[3].trim() : "1";
+function parseChannel(value) {
+if (/%$/.test(value)) {
+var percent = parseFloat(value.replace("%", ""));
+if (!isFinite(percent) || percent < 0 || percent > 100) { return null; }
+return clampByte(percent * 2.55);
+}
+var num = parseFloat(value);
+if (!isFinite(num) || num < 0 || num > 255) { return null; }
+return clampByte(num);
+}
+function parseAlphaValue(value) {
+if (/%$/.test(value)) {
+var percent = parseFloat(value.replace("%", ""));
+if (!isFinite(percent) || percent < 0 || percent > 100) { return null; }
+return clamp01(percent / 100);
+}
+var num = parseFloat(value);
+if (!isFinite(num) || num < 0 || num > 1) { return null; }
+return clamp01(num);
+}
+r = parseChannel(r);
+g = parseChannel(g);
+b = parseChannel(b);
+a = parseAlphaValue(a);
+if (r === null || g === null || b === null || a === null) { return null; }
+return { r: r, g: g, b: b, a: a };
+}
+function parseColor(input) {
+input = String(input || "").trim();
+if (!input) { return null; }
+if (input[0] === "#") {
+var rgb = hexToRgb(input);
+if (!rgb) { return null; }
+return {
+r: rgb.r,
+g: rgb.g,
+b: rgb.b,
+a: clamp01(rgb.a),
+format: rgb.format,
+display: input
+};
+}
+var rgba = input.match(/^rgba?\((.*)\)$/i);
+if (rgba) {
+var parsed = parseRgbParts(rgba[1].split(","));
+if (!parsed) { return null; }
+parsed.format = /^rgba/i.test(input) || parsed.a < 1 ? "rgba" : "rgb";
+parsed.display = input;
+return parsed;
+}
+return null;
+}
+function hsvToRgb(h, s, v) {
+h = ((Number(h) % 360) + 360) % 360;
+s = clamp01(s);
+v = clamp01(v);
+var c = v * s;
+var x = c * (1 - Math.abs((h / 60) % 2 - 1));
+var m = v - c;
+var r = 0;
+var g = 0;
+var b = 0;
+if (h < 60) {
+r = c; g = x; b = 0;
+} else if (h < 120) {
+r = x; g = c; b = 0;
+} else if (h < 180) {
+r = 0; g = c; b = x;
+} else if (h < 240) {
+r = 0; g = x; b = c;
+} else if (h < 300) {
+r = x; g = 0; b = c;
+} else {
+r = c; g = 0; b = x;
+}
+return {
+r: clampByte((r + m) * 255),
+g: clampByte((g + m) * 255),
+b: clampByte((b + m) * 255)
+};
+}
+function rgbToHsv(r, g, b) {
+r = clampByte(r) / 255;
+g = clampByte(g) / 255;
+b = clampByte(b) / 255;
+var max = Math.max(r, g, b);
+var min = Math.min(r, g, b);
+var d = max - min;
+var h = 0;
+var s = max === 0 ? 0 : d / max;
+if (d !== 0) {
+switch (max) {
+case r:
+h = 60 * (((g - b) / d) % 6);
+break;
+case g:
+h = 60 * (((b - r) / d) + 2);
+break;
+default:
+h = 60 * (((r - g) / d) + 4);
+break;
+}
+}
+if (h < 0) { h += 360; }
+return { h: h, s: s, v: max };
+}
+function colorPreviewCss(state) {
+var rgb = null;
+if (typeof state.r === "number" && typeof state.g === "number" && typeof state.b === "number") {
+rgb = {
+r: clampByte(state.r),
+g: clampByte(state.g),
+b: clampByte(state.b)
+};
+} else {
+rgb = hsvToRgb(state.h, state.s, state.v);
+}
+if (state.a < 1) {
+return "rgba(" + rgb.r + ", " + rgb.g + ", " + rgb.b + ", " + formatAlpha(state.a) + ")";
+}
+return "rgb(" + rgb.r + ", " + rgb.g + ", " + rgb.b + ")";
+}
+function formatColor(state) {
+var rgb = hsvToRgb(state.h, state.s, state.v);
+if (state.format === "hex" || state.format === "hex8") {
+return "#" + padHex(rgb.r) + padHex(rgb.g) + padHex(rgb.b) + (state.a < 1 || state.format === "hex8" ? padHex(Math.round(state.a * 255)) : "");
+}
+if (state.format === "rgb" && state.a >= 1) {
+return "rgb(" + rgb.r + ", " + rgb.g + ", " + rgb.b + ")";
+}
+if (state.format === "rgb" && state.a < 1) {
+return "rgba(" + rgb.r + ", " + rgb.g + ", " + rgb.b + ", " + formatAlpha(state.a) + ")";
+}
+return "rgba(" + rgb.r + ", " + rgb.g + ", " + rgb.b + ", " + formatAlpha(state.a) + ")";
+}
+function syncTrigger(input) {
+var parsed = parseColor(input.value);
+var trigger = input.__settingsColorTrigger;
+if (!trigger) { return; }
+if (parsed) {
+trigger.style.setProperty("--settings-color-preview", colorPreviewCss(parsed));
+trigger.classList.toggle("is-transparent", parsed.a < 1);
+trigger.classList.add("has-value");
+trigger.title = parsed.display;
+} else {
+trigger.style.removeProperty("--settings-color-preview");
+trigger.classList.remove("is-transparent");
+trigger.classList.remove("has-value");
+trigger.title = I18N.open;
+}
+}
+function ensurePanel() {
+if (panel) { return panel; }
+panel = doc.createElement("div");
+panel.className = "settings-color-panel";
+panel.setAttribute("role", "dialog");
+panel.setAttribute("aria-label", I18N.open);
+var body = doc.createElement("div");
+body.className = "settings-color-panel-body";
+var preview = doc.createElement("div");
+preview.className = "settings-color-panel-preview";
+panelPreviewSwatch = doc.createElement("span");
+panelPreviewSwatch.className = "settings-color-panel-preview-swatch";
+panelPreviewText = doc.createElement("span");
+panelPreviewText.className = "settings-color-panel-preview-text";
+preview.appendChild(panelPreviewSwatch);
+preview.appendChild(panelPreviewText);
+var wheelBox = doc.createElement("div");
+wheelBox.className = "settings-color-wheel-box";
+wheelCanvas = doc.createElement("canvas");
+wheelCanvas.className = "settings-color-wheel";
+wheelCanvas.width = WHEEL_SIZE;
+wheelCanvas.height = WHEEL_SIZE;
+wheelCanvas.setAttribute("aria-label", I18N.open);
+wheelMarker = doc.createElement("div");
+wheelMarker.className = "settings-color-wheel-marker";
+wheelBox.appendChild(wheelCanvas);
+wheelBox.appendChild(wheelMarker);
+var brightness = doc.createElement("div");
+brightness.className = "settings-color-slider";
+var brightnessTitle = doc.createElement("span");
+brightnessTitle.className = "settings-color-slider-title";
+brightnessTitle.textContent = I18N.brightness;
+brightness.appendChild(brightnessTitle);
+brightnessSlider = doc.createElement("input");
+brightnessSlider.type = "range";
+brightnessSlider.min = "0";
+brightnessSlider.max = "100";
+brightnessSlider.step = "1";
+brightness.appendChild(brightnessSlider);
+var alpha = doc.createElement("div");
+alpha.className = "settings-color-slider";
+var alphaTitle = doc.createElement("span");
+alphaTitle.className = "settings-color-slider-title";
+alphaTitle.textContent = I18N.alpha;
+alpha.appendChild(alphaTitle);
+alphaSlider = doc.createElement("input");
+alphaSlider.type = "range";
+alphaSlider.min = "0";
+alphaSlider.max = "100";
+alphaSlider.step = "1";
+alpha.appendChild(alphaSlider);
+var actions = doc.createElement("div");
+actions.className = "settings-color-panel-actions";
+confirmButton = doc.createElement("button");
+confirmButton.type = "button";
+confirmButton.className = "settings-color-button";
+confirmButton.textContent = I18N.confirm;
+cancelButton = doc.createElement("button");
+cancelButton.type = "button";
+cancelButton.className = "settings-color-button";
+cancelButton.textContent = I18N.cancel;
+actions.appendChild(confirmButton);
+actions.appendChild(cancelButton);
+body.appendChild(preview);
+body.appendChild(wheelBox);
+body.appendChild(brightness);
+body.appendChild(alpha);
+body.appendChild(actions);
+panel.appendChild(body);
+doc.body.appendChild(panel);
+function renderPreview() {
+if (!currentState) { return; }
+var css = formatColor(currentState);
+panelPreviewSwatch.style.setProperty("--settings-color-panel-preview-color", colorPreviewCss(currentState));
+panelPreviewSwatch.classList.toggle("is-transparent", currentState.a < 1);
+panelPreviewText.textContent = I18N.preview + ": " + css;
+}
+function renderWheel() {
+if (!wheelCtx || !currentState) { return; }
+renderToken += 1;
+var token = renderToken;
+var image = wheelCtx.createImageData(WHEEL_SIZE, WHEEL_SIZE);
+var data = image.data;
+var idx = 0;
+for (var y = 0; y < WHEEL_SIZE; y++) {
+for (var x = 0; x < WHEEL_SIZE; x++) {
+var dx = x - WHEEL_CENTER + 0.5;
+var dy = y - WHEEL_CENTER + 0.5;
+var dist = Math.sqrt(dx * dx + dy * dy);
+if (dist <= WHEEL_RADIUS) {
+var hsv = hsvToRgb((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360, dist / WHEEL_RADIUS, currentState.v);
+data[idx] = hsv.r;
+data[idx + 1] = hsv.g;
+data[idx + 2] = hsv.b;
+data[idx + 3] = 255;
+} else {
+data[idx + 3] = 0;
+}
+idx += 4;
+}
+}
+if (token !== renderToken) { return; }
+wheelCtx.putImageData(image, 0, 0);
+positionMarker();
+renderPreview();
+}
+function positionMarker() {
+if (!currentState) { return; }
+var angle = currentState.h * Math.PI / 180;
+var radius = Math.max(0, currentState.s * WHEEL_RADIUS);
+var x = WHEEL_CENTER + Math.cos(angle) * radius;
+var y = WHEEL_CENTER + Math.sin(angle) * radius;
+wheelMarker.style.left = x + "px";
+wheelMarker.style.top = y + "px";
+}
+function setStateFromPoint(x, y) {
+var dx = x - WHEEL_CENTER;
+var dy = y - WHEEL_CENTER;
+var dist = Math.sqrt(dx * dx + dy * dy);
+if (dist > WHEEL_RADIUS) {
+dist = WHEEL_RADIUS;
+}
+currentState.h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+currentState.s = WHEEL_RADIUS === 0 ? 0 : dist / WHEEL_RADIUS;
+positionMarker();
+renderPreview();
+}
+function setValueFromSlider() {
+if (!currentState) { return; }
+currentState.v = clamp01(Number(brightnessSlider.value) / 100);
+renderWheel();
+}
+function setAlphaFromSlider() {
+if (!currentState) { return; }
+currentState.a = clamp01(Number(alphaSlider.value) / 100);
+renderPreview();
+}
+function commitColor() {
+if (!activeInput || !currentState) { return; }
+activeInput.value = formatColor(currentState);
+syncTrigger(activeInput);
+}
+function setPanelPosition() {
+if (!activeTrigger || !panel) { return; }
+var rect = activeTrigger.getBoundingClientRect();
+var viewportWidth = Math.max(doc.documentElement.clientWidth || 0, window.innerWidth || 0);
+var viewportHeight = Math.max(doc.documentElement.clientHeight || 0, window.innerHeight || 0);
+var panelWidth = panel.offsetWidth || 292;
+var panelHeight = panel.offsetHeight || 316;
+var left = rect.left;
+var top = rect.bottom + 8;
+if (left + panelWidth > viewportWidth - 8) {
+left = Math.max(8, viewportWidth - panelWidth - 8);
+}
+if (left < 8) {
+left = 8;
+}
+if (top + panelHeight > viewportHeight - 8) {
+top = Math.max(8, rect.top - panelHeight - 8);
+}
+if (top < 8) {
+top = 8;
+}
+panel.style.left = left + "px";
+panel.style.top = top + "px";
+}
+function hidePanel() {
+if (!panel) { return; }
+panel.classList.remove("is-open");
+panel.style.visibility = "";
+if (activeTrigger) {
+activeTrigger.classList.remove("is-active");
+}
+activeInput = null;
+activeTrigger = null;
+currentState = null;
+dragMode = "";
+}
+function showPanel(input, trigger) {
+ensurePanel();
+if (activeTrigger && activeTrigger !== trigger) {
+activeTrigger.classList.remove("is-active");
+}
+activeInput = input;
+activeTrigger = trigger;
+var parsed = parseColor(input.value);
+if (parsed) {
+currentState = rgbToHsv(parsed.r, parsed.g, parsed.b);
+currentState.a = clamp01(parsed.a);
+currentState.format = parsed.format || "rgba";
+} else {
+currentState = rgbToHsv(79, 124, 255);
+currentState.a = 1;
+currentState.format = "rgba";
+}
+brightnessSlider.value = String(Math.round(currentState.v * 100));
+alphaSlider.value = String(Math.round(currentState.a * 100));
+renderWheel();
+panelPreviewText.textContent = I18N.preview + ": " + formatColor(currentState);
+panel.classList.add("is-open");
+panel.style.visibility = "hidden";
+setPanelPosition();
+panel.style.visibility = "";
+trigger.classList.add("is-active");
+}
+wheelCanvas.addEventListener("mousedown", function (event) {
+if (!currentState) { return; }
+dragMode = "wheel";
+var rect = wheelCanvas.getBoundingClientRect();
+setStateFromPoint(event.clientX - rect.left, event.clientY - rect.top);
+event.preventDefault();
+});
+wheelCanvas.addEventListener("touchstart", function (event) {
+if (!currentState || !event.touches || !event.touches.length) { return; }
+dragMode = "wheel";
+var touch = event.touches[0];
+var rect = wheelCanvas.getBoundingClientRect();
+setStateFromPoint(touch.clientX - rect.left, touch.clientY - rect.top);
+event.preventDefault();
+}, { passive: false });
+doc.addEventListener("mousemove", function (event) {
+if (dragMode !== "wheel" || !currentState) { return; }
+var rect = wheelCanvas.getBoundingClientRect();
+setStateFromPoint(event.clientX - rect.left, event.clientY - rect.top);
+event.preventDefault();
+});
+doc.addEventListener("touchmove", function (event) {
+if (dragMode !== "wheel" || !currentState || !event.touches || !event.touches.length) { return; }
+var touch = event.touches[0];
+var rect = wheelCanvas.getBoundingClientRect();
+setStateFromPoint(touch.clientX - rect.left, touch.clientY - rect.top);
+event.preventDefault();
+}, { passive: false });
+doc.addEventListener("mouseup", function () {
+dragMode = "";
+});
+doc.addEventListener("touchend", function () {
+dragMode = "";
+});
+brightnessSlider.addEventListener("input", setValueFromSlider);
+alphaSlider.addEventListener("input", setAlphaFromSlider);
+confirmButton.addEventListener("click", function () {
+commitColor();
+hidePanel();
+});
+cancelButton.addEventListener("click", hidePanel);
+doc.addEventListener("mousedown", function (event) {
+if (!panel || !panel.classList.contains("is-open")) { return; }
+if (panel.contains(event.target) || (activeTrigger && activeTrigger.contains(event.target))) { return; }
+hidePanel();
+});
+doc.addEventListener("keydown", function (event) {
+if (!panel || !panel.classList.contains("is-open")) { return; }
+if (event.key === "Escape") {
+hidePanel();
+} else if (event.key === "Enter") {
+commitColor();
+hidePanel();
+}
+});
+window.addEventListener("resize", function () {
+if (panel && panel.classList.contains("is-open")) {
+setPanelPosition();
+}
+});
+window.addEventListener("scroll", function () {
+if (panel && panel.classList.contains("is-open")) {
+setPanelPosition();
+}
+}, true);
+wheelCtx = wheelCanvas.getContext("2d");
+panel.__settingsColorRender = renderWheel;
+panel.__settingsColorShow = showPanel;
+panel.__settingsColorHide = hidePanel;
+panel.__settingsColorRenderPreview = renderPreview;
+return panel;
+}
+function mountColorPickers() {
+Array.prototype.slice.call(doc.querySelectorAll('input[data-color-picker="true"]')).forEach(function (input) {
+if (input.__settingsColorMounted) { return; }
+input.__settingsColorMounted = true;
+var row = doc.createElement("div");
+row.className = "settings-color-input-row";
+input.parentNode.insertBefore(row, input);
+row.appendChild(input);
+var trigger = doc.createElement("button");
+trigger.type = "button";
+trigger.className = "settings-color-trigger";
+trigger.setAttribute("aria-label", I18N.open);
+trigger.title = I18N.open;
+row.appendChild(trigger);
+input.__settingsColorTrigger = trigger;
+syncTrigger(input);
+trigger.addEventListener("click", function () {
+ensurePanel().__settingsColorShow(input, trigger);
+});
+input.addEventListener("input", function () {
+syncTrigger(input);
+});
+input.addEventListener("change", function () {
+syncTrigger(input);
+});
+input.addEventListener("blur", function () {
+syncTrigger(input);
+});
+});
+}
+if (doc.readyState === "loading") {
+doc.addEventListener("DOMContentLoaded", mountColorPickers, { once: true });
+} else {
+mountColorPickers();
+}
+}());
+</script><script>document.addEventListener('keydown',function(e){if(e.key==='Escape')history.back();});</script></body></html>

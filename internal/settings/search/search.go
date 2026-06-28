@@ -9,6 +9,7 @@ import (
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/pool"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 func RegisterRouting(e *echo.Echo) {
@@ -17,29 +18,52 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateSearchOptions(c *echo.Context) error {
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	var body struct {
 		ShowSearchComponent     bool `form:"show-search-component"`
 		DisabledSearchAutoFocus bool `form:"disabled-search-auto-focus"`
+		SearchMode              string `form:"search-mode"`
+		SearchEngine            string `form:"search-engine"`
+		SearchEngineOpenMode    string `form:"search-engine-open-mode"`
+		SearchEngineCustomTemplate string `form:"search-engine-custom-template"`
 	}
 	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusForbidden, "提交数据缺失")
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing form data"))
 	}
-	data.UpdateSearch(body.ShowSearchComponent, body.DisabledSearchAutoFocus)
+	if err := data.UpdateSearch(body.ShowSearchComponent, body.DisabledSearchAutoFocus, body.SearchMode, body.SearchEngine, body.SearchEngineOpenMode, body.SearchEngineCustomTemplate); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	return pageSearch(c)
 }
 
 func pageSearch(c *echo.Context) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareSettingsOptionsForRender(options)
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
-	}
 	showLoginInfo := false
-	if !define.AppFlags.DisableLoginMode {
-		showLoginInfo = auth.CheckUserIsLogin(c)
+	userName := ""
+	loginDate := ""
+	loginDisplay, err := auth.ResolveLoginDisplayStateForStrictView(c)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	showLoginInfo = loginDisplay.ShowLoginInfo
+	userName = loginDisplay.UserName
+	loginDate = loginDisplay.LoginDate
+	renderWarnings = auth.AppendSessionWarnings(c, locale, renderWarnings)
+	pageStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "settings")
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
@@ -47,16 +71,21 @@ func pageSearch(c *echo.Context) error {
 	m["DebugMode"] = define.AppFlags.DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = "Search"
-	m["PageAppearance"] = define.GetAppBodyStyle()
+	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo
-	m["UserName"] = auth.GetUserName(c)
-	m["LoginDate"] = auth.GetUserLoginDate(c)
+	m["UserName"] = userName
+	m["LoginDate"] = loginDate
 	m["ShowSearchComponent"] = options.ShowSearchComponent
 	m["DisabledSearchAutoFocus"] = options.DisabledSearchAutoFocus
+	m["SearchMode"] = options.SearchMode
+	m["SearchEngine"] = options.SearchEngine
+	m["SearchEngineOpenMode"] = options.SearchEngineOpenMode
+	m["SearchEngineCustomTemplate"] = options.SearchEngineCustomTemplate
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
+	m["RenderWarnings"] = renderWarnings
 	return c.Render(http.StatusOK, "settings.html", m)
 }

@@ -27,23 +27,28 @@
 
 #container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark {
   line-height: 2;
-  transition: all 0.25s;
-
+  transition: padding-left 0.25s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 
 #container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark:hover {
-  text-decoration: underline;
   padding-left: 10px;
-  }
+}
+
+#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark:hover .bookmark-label {
+  text-decoration: underline;
+}
 
 
 #container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark img {
   display: inline-block;
+  flex: 0 0 auto;
   width: 20px;
   height: 20px;
   color: var(--color-primary);
@@ -51,16 +56,21 @@
 }
 #container-bookmakrs .bookmark-group-container .bookmark svg,
 #container-bookmakrs .bookmark-group-container .bookmark span {
-  display: inline;
   vertical-align: middle;
 }
 
-#container-bookmakrs .bookmark-group-container .bookmark span {
-  margin-left: 4px;
+#container-bookmakrs .bookmark-group-container .bookmark svg {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 24px;
 }
 
-#container-bookmakrs .bookmark-group-container .bookmark svg {
-  width: 24px;
+#container-bookmakrs .bookmark-group-container .bookmark span.bookmark-label {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
 }
 
 #container-bookmakrs .bookmark-subdirs {

@@ -116,18 +116,14 @@ h2 a {
 }
 
 .pageview {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
   display: block;
+  width: 100%;
+  min-height: 100vh;
 }
 
 #page-home {
-  display: block;
-
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .container {
@@ -160,10 +156,9 @@ h2 a {
 }
 
 #page-home .footer-container {
-  /* position: absolute; */
   text-align: center;
-  bottom: 10px;
-  right: 40px;
+  margin-top: auto;
+  padding-top: 18px;
   opacity: 0.6;
 }
 
@@ -173,6 +168,10 @@ h2 a {
 
 #page-home.pageview .container {
   min-width: 360px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
 }
 
 @media (max-width: 1200px) {

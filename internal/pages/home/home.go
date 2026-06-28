@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"net/url"
 
 	"github.com/labstack/echo/v5"
 
@@ -18,15 +19,19 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/background"
+	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/i18n"
 	"github.com/junfuchang/superflare/internal/pool"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 const _cspValue = "object-src 'none'; base-uri 'none'; require-trusted-types-for 'script';"
 const _cspScriptNone = "script-src 'none'; "
 const _inlineClockScript = `(function(){var container=document.getElementById("live-datetime");if(!container){return;}var dateNode=container.querySelector('[data-role="date"]');var dayNode=container.querySelector('[data-role="day"]');var timeNode=container.querySelector('[data-role="time"]');var locale=container.getAttribute("data-locale")||"zh";var browserLocale=locale==="en"?"en-US":"zh-CN";function formatDate(now){if(locale==="en"){return new Intl.DateTimeFormat(browserLocale,{month:"short",day:"2-digit",year:"numeric"}).format(now);}return new Intl.DateTimeFormat(browserLocale,{year:"numeric",month:"long",day:"numeric"}).format(now);}function formatDay(now){return new Intl.DateTimeFormat(browserLocale,{weekday:"long"}).format(now);}function pad(num){return String(num).padStart(2,"0");}function tick(){var now=new Date();if(dateNode){dateNode.textContent=formatDate(now);}if(dayNode){dayNode.textContent=formatDay(now);}if(timeNode){timeNode.textContent=[pad(now.getHours()),pad(now.getMinutes()),pad(now.getSeconds())].join(":");}}tick();window.setInterval(tick,1000);}());`
 const _inlineBackgroundLoaderScript = background.InlineLoaderScript
+
+var cryptoRandRead = rand.Read
 
 func setCSPHeader(c *echo.Context, scriptNonce string) {
 	if !define.AppFlags.DisableCSP {
@@ -151,11 +156,15 @@ func cssURLValue(input string) string {
 	return input
 }
 
-func pageAppearance(options model.Application, assets background.Assets) template.CSS {
-	base := string(define.GetAppBodyStyle())
+func pageAppearance(options model.Application, assets background.Assets) (template.CSS, string, error) {
+	baseStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(options.Locale, "home")
+	if err != nil {
+		return "", "", err
+	}
+	base := string(baseStyle)
 	previewSource := strings.TrimSpace(background.PreviewSource(assets))
 	if previewSource == "" {
-		return template.CSS(base)
+		return template.CSS(base), styleWarning, nil
 	}
 	opacity := options.BackgroundOpacity
 	if opacity < 0 {
@@ -183,7 +192,7 @@ func pageAppearance(options model.Application, assets background.Assets) templat
 	}
 	b.WriteString(cssURLValue(previewSource))
 	b.WriteString(`');background-position:center center;background-repeat:no-repeat;background-size:cover;`)
-	return template.CSS(b.String())
+	return template.CSS(b.String()), styleWarning, nil
 }
 
 func extractBodyBackgroundColor(base string) string {
@@ -297,25 +306,51 @@ func pageHome(c *echo.Context) error {
 	return render(c, "")
 }
 
+func resolveHomeAssets(options model.Application) (background.Assets, error) {
+	source := strings.TrimSpace(options.BackgroundImage)
+	if source == "" {
+		return background.Assets{}, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(options.BackgroundImageMode), "upload") || strings.HasPrefix(source, "/user-assets/") {
+		if _, _, err := background.FetchUploadedVariant("full"); err != nil {
+			return background.Assets{}, fmt.Errorf("resolve uploaded background asset failed: %w", err)
+		}
+	}
+	return background.ResolveAssets(options), nil
+}
+
 func renderHelp(c *echo.Context) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareHomeOptionsForRender(options)
 	now := time.Now()
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
+	assets, err := resolveHomeAssets(options)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
-	assets := background.ResolveAssets(options)
-	scriptNonce := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	pageStyle, styleWarning, err := pageAppearance(options, assets)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
+	}
+	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
 	setCSPHeader(c, scriptNonce)
 	bodyClassName := getBodyClassName(options)
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
 	m["PageName"] = "Home"
-	m["PageAppearance"] = pageAppearance(options, assets)
+	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["DebugMode"] = define.AppFlags.DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
@@ -329,13 +364,16 @@ func renderHelp(c *echo.Context) error {
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	m["Applications"] = GenerateHelpTemplate(locale)
-	m["SearchKeyword"] = template.HTML(i18n.T(locale, "search_placeholder"))
+	m["SearchKeyword"] = template.HTML(buildSearchPlaceholder(options, locale))
+	m["SearchHintLabel"] = buildSearchHintLabel(options, locale)
+	m["SearchFormTarget"] = buildSearchFormTarget(options)
+	m["SearchFormRel"] = buildSearchFormRel(options)
 	m["HasKeyword"] = false
 	m["ShowSearchComponent"] = options.ShowSearchComponent
 	m["DisabledSearchAutoFocus"] = true
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
-	m["OptionFooter"] = template.HTML(options.Footer)
+	footer.BindTemplateData(m, options.Footer)
 	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
 	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab
 	m["OptionShowTitle"] = options.ShowTitle
@@ -344,11 +382,14 @@ func renderHelp(c *echo.Context) error {
 	m["OptionShowBookmarks"] = false
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["OptionHideWarningsButton"] = options.HideWarningsButton
 	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
 	m["BackgroundAssets"] = assets
 	m["HasBackgroundAssets"] = assets.Enabled
 	m["BackgroundHTML"] = renderBackgroundHTML(assets)
 	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["RenderWarnings"] = renderWarnings
+	m["HasRenderWarnings"] = len(renderWarnings) > 0
 	m["ScriptNonce"] = scriptNonce
 	m["InlineClockScript"] = template.JS(_inlineClockScript)
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
@@ -356,15 +397,29 @@ func renderHelp(c *echo.Context) error {
 }
 
 func pageSearch(c *echo.Context) error {
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	var body struct {
 		Search string `form:"search"`
 	}
 	if err := c.Bind(&body); err != nil {
-		return render(c, "")
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing form data"))
 	}
 	search := strings.TrimSpace(body.Search)
 	if len(search) > 50 {
-		return render(c, "")
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "search query too long"))
+	}
+	if shouldUseExternalSearch(options) && search != "" {
+		target, err := buildSearchEngineURL(options, search)
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+		}
+		return c.Redirect(http.StatusFound, target)
 	}
 	return render(c, search)
 }
@@ -410,15 +465,29 @@ func splitGreetingOptions(greeting string) []string {
 func pageBookmark(c *echo.Context) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareHomeOptionsForRender(options)
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
+	requestURL := fn.ParseRequestURLTo(c.Request())
+	assets, err := resolveHomeAssets(options)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
-	fn.ParseRequestURL(c.Request())
-	assets := background.ResolveAssets(options)
-	scriptNonce := maybeMakeScriptNonce(assets.Enabled)
+	pageStyle, styleWarning, err := pageAppearance(options, assets)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
+	}
+	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, false, true, renderWarnings)
+	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
 	setCSPHeader(c, scriptNonce)
 	bodyClassName := getBodyClassName(options)
 	m := pool.GetTemplateMap()
@@ -428,25 +497,33 @@ func pageBookmark(c *echo.Context) error {
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = i18n.T(locale, "page_bookmarks")
 	m["SubPage"] = true
-	m["PageAppearance"] = pageAppearance(options, assets)
+	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["BookmarksURI"] = define.RegularPages.Bookmarks.Path
 	m["ApplicationsURI"] = define.RegularPages.Applications.Path
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	m["Bookmarks"] = GenerateBookmarkTemplateWithLocal("", &options, fn.RequestLooksLocalNetwork(c.Request()))
+	bookmarksHTML, err := GenerateBookmarkTemplateWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	m["Bookmarks"] = bookmarksHTML
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
+	footer.BindTemplateData(m, options.Footer)
 	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab
 	m["OptionShowBookmarks"] = options.ShowBookmarks
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["OptionHideWarningsButton"] = options.HideWarningsButton
 	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
 	m["BackgroundAssets"] = assets
 	m["HasBackgroundAssets"] = assets.Enabled
 	m["BackgroundHTML"] = renderBackgroundHTML(assets)
 	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["RenderWarnings"] = renderWarnings
+	m["HasRenderWarnings"] = len(renderWarnings) > 0
 	m["ScriptNonce"] = scriptNonce
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
 	return c.Render(http.StatusOK, "home.html", m)
@@ -455,15 +532,29 @@ func pageBookmark(c *echo.Context) error {
 func pageApplication(c *echo.Context) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareHomeOptionsForRender(options)
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
+	requestURL := fn.ParseRequestURLTo(c.Request())
+	assets, err := resolveHomeAssets(options)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
-	fn.ParseRequestURL(c.Request())
-	assets := background.ResolveAssets(options)
-	scriptNonce := maybeMakeScriptNonce(assets.Enabled)
+	pageStyle, styleWarning, err := pageAppearance(options, assets)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
+	}
+	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, true, false, renderWarnings)
+	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
 	setCSPHeader(c, scriptNonce)
 	bodyClassName := getBodyClassName(options)
 	m := pool.GetTemplateMap()
@@ -476,21 +567,29 @@ func pageApplication(c *echo.Context) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	m["Applications"] = GenerateApplicationsTemplateWithLocal("", &options, fn.RequestLooksLocalNetwork(c.Request()))
+	applicationsHTML, err := GenerateApplicationsTemplateWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	m["Applications"] = applicationsHTML
 	m["PageName"] = i18n.T(locale, "page_apps")
 	m["SubPage"] = true
-	m["PageAppearance"] = pageAppearance(options, assets)
+	m["PageAppearance"] = pageStyle
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
+	footer.BindTemplateData(m, options.Footer)
 	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
 	m["OptionShowApps"] = options.ShowApps
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["OptionHideWarningsButton"] = options.HideWarningsButton
 	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
 	m["BackgroundAssets"] = assets
 	m["HasBackgroundAssets"] = assets.Enabled
 	m["BackgroundHTML"] = renderBackgroundHTML(assets)
 	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["RenderWarnings"] = renderWarnings
+	m["HasRenderWarnings"] = len(renderWarnings) > 0
 	m["ScriptNonce"] = scriptNonce
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
 	return c.Render(http.StatusOK, "home.html", m)
@@ -499,29 +598,44 @@ func pageApplication(c *echo.Context) error {
 func render(c *echo.Context, filter string) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
-	fn.ParseRequestURL(c.Request())
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareHomeOptionsForRender(options)
+	requestURL := fn.ParseRequestURLTo(c.Request())
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
-	}
 	hasKeyword := false
-	searchKeyword := i18n.T(locale, "search_placeholder")
+	searchKeyword := buildSearchPlaceholder(options, locale)
+	searchHintLabel := buildSearchHintLabel(options, locale)
 	if filter != "" {
 		searchKeyword = i18n.Tf(locale, "search_result", filter)
 		hasKeyword = true
 	}
 	now := time.Now()
-	assets := background.ResolveAssets(options)
-	scriptNonce := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	assets, err := resolveHomeAssets(options)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	pageStyle, styleWarning, err := pageAppearance(options, assets)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
+	}
+	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, options.ShowApps, options.ShowBookmarks, renderWarnings)
+	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
 	setCSPHeader(c, scriptNonce)
 	bodyClassName := getBodyClassName(options)
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
 	m["PageName"] = "Home"
-	m["PageAppearance"] = pageAppearance(options, assets)
+	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["DebugMode"] = define.AppFlags.DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
@@ -535,15 +649,26 @@ func render(c *echo.Context, filter string) error {
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	preferLocal := fn.RequestLooksLocalNetwork(c.Request())
-	m["Applications"] = GenerateApplicationsTemplateWithLocal(filter, &options, preferLocal)
-	m["Bookmarks"] = GenerateBookmarkTemplateWithLocal(filter, &options, preferLocal)
+	applicationsHTML, err := GenerateApplicationsTemplateWithLocalAndURLErr(filter, &options, preferLocal, &requestURL)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	bookmarksHTML, err := GenerateBookmarkTemplateWithLocalAndURLErr(filter, &options, preferLocal, &requestURL)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	m["Applications"] = applicationsHTML
+	m["Bookmarks"] = bookmarksHTML
 	m["SearchKeyword"] = template.HTML(searchKeyword)
+	m["SearchHintLabel"] = searchHintLabel
+	m["SearchFormTarget"] = buildSearchFormTarget(options)
+	m["SearchFormRel"] = buildSearchFormRel(options)
 	m["HasKeyword"] = hasKeyword
 	m["ShowSearchComponent"] = options.ShowSearchComponent
 	m["DisabledSearchAutoFocus"] = options.DisabledSearchAutoFocus
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
-	m["OptionFooter"] = template.HTML(options.Footer)
+	footer.BindTemplateData(m, options.Footer)
 	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
 	m["OptionOpenBookmarkNewTab"] = options.OpenBookmarkNewTab
 	m["OptionShowTitle"] = options.ShowTitle
@@ -552,15 +677,106 @@ func render(c *echo.Context, filter string) error {
 	m["OptionShowBookmarks"] = options.ShowBookmarks
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["OptionHideWarningsButton"] = options.HideWarningsButton
 	m["BodyClassName"] = template.HTMLAttr(bodyClassName)
 	m["BackgroundAssets"] = assets
 	m["HasBackgroundAssets"] = assets.Enabled
 	m["BackgroundHTML"] = renderBackgroundHTML(assets)
 	m["CustomHomeStyle"] = customHomeStyle(options, assets)
+	m["RenderWarnings"] = renderWarnings
+	m["HasRenderWarnings"] = len(renderWarnings) > 0
 	m["ScriptNonce"] = scriptNonce
 	m["InlineClockScript"] = template.JS(_inlineClockScript)
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
 	return c.Render(http.StatusOK, "home.html", m)
+}
+
+func shouldUseExternalSearch(options model.Application) bool {
+	return strings.EqualFold(strings.TrimSpace(options.SearchMode), "engine")
+}
+
+func buildSearchPlaceholder(options model.Application, locale string) string {
+	if !shouldUseExternalSearch(options) {
+		return i18n.T(locale, "search_placeholder")
+	}
+	return i18n.Tf(locale, "search_engine_placeholder", searchEngineDisplayName(options, locale))
+}
+
+func buildSearchHintLabel(options model.Application, locale string) string {
+	if !shouldUseExternalSearch(options) {
+		return i18n.T(locale, "search_label")
+	}
+	return i18n.Tf(locale, searchEngineLabelKey(options), searchEngineDisplayName(options, locale))
+}
+
+func searchEngineDisplayName(options model.Application, locale string) string {
+	switch strings.ToLower(strings.TrimSpace(options.SearchEngine)) {
+	case "baidu":
+		return "Baidu"
+	case "bing":
+		return "Bing"
+	case "google":
+		return "Google"
+	case "duckduckgo":
+		return "DuckDuckGo"
+	case "custom":
+		return i18n.T(locale, "search_engine_custom")
+	default:
+		return "Bing"
+	}
+}
+
+func buildSearchEngineURL(options model.Application, keyword string) (string, error) {
+	escaped := url.QueryEscape(keyword)
+	templateValue := searchEngineTemplate(options)
+	if !strings.Contains(templateValue, "%s") {
+		return "", fmt.Errorf("custom search engine template must contain %%s placeholder")
+	}
+	return strings.ReplaceAll(templateValue, "%s", escaped), nil
+}
+
+func searchEngineTemplate(options model.Application) string {
+	switch strings.ToLower(strings.TrimSpace(options.SearchEngine)) {
+	case "baidu":
+		return "https://www.baidu.com/s?wd=%s"
+	case "bing":
+		return "https://www.bing.com/search?q=%s"
+	case "google":
+		return "https://www.google.com/search?q=%s"
+	case "duckduckgo":
+		return "https://duckduckgo.com/?q=%s"
+	case "custom":
+		return strings.TrimSpace(options.SearchEngineCustomTemplate)
+	default:
+		return "https://www.bing.com/search?q=%s"
+	}
+}
+
+func buildSearchFormTarget(options model.Application) string {
+	if !shouldUseExternalSearch(options) {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(options.SearchEngineOpenMode), "new-tab") {
+		return "_blank"
+	}
+	return ""
+}
+
+func buildSearchFormRel(options model.Application) string {
+	if !shouldUseExternalSearch(options) {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(options.SearchEngineOpenMode), "new-tab") {
+		return "noopener noreferrer"
+	}
+	return ""
+}
+
+func searchEngineLabelKey(options model.Application) string {
+	if strings.EqualFold(strings.TrimSpace(options.SearchEngineOpenMode), "new-tab") {
+		return "search_engine_label_new_tab"
+	}
+	return "search_engine_label"
 }
 
 func getBodyClassName(options model.Application) string {
@@ -595,13 +811,14 @@ func getCSPValue(scriptNonce string) string {
 	return "script-src 'nonce-" + scriptNonce + "'; " + _cspValue
 }
 
-func maybeMakeScriptNonce(enabled bool) string {
+func maybeMakeScriptNonce(enabled bool) (string, error) {
 	if !enabled {
-		return ""
+		return "", nil
 	}
 	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err == nil {
-		return base64.RawStdEncoding.EncodeToString(buf)
+	if _, err := cryptoRandRead(buf); err != nil {
+		return "", fmt.Errorf("generate script nonce failed: %w", err)
+	} else {
+		return base64.RawStdEncoding.EncodeToString(buf), nil
 	}
-	return base64.RawStdEncoding.EncodeToString([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
 }

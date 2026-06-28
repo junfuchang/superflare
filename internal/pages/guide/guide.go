@@ -2,20 +2,24 @@ package guide
 
 import (
 	"embed"
+	"errors"
 	"io/fs"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v5"
 	"github.com/soulteary/memfs"
 
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/internal/fn"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 var MemFs *memfs.FS
+var getGuideHTML = fn.GetHTML
 
 const _ASSETS_BASE_DIR = "assets/guide"
 const _ASSETS_WEB_URI = "/" + _ASSETS_BASE_DIR
@@ -51,20 +55,41 @@ func registerLocalVendorAssets(e *echo.Echo) bool {
 }
 
 func render(c *echo.Context) error {
-	return c.HTMLBlob(http.StatusOK, []byte(getUserHomePage()))
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
+	body, err := getUserHomePage()
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadGateway, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadGateway, err.Error()))
+	}
+	return c.HTMLBlob(http.StatusOK, []byte(body))
 }
 
-func getUserHomePage() string {
+func getUserHomePage() (string, error) {
 	port := strconv.Itoa(define.AppFlags.Port)
-	body, err := fn.GetHTML("http://localhost:" + port + "/")
+	body, err := getGuideHTML("http://localhost:" + port + "/")
 	if err != nil {
-		return ""
+		return "", err
 	}
+	if !strings.Contains(body, `id="page-home"`) {
+		return "", errors.New("guide source page is not the home page")
+	}
+	content, err := injectGuideAssets(body)
+	if err != nil {
+		return "", err
+	}
+	return content, nil
+}
+
+func injectGuideAssets(body string) (string, error) {
 	ruleHead := regexp.MustCompile("</head>")
 	ruleBody := regexp.MustCompile("</body>")
 	rulePageView := regexp.MustCompile(`class="pageview"`)
+	if !ruleHead.MatchString(body) || !ruleBody.MatchString(body) {
+		return "", errors.New("guide source page structure is incomplete")
+	}
 	content := ruleHead.ReplaceAllString(body, `<link rel="stylesheet" href="/assets/guide/introjs.min.css"><link rel="stylesheet" href="/assets/guide/app.css"><script src="/assets/guide/intro.min.js"></script></head>`)
-	content = ruleBody.ReplaceAllString(content, `<script src="/assets/guide/app.js"></script></head>`)
+	content = ruleBody.ReplaceAllString(content, `<script src="/assets/guide/app.js"></script></body>`)
 	content = rulePageView.ReplaceAllString(content, `class="pageview" style="position:inherit;"`)
-	return content
+	return content, nil
 }

@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/labstack/echo/v5"
 )
 
 const requestAttrsCap = 12
+const requestLogQueueSize = 256
 
 var requestAttrsPool = sync.Pool{
 	New: func() any {
@@ -19,6 +21,120 @@ var requestAttrsPool = sync.Pool{
 		return &attrs
 	},
 }
+
+type requestLogEntry struct {
+	logger *slog.Logger
+	level  slog.Level
+	msg    string
+	attrs  *[]slog.Attr
+}
+
+type requestLogDispatcher struct {
+	once    sync.Once
+	jobs    chan requestLogEntry
+	limit   int32
+	pending atomic.Int32
+}
+
+func newRequestLogDispatcher(size int) *requestLogDispatcher {
+	if size <= 0 {
+		size = 1
+	}
+	return &requestLogDispatcher{
+		jobs:  make(chan requestLogEntry, size),
+		limit: int32(size),
+	}
+}
+
+func (d *requestLogDispatcher) start() {
+	if d == nil {
+		return
+	}
+	d.once.Do(func() {
+		go func() {
+			for job := range d.jobs {
+				if job.logger != nil {
+					job.logger.LogAttrs(context.Background(), job.level, job.msg, (*job.attrs)...)
+				}
+				releaseRequestAttrs(job.attrs)
+				d.releaseSlot()
+			}
+		}()
+	})
+}
+
+func (d *requestLogDispatcher) queueLimit() int32 {
+	if d == nil {
+		return 0
+	}
+	if d.limit > 0 {
+		return d.limit
+	}
+	return int32(cap(d.jobs))
+}
+
+func (d *requestLogDispatcher) tryAcquireSlot() bool {
+	limit := d.queueLimit()
+	if limit <= 0 {
+		return false
+	}
+	for {
+		current := d.pending.Load()
+		if current >= limit {
+			return false
+		}
+		if d.pending.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
+func (d *requestLogDispatcher) releaseSlot() {
+	if d == nil {
+		return
+	}
+	for {
+		current := d.pending.Load()
+		if current <= 0 {
+			return
+		}
+		if d.pending.CompareAndSwap(current, current-1) {
+			return
+		}
+	}
+}
+
+func (d *requestLogDispatcher) submit(logger *slog.Logger, level slog.Level, msg string, attrs *[]slog.Attr) bool {
+	if d == nil {
+		return false
+	}
+	if !d.tryAcquireSlot() {
+		return false
+	}
+	select {
+	case d.jobs <- requestLogEntry{
+		logger: logger,
+		level:  level,
+		msg:    msg,
+		attrs:  attrs,
+	}:
+		d.start()
+		return true
+	default:
+		d.releaseSlot()
+		return false
+	}
+}
+
+func releaseRequestAttrs(attrs *[]slog.Attr) {
+	if attrs == nil {
+		return
+	}
+	*attrs = (*attrs)[:0]
+	requestAttrsPool.Put(attrs)
+}
+
+var asyncRequestLogDispatcher = newRequestLogDispatcher(requestLogQueueSize)
 
 // LoggerConfig configures the request logging middleware.
 type LoggerConfig struct {
@@ -111,15 +227,13 @@ func NewEchoWithConfig(logger *slog.Logger, config LoggerConfig) echo.Middleware
 
 			// Async log for 2xx to shorten critical path and improve throughput.
 			if status >= 200 && status < 300 {
-				go func(attrs *[]slog.Attr) {
-					logger.LogAttrs(context.Background(), level, msg, (*attrs)...)
-					*attrs = (*attrs)[:0]
-					requestAttrsPool.Put(attrs)
-				}(requestAttributes)
+				if !asyncRequestLogDispatcher.submit(logger, level, msg, requestAttributes) {
+					logger.LogAttrs(context.Background(), level, msg, (*requestAttributes)...)
+					releaseRequestAttrs(requestAttributes)
+				}
 			} else {
 				logger.LogAttrs(c.Request().Context(), level, msg, (*requestAttributes)...)
-				*requestAttributes = (*requestAttributes)[:0]
-				requestAttrsPool.Put(requestAttributes)
+				releaseRequestAttrs(requestAttributes)
 			}
 			return err
 		}

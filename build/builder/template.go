@@ -20,7 +20,7 @@ func TaskForTemplates(src string, dest string) {
 	if err := _CopyDirectoryWithoutSymlink(src, dest); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("复制模版文件 ... [OK]")
+	fmt.Println("复制模板文件 ... [OK]")
 	minifyFilesByPathAndType(dest, "*.html", "text/html")
 }
 

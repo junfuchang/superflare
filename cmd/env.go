@@ -38,15 +38,23 @@ func InitAccountFromEnvVars(
 }
 
 func ParseEnvVars() (stor model.Flags) {
+	resolved, err := ParseEnvVarsE()
+	if err != nil {
+		panic(err)
+	}
+	return resolved
+}
+
+func ParseEnvVarsE() (stor model.Flags, err error) {
 	log := logger.GetLogger()
 
 	// 1. init default values
 	defaults := define.DefaultEnvVars
 
 	// 2. overwrite with user input
-	if err := env.Parse(&defaults); err != nil {
+	if err = env.Parse(&defaults); err != nil {
 		log.Error(fmt.Sprintf("%+v\n", err))
-		return
+		return stor, fmt.Errorf("parse env vars failed: %w", err)
 	}
 
 	// 3. update username and password
@@ -72,5 +80,5 @@ func ParseEnvVars() (stor model.Flags) {
 	stor.CookieName = defaults.CookieName
 	stor.CookieSecret = defaults.CookieSecret
 
-	return stor
+	return stor, nil
 }

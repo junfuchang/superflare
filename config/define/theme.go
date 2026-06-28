@@ -1,6 +1,7 @@
 package define
 
 import (
+	"fmt"
 	"html/template"
 	"regexp"
 	"strconv"
@@ -15,8 +16,14 @@ var ThemeCurrent = ""
 var ThemePrimaryColor = ""
 
 func Init() {
+	if err := InitE(); err != nil {
+		panic(err)
+	}
+}
+
+func InitE() error {
 	initPageInlineStyle()
-	UpdatePagePalettes()
+	return UpdatePagePalettes()
 }
 
 var _CACHE_PAGE_INLINE_STYLE template.CSS
@@ -30,6 +37,7 @@ func GetPageInlineStyle() template.CSS {
 
 func initPageInlineStyle() {
 	if AppFlags.DebugMode {
+		_CACHE_PAGE_INLINE_STYLE = ""
 		return
 	}
 
@@ -58,40 +66,97 @@ func GetThemePrimaryColor(theme string) string {
 
 const emptyPageBodyStyle = template.CSS(``)
 
-func UpdatePagePalettes() {
+func UpdatePagePalettes() error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		_CACHE_PAGE_BODY_THEME_NAME = emptyPageBodyStyle
-		return
+		return err
+	}
+	themeName := strings.TrimSpace(options.Theme)
+	if themeName == "" {
+		themeName = "blackboard"
 	}
 	palette := model.Palette{}
-	if options.Theme == "custom" {
-		palette = getCustomPalette(options)
+	if themeName == "custom" {
+		palette, err = getCustomPalette(options)
+		if err != nil {
+			return err
+		}
 	} else {
+		found := false
 		for _, themePresent := range ThemePalettes {
-			if themePresent.Name == options.Theme {
+			if themePresent.Name == themeName {
 				palette = themePresent.Colors
+				found = true
 				break
 			}
 		}
+		if !found {
+			return fmt.Errorf("invalid theme value: %s", options.Theme)
+		}
 	}
 	if palette.Background == "" || palette.Primary == "" || palette.Accent == "" {
-		_CACHE_PAGE_BODY_THEME_NAME = emptyPageBodyStyle
-		return
+		return fmt.Errorf("theme palette is incomplete for theme: %s", themeName)
 	}
-	ThemeCurrent = options.Theme
+	ThemeCurrent = themeName
 	ThemePrimaryColor = palette.Primary
 	CACHE_APP_CURRENT_THEME_PRIMARY_COLOR = palette.Primary
-	_CACHE_PREV_THEME_NAME = options.Theme
+	_CACHE_PREV_THEME_NAME = themeName
 	_CACHE_PAGE_BODY_THEME_NAME = template.CSS(`--color-background:` + palette.Background + `;--color-primary:` + palette.Primary + `;--color-accent:` + palette.Accent + `;`)
+	return nil
 }
 
-func getCustomPalette(options model.Application) model.Palette {
-	return model.Palette{
-		Background: safeCSSColor(options.CustomThemeBackground, "rgba(26, 26, 26, 1)"),
-		Primary:    safeCSSColor(options.CustomThemePrimary, "rgba(255, 253, 234, 1)"),
-		Accent:     safeCSSColor(options.CustomThemeAccent, "rgba(92, 92, 92, 1)"),
+func getCustomPalette(options model.Application) (model.Palette, error) {
+	basePalette, err := getThemePaletteByName(resolveThemeBase(options))
+	if err != nil {
+		return model.Palette{}, err
 	}
+
+	background := strings.TrimSpace(options.CustomThemeBackground)
+	if background == "" {
+		background = basePalette.Background
+	} else if safeCSSColor(background, "") == "" {
+		return model.Palette{}, fmt.Errorf("invalid custom theme background color: %s", options.CustomThemeBackground)
+	}
+
+	primary := strings.TrimSpace(options.CustomThemePrimary)
+	if primary == "" {
+		primary = basePalette.Primary
+	} else if safeCSSColor(primary, "") == "" {
+		return model.Palette{}, fmt.Errorf("invalid custom theme primary color: %s", options.CustomThemePrimary)
+	}
+
+	accent := strings.TrimSpace(options.CustomThemeAccent)
+	if accent == "" {
+		accent = basePalette.Accent
+	} else if safeCSSColor(accent, "") == "" {
+		return model.Palette{}, fmt.Errorf("invalid custom theme accent color: %s", options.CustomThemeAccent)
+	}
+
+	return model.Palette{
+		Background: background,
+		Primary:    primary,
+		Accent:     accent,
+	}, nil
+}
+
+func resolveThemeBase(options model.Application) string {
+	themeBase := strings.ToLower(strings.TrimSpace(options.ThemeBase))
+	if themeBase == "" || themeBase == "custom" {
+		themeBase = strings.ToLower(strings.TrimSpace(options.Theme))
+	}
+	if themeBase == "" || themeBase == "custom" {
+		themeBase = "blackboard"
+	}
+	return themeBase
+}
+
+func getThemePaletteByName(themeName string) (model.Palette, error) {
+	for _, themePresent := range ThemePalettes {
+		if themePresent.Name == themeName {
+			return themePresent.Colors, nil
+		}
+	}
+	return model.Palette{}, fmt.Errorf("invalid theme base value: %s", themeName)
 }
 
 var (

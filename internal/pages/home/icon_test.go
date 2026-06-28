@@ -56,6 +56,17 @@ func TestRenderBookmarkIcon_InvalidURLFallsBackToBuiltinIconInFillingMode(t *tes
 	}
 }
 
+func TestRenderBookmarkIcon_LocalURLFallsBackToBuiltinIconInFillingModeOnCacheMiss(t *testing.T) {
+	prepareIconTest(t)
+	out := renderBookmarkIcon("", "http://192.168.0.250:65530", "FILLING")
+	if !strings.Contains(out, `/assets/mdi/`) {
+		t.Fatalf("local network favicon cache miss should still fall back to builtin icon, got %q", out)
+	}
+	if !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("local network favicon cache miss should use builtin bookmark icon, got %q", out)
+	}
+}
+
 func TestRenderBookmarkIcon_InvalidExplicitIconFallsBackToBuiltinIconInFillingMode(t *testing.T) {
 	prepareIconTest(t)
 	out := renderBookmarkIcon("definitely-not-a-real-mdi-icon", "not-a-valid-url", "FILLING")
@@ -75,11 +86,11 @@ func TestRenderBookmarkIcon_DefaultModeKeepsEmptyIconBlank(t *testing.T) {
 	}
 }
 
-func TestRenderBookmarkIcon_DefaultModeKeepsInvalidIconBlank(t *testing.T) {
+func TestRenderBookmarkIcon_DefaultModeFallsBackForInvalidIcon(t *testing.T) {
 	prepareIconTest(t)
 	out := renderBookmarkIcon("definitely-not-a-real-mdi-icon", "https://example.com/path", "DEFAULT")
-	if out != "" {
-		t.Fatalf("default mode should keep invalid icon blank, got %q", out)
+	if !strings.Contains(out, `/assets/mdi/`) || !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("default mode should fall back to builtin bookmark icon for invalid icon names, got %q", out)
 	}
 }
 

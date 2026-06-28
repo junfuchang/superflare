@@ -12,6 +12,10 @@ type Application struct {
 	Greetings               string `yaml:"Greetings"`
 	ShowSearchComponent     bool   `yaml:"ShowSearchComponent"`
 	DisabledSearchAutoFocus bool   `yaml:"DisabledSearchAutoFocus"`
+	SearchMode              string `yaml:"SearchMode,omitempty"`
+	SearchEngine            string `yaml:"SearchEngine,omitempty"`
+	SearchEngineOpenMode    string `yaml:"SearchEngineOpenMode,omitempty"`
+	SearchEngineCustomTemplate string `yaml:"SearchEngineCustomTemplate,omitempty"`
 	ShowDateTime            bool   `yaml:"ShowDateTime"`
 	ShowApps                bool   `yaml:"ShowApps"`
 	ShowBookmarks           bool   `yaml:"ShowBookmarks"`
@@ -21,7 +25,9 @@ type Application struct {
 	BookmarkItemColor       string `yaml:"BookmarkItemColor,omitempty"`
 	HideSettingsButton      bool   `yaml:"HideSettingButton"`
 	HideHelpButton          bool   `yaml:"HideHelpButton"`
+	HideWarningsButton      bool   `yaml:"HideWarningsButton"`
 	Theme                   string `yaml:"Theme"`
+	ThemeBase               string `yaml:"ThemeBase,omitempty"`
 	CustomThemeBackground   string `yaml:"CustomThemeBackground,omitempty"`
 	CustomThemePrimary      string `yaml:"CustomThemePrimary,omitempty"`
 	CustomThemeAccent       string `yaml:"CustomThemeAccent,omitempty"`

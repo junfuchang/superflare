@@ -2,6 +2,7 @@ package settings
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/labstack/echo/v5"
 
@@ -14,5 +15,12 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func pageHome(c *echo.Context) error {
-	return c.Redirect(http.StatusFound, define.SettingPages.Theme.Path)
+	target := define.SettingPages.Theme.Path
+	if rawQuery := c.QueryString(); rawQuery != "" {
+		if parsed, err := url.Parse(target); err == nil {
+			parsed.RawQuery = rawQuery
+			target = parsed.String()
+		}
+	}
+	return c.Redirect(http.StatusFound, target)
 }

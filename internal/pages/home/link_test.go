@@ -47,3 +47,21 @@ func TestRenderBookmarkHrefKeepsEncryptedSourceWhenNoLocalURL(t *testing.T) {
 		t.Fatalf("expected encrypted redir path, got %q", parsed.Path)
 	}
 }
+
+func TestRenderBookmarkHrefDoesNotUseLocalRedirWhenSourceURLIsNonHTTP(t *testing.T) {
+	href := renderBookmarkHref("chrome-extension://abc/index.html", "http://192.168.1.10/app", true, false)
+	parsed, err := url.Parse(href)
+	if err != nil {
+		t.Fatalf("parse href: %v", err)
+	}
+	if parsed.Path != define.MiscPages.RedirHelper.Path {
+		t.Fatalf("expected helper redir path, got %q", parsed.Path)
+	}
+	source, err := data.Base64DecodeUrl(parsed.Query().Get("go"))
+	if err != nil {
+		t.Fatalf("decode source: %v", err)
+	}
+	if string(source) != "chrome-extension://abc/index.html" {
+		t.Fatalf("unexpected source redirect param: %q", source)
+	}
+}

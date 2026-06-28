@@ -26,6 +26,113 @@
   {{ end }}
   <meta name="description" content="SuperFlare - self-hosted startpage for your server"/>
   {{.CustomHomeStyle}}
+  <style>
+    #btn-open-settings.toolbar-btn-link,
+    #btn-open-help.toolbar-btn-link,
+    #btn-open-warnings.toolbar-btn-link {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+      position: relative;
+    }
+    #btn-open-settings.toolbar-btn-link svg,
+    #btn-open-help.toolbar-btn-link svg,
+    #btn-open-warnings.toolbar-btn-link svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+      flex: 0 0 auto;
+      color: var(--color-primary);
+    }
+    #btn-open-warnings span {
+      display: none;
+    }
+    .toolbar-btn-warning {
+      margin: 0 0 10px 0;
+    }
+    .page-warnings-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease;
+      text-decoration: none;
+    }
+    .page-warnings-modal:target {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .page-warnings-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, .48);
+    }
+    .page-warnings-panel {
+      position: relative;
+      width: min(640px, calc(100vw - 28px));
+      max-height: min(80vh, 720px);
+      overflow: auto;
+      padding: 18px 18px 16px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--color-background) 88%, rgba(0, 0, 0, .12));
+      color: var(--color-primary);
+      box-shadow: 0 24px 72px rgba(0, 0, 0, .34);
+    }
+    .page-warnings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .page-warnings-header h2 {
+      font-size: 18px;
+      margin: 0;
+      color: var(--color-primary);
+    }
+    .page-warnings-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border: 1px solid color-mix(in srgb, var(--color-accent) 42%, transparent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--color-primary);
+      text-decoration: none;
+      font-size: 22px;
+      line-height: 1;
+    }
+    .page-warnings-close:hover {
+      background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    }
+    .page-warnings-list {
+      display: grid;
+      gap: 10px;
+    }
+    .page-warnings-item {
+      padding: 12px 14px;
+      border: 1px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--color-background) 78%, var(--color-accent) 22%);
+      line-height: 1.6;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 8%, transparent);
+    }
+    .page-warnings-empty {
+      opacity: .82;
+      line-height: 1.6;
+    }
+  </style>
 </head>
 <body style="{{.PageAppearance}}" class="{{.BodyClassName}}">
   {{.BackgroundHTML}}
@@ -34,7 +141,7 @@
 
       {{ if .ShowSearchComponent }}
       <div class="module-container" id="search-container">
-        <form action="/" method="POST">
+        <form action="/" method="POST"{{ if .SearchFormTarget }} target="{{.SearchFormTarget}}"{{ end }}{{ if .SearchFormRel }} rel="{{.SearchFormRel}}"{{ end }}>
           {{ if .DisabledSearchAutoFocus }}
           <input type="text" name="search" id="search" autocomplete="off" placeholder="{{.SearchKeyword}}"/>
           {{ else }}
@@ -43,7 +150,7 @@
           {{ if .HasKeyword }}
           <a href="/">{{ T .Locale "search_tip_back" }}</a>
           {{ end }}
-          <label for="search" id="search-label">{{ T .Locale "search_label" }}</label>
+          <label for="search" id="search-label">{{.SearchHintLabel}}</label>
         </form>
       </div>
       {{ end }}
@@ -85,10 +192,21 @@
       {{ end }}
 
       <div class="toolbar-container">
+        {{ if and .HasRenderWarnings (not .OptionHideWarningsButton) }}
+        <div class="toolbar-btn-bg toolbar-btn-warning">
+          <a href="#page-warnings-modal" id="btn-open-warnings" class="toolbar-btn-link" aria-label="{{ T .Locale "toolbar_warnings" }}">
+            <svg viewBox="0 0 24 24" width="24">
+              <path
+                d="M13,14H11V9H13M13,18H11V16H13M1,21H23L12,2L1,21Z"
+                style="fill: var(--color-background);"></path>
+            </svg>
+          </a>
+        </div>
+        {{ end }}
         {{ if .OptionHideSettingsButton }}
         {{ else }}
         <div class="toolbar-btn-bg toolbar-btn-settings">
-          <a href="{{.SettingsURI}}" id="btn-open-settings" alt="Settings">
+          <a href="{{.SettingsURI}}" id="btn-open-settings" class="toolbar-btn-link" aria-label="{{ T .Locale "open_settings" }}">
             <span>{{ T .Locale "open_settings" }}</span>
             <svg viewBox="0 0 24 24" width="24">
               <path
@@ -101,7 +219,7 @@
         {{ if .OptionHideHelpButton }}
         {{ else }}
         <div class="toolbar-btn-bg toolbar-btn-help">
-          <a href="/help" id="btn-open-help" alt="Help">
+          <a href="/help" id="btn-open-help" class="toolbar-btn-link" aria-label="{{ T .Locale "toolbar_help" }}">
             <span>{{ T .Locale "toolbar_help" }}</span>
             <svg viewBox="0 0 24 24" width="24">
               <path
@@ -114,13 +232,33 @@
       </div>
 
       <div class="footer-container">
-        {{ if .OptionFooter }}
-        {{.OptionFooter}}
+        {{ if .RenderedFooter }}
+        {{.RenderedFooter}}
         {{ end }}
       </div>
 
     </div>
   </div>
+  {{ if and .HasRenderWarnings (not .OptionHideWarningsButton) }}
+  <div id="page-warnings-modal" class="page-warnings-modal">
+    <a href="#" class="page-warnings-backdrop" aria-label="Close"></a>
+    <div class="page-warnings-panel">
+      <div class="page-warnings-header">
+        <h2>{{ T .Locale "warnings_title" }}</h2>
+        <a href="#" class="page-warnings-close" aria-label="Close">&times;</a>
+      </div>
+      {{ if .RenderWarnings }}
+      <div class="page-warnings-list">
+        {{ range .RenderWarnings }}
+        <div class="page-warnings-item">{{ . }}</div>
+        {{ end }}
+      </div>
+      {{ else }}
+      <p class="page-warnings-empty">{{ T .Locale "warnings_empty" }}</p>
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
   {{ if .OptionShowDateTime }}
   <script nonce="{{.ScriptNonce}}">{{.InlineClockScript}}</script>
   {{ end }}

@@ -91,6 +91,19 @@ function Get-EnableLogin {
     }
 }
 
+function Invoke-CheckedNative {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [string]$StepName
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$StepName failed with exit code $LASTEXITCODE."
+    }
+}
+
 function Stop-TrackedProcess {
     param(
         [int]$ProcessId,
@@ -210,13 +223,13 @@ Stop-Superflare -RepoRoot $repoRoot -Port $port -PidFile $pidFile
 Push-Location $repoRoot
 try {
     Write-Host "Generating embedded assets..."
-    & $goExe run .\build\build.go
+    Invoke-CheckedNative -FilePath $goExe -Arguments @("run", ".\build\build.go") -StepName "Embedded asset generation"
 
     Write-Host "Running tests..."
-    & $goExe test ./... -count=1
+    Invoke-CheckedNative -FilePath $goExe -Arguments @("test", "./...", "-count=1") -StepName "Test execution"
 
     Write-Host "Building superflare.exe..."
-    & $goExe build -o .\superflare.exe .
+    Invoke-CheckedNative -FilePath $goExe -Arguments @("build", "-o", ".\superflare.exe", ".") -StepName "Binary build"
 } finally {
     Pop-Location
 }
@@ -230,13 +243,11 @@ foreach ($path in @($stdoutLog, $stderrLog)) {
 $args = @(
     "--port", "$port",
     "--enable_editor",
-    "--cookie-secret", $cookieSecret
+    "--cookie_secret", $cookieSecret
 )
 
-if ($enableLogin) {
-    $args += "--disable_login=false"
-} else {
-    $args += "--disable_login=true"
+if (-not $enableLogin) {
+    $args += "--disable_login"
 }
 
 Write-Host "Starting superflare.exe in background..."

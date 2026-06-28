@@ -46,12 +46,6 @@ tmp-superflare.*
 tmp-fn-*.html
 .env
 *.fpk
-fnapp/fnnas.superflare/app/server/superflare
-fnapp/fnnas.superflare/app/server/defaults/.env
-fnapp/fnnas.superflare/app/server/defaults/config.yml
-fnapp/fnnas.superflare/app/server/defaults/apps.yml
-fnapp/fnnas.superflare/app/server/defaults/bookmarks.yml
-fnapp/fnnas.superflare/app/server/defaults/ports.yaml
 fnapp/superflare/app/server/superflare
 fnapp/superflare/app/server/defaults/apps.yml
 fnapp/superflare/app/server/defaults/bookmarks.yml

@@ -132,7 +132,7 @@ func serveUserAssetByName(c *echo.Context, fileName string) error {
 	if fileName == "." || fileName == "" {
 		return echo.NewHTTPError(http.StatusNotFound, "not found")
 	}
-	root, err := os.Getwd()
+	root, err := fn.GetWorkDirE()
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "server error")
 	}
@@ -176,29 +176,10 @@ func serveSiteFavicon(c *echo.Context) error {
 }
 
 func readBuiltinBookmarkIcon() ([]byte, string, error) {
-	if mdi.MemFs == nil {
-		return nil, "", fmt.Errorf("mdi cache is not initialized")
-	}
-
-	iconURL := mdi.GetIconURLByName("bookmark")
-	if iconURL == "" || iconURL == "/favicon.ico" {
-		return nil, "", fmt.Errorf("bookmark icon url unavailable")
-	}
-
-	if idx := strings.Index(iconURL, "?"); idx >= 0 {
-		iconURL = iconURL[:idx]
-	}
-
-	iconPath := strings.TrimPrefix(iconURL, "/")
-	if iconPath == "" {
-		return nil, "", fmt.Errorf("bookmark icon path unavailable")
-	}
-
-	data, err := fs.ReadFile(mdi.MemFs, iconPath)
+	data, err := mdi.GetIconSVGDataByName("bookmark")
 	if err != nil {
 		return nil, "", err
 	}
-
 	return data, "image/svg+xml", nil
 }
 

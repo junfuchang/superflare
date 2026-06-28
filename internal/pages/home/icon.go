@@ -9,6 +9,8 @@ import (
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
+var getSiteFaviconFast = fn.GetSiteFaviconFast
+
 func renderBookmarkIcon(icon string, link string, iconMode string) string {
 	iconMode = strings.ToUpper(strings.TrimSpace(iconMode))
 	if iconMode == define.IconModeHidden {
@@ -24,21 +26,19 @@ func renderBookmarkIcon(icon string, link string, iconMode string) string {
 		if builtInIcon := mdi.GetIconByName(icon); builtInIcon != "" {
 			return builtInIcon
 		}
-		if iconMode == define.IconModeMissingFill {
-			if favicon := fn.GetSiteFaviconFast(link, defaultBookmarkIcon); favicon != "" {
-				return favicon
-			}
-			return defaultBookmarkIcon
-		}
-		return ""
+		return iconFallbackForLink(link, defaultBookmarkIcon)
 	}
 
 	if iconMode == define.IconModeMissingFill {
-		if favicon := fn.GetSiteFaviconFast(link, defaultBookmarkIcon); favicon != "" {
-			return favicon
-		}
-		return defaultBookmarkIcon
+		return iconFallbackForLink(link, defaultBookmarkIcon)
 	}
 
 	return ""
+}
+
+func iconFallbackForLink(link string, fallback string) string {
+	if favicon := getSiteFaviconFast(link, fallback); favicon != "" {
+		return favicon
+	}
+	return fallback
 }

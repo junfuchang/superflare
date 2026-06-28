@@ -197,13 +197,13 @@
 
         <div class="form-group">
             <label for="settings-bookmark-category-color">{{ T .Locale "bookmark_category_color" }}</label>
-            <input type="text" name="bookmark-category-color" id="settings-bookmark-category-color" class="option-input" placeholder="rgba(255, 253, 234, 1)" value="{{.OptionBookmarkCategoryColor}}">
+            <input type="text" name="bookmark-category-color" id="settings-bookmark-category-color" class="option-input" data-color-picker="true" placeholder="rgba(255, 253, 234, 1)" value="{{.OptionBookmarkCategoryColor}}">
             <p class="help-text">{{ T .Locale "use_theme_color_help" }}</p>
         </div>
 
         <div class="form-group">
             <label for="settings-bookmark-item-color">{{ T .Locale "bookmark_item_color" }}</label>
-            <input type="text" name="bookmark-item-color" id="settings-bookmark-item-color" class="option-input" placeholder="rgba(255, 253, 234, 1)" value="{{.OptionBookmarkItemColor}}">
+            <input type="text" name="bookmark-item-color" id="settings-bookmark-item-color" class="option-input" data-color-picker="true" placeholder="rgba(255, 253, 234, 1)" value="{{.OptionBookmarkItemColor}}">
             <p class="help-text">{{ T .Locale "use_theme_color_help" }}</p>
         </div>
 
@@ -231,6 +231,21 @@
             </select>
             {{ else }}
             <select name="hide-help-button" id="settings-hide-help-button">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-hide-warnings-button">{{ T .Locale "hide_warnings_button" }}</label>
+            {{ if .OptionHideWarningsButton }}
+            <select name="hide-warnings-button" id="settings-hide-warnings-button">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="hide-warnings-button" id="settings-hide-warnings-button">
                 <option value="0" selected>{{ T .Locale "no" }}</option>
                 <option value="1">{{ T .Locale "yes" }}</option>
             </select>

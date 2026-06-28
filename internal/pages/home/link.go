@@ -9,7 +9,7 @@ import (
 )
 
 func renderBookmarkHref(sourceURL string, localURL string, preferLocal bool, enableEncryptedLink bool) string {
-	if preferLocal && isHTTPBookmarkURL(localURL) {
+	if preferLocal && isHTTPBookmarkURL(sourceURL) && isHTTPBookmarkURL(localURL) {
 		return define.MiscPages.RedirLocal.Path + "?go=" + data.Base64EncodeUrl(sourceURL) + "&local=" + data.Base64EncodeUrl(localURL)
 	}
 	if strings.HasPrefix(sourceURL, "chrome-extension://") || enableEncryptedLink {

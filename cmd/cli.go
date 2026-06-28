@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -15,7 +16,7 @@ import (
 
 var flagsMapTrimValue = regexp.MustCompile(`=.*`)
 
-func GetCliFlags() (*model.Flags, *flags.FlagSet) {
+func GetCliFlags() (*model.Flags, *flags.FlagSet, error) {
 	cliFlags := new(model.Flags)
 	options := flags.NewFlagSet("appFlags", flags.ContinueOnError)
 	options.SortFlags = false
@@ -42,8 +43,10 @@ func GetCliFlags() (*model.Flags, *flags.FlagSet) {
 	options.StringVarP(&cliFlags.CookieName, _KEY_COOKIE_NAME, _KEY_COOKIE_NAME_SHORT, define.DEFAULT_COOKIE_NAME, "cookie name")
 	options.StringVarP(&cliFlags.CookieSecret, _KEY_COOKIE_SECRET, _KEY_COOKIE_SECRET_SHORT, define.DEFAULT_COOKIE_SECRET, "cookie secret")
 
-	_ = options.Parse(os.Args[1:])
-	return cliFlags, options
+	if err := options.Parse(os.Args[1:]); err != nil {
+		return cliFlags, options, fmt.Errorf("parse cli flags failed: %w", err)
+	}
+	return cliFlags, options, nil
 }
 
 // GetFlagsMaps returns a set of flag names that appear in os.Args.
@@ -79,8 +82,7 @@ func CheckFlagsExists(dict map[string]bool, keys []string) bool {
 	return false
 }
 
-func parseCLI(baseFlags model.Flags) model.Flags {
-	cliFlags, fs := GetCliFlags()
+func resolveCLIFlags(baseFlags model.Flags, cliFlags *model.Flags, fs *flags.FlagSet) (model.Flags, error) {
 	if ExecuteCLI(cliFlags, fs) {
 		os.Exit(0)
 	}
@@ -88,7 +90,7 @@ func parseCLI(baseFlags model.Flags) model.Flags {
 
 	port, err := configutil.ResolvePortPflag(fs, _KEY_PORT, "", baseFlags.Port)
 	if err != nil {
-		port = define.DEFAULT_PORT
+		return baseFlags, fmt.Errorf("resolve --%s failed: %w", _KEY_PORT, err)
 	}
 	baseFlags.Port = port
 
@@ -98,7 +100,7 @@ func parseCLI(baseFlags model.Flags) model.Flags {
 
 	visibility, err := configutil.ResolveEnumPflag(fs, _KEY_VISIBILITY, "", baseFlags.Visibility, []string{"DEFAULT", "PRIVATE"}, false)
 	if err != nil {
-		visibility = define.DEFAULT_VISIBILITY
+		return baseFlags, fmt.Errorf("resolve --%s failed: %w", _KEY_VISIBILITY, err)
 	}
 	baseFlags.Visibility = strings.ToUpper(visibility)
 
@@ -114,5 +116,13 @@ func parseCLI(baseFlags model.Flags) model.Flags {
 		baseFlags.DebugMode = configutil.ResolveBoolPflag(fs, _KEY_DEBUG, "", baseFlags.DebugMode)
 	}
 
-	return baseFlags
+	return baseFlags, nil
+}
+
+func parseCLI(baseFlags model.Flags) (model.Flags, error) {
+	cliFlags, fs, err := GetCliFlags()
+	if err != nil {
+		return baseFlags, err
+	}
+	return resolveCLIFlags(baseFlags, cliFlags, fs)
 }

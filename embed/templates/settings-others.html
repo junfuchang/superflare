@@ -62,6 +62,9 @@
             {{ if .LoginConfigError }}
             <p class="help-text">{{ T .Locale .LoginConfigError }}</p>
             {{ end }}
+            {{ if .LoginConfigErrorDetail }}
+            <p class="help-text">{{ .LoginConfigErrorDetail }}</p>
+            {{ end }}
             <p class="help-text">{{ T .Locale "login_config_help" }}</p>
             <div class="form-group">
                 <input class="btn-submit" type="submit" value='{{ T .Locale "save_changes" }}' />

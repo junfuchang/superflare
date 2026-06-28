@@ -72,6 +72,9 @@ func GetSiteFaviconAssetURLFast(bookmarkLink string) string {
 	if iconURL == "" {
 		return ""
 	}
+	if parsed, err := url.Parse(iconURL); err == nil && HostLooksLocalNetwork(parsed.Host) {
+		return ""
+	}
 	if isProxyableSiteFaviconURL(iconURL) {
 		if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
 			return siteIconProxyPath + "?src=" + url.QueryEscape(iconURL)
@@ -277,6 +280,7 @@ func readCachedSiteFavicon(iconURL string) ([]byte, string, error) {
 	}
 	contentType, ok := detectSiteFaviconContentType(data, "")
 	if !ok {
+		_ = os.Remove(cachePath)
 		return nil, "", fmt.Errorf("unexpected cached content type")
 	}
 	return data, contentType, nil
@@ -290,11 +294,11 @@ func writeCachedSiteFavicon(iconURL string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath, data, 0644)
+	return writeSiteFaviconCacheAtomic(cachePath, data)
 }
 
 func siteFaviconCachePath(iconURL string) (string, error) {
-	root, err := os.Getwd()
+	root, err := GetWorkDirE()
 	if err != nil {
 		return "", err
 	}
@@ -308,4 +312,39 @@ func siteFaviconCacheKey(iconURL string) string {
 
 func SiteFaviconCacheKeyForTest(iconURL string) string {
 	return siteFaviconCacheKey(iconURL)
+}
+
+func writeSiteFaviconCacheAtomic(cachePath string, data []byte) error {
+	dir := filepath.Dir(cachePath)
+	temp, err := os.CreateTemp(dir, "."+filepath.Base(cachePath)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	cleanup := func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}
+
+	if _, err := temp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Chmod(0644); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	if err := os.Rename(tempPath, cachePath); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	return nil
 }

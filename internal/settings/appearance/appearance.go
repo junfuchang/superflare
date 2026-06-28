@@ -1,6 +1,7 @@
 package appearance
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -12,8 +13,10 @@ import (
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/auth"
+	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/pool"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 func RegisterRouting(e *echo.Echo) {
@@ -22,6 +25,9 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateAppearanceOptions(c *echo.Context) error {
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	var body struct {
 		OptionTitle              string `form:"title"`
 		OptionFooter             string `form:"footer"`
@@ -39,6 +45,7 @@ func updateAppearanceOptions(c *echo.Context) error {
 		BookmarkItemColor        string `form:"bookmark-item-color"`
 		HideSettingsButton       bool   `form:"hide-settings-button"`
 		HideHelpButton           bool   `form:"hide-help-button"`
+		HideWarningsButton       bool   `form:"hide-warnings-button"`
 		EnableEncryptedLink      bool   `form:"enable-encrypted-link"`
 		IconMode                 string `form:"icon-mode"`
 		KeepLetterCase           bool   `form:"keep-letter-case"`
@@ -49,12 +56,46 @@ func updateAppearanceOptions(c *echo.Context) error {
 		OptionCustomMonth        string `form:"custom-month"`
 	}
 	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusForbidden, "提交数据缺失")
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing form data"))
+	}
+	if strings.TrimSpace(body.IconMode) == "" {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing icon mode value"))
+	}
+	if strings.TrimSpace(body.Locale) == "" {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing locale value"))
+	}
+	categoryColor, err := optionalSafeColor(body.BookmarkCategoryColor)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	siteIcon, err := normalizeOptionalSiteIcon(body.OptionSiteIcon)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	itemColor, err := optionalSafeColor(body.BookmarkItemColor)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	iconMode, err := normalizeIconMode(body.IconMode)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	locale, err := normalizeLocaleOption(body.Locale)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	homeMaxColumns, err := parseOptionalRangedInt(body.HomeMaxColumns, 0, 8, "home-max-columns")
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	homeMaxWidth, err := parseOptionalRangedInt(body.HomeMaxWidth, 0, 2400, "home-max-width")
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
 	var update model.Application
 	update.Title = body.OptionTitle
-	update.Footer = body.OptionFooter
-	update.SiteIcon = strings.TrimSpace(body.OptionSiteIcon)
+	update.Footer = footer.Sanitize(body.OptionFooter)
+	update.SiteIcon = siteIcon
 	update.SiteIconMode = "mdi"
 	update.OpenAppNewTab = body.OptionOpenAppNewTab
 	update.OpenBookmarkNewTab = body.OptionOpenBookmarkNewTab
@@ -65,69 +106,136 @@ func updateAppearanceOptions(c *echo.Context) error {
 	update.ShowBookmarks = body.OptionShowBookmarks
 	update.AppsTitle = strings.TrimSpace(body.OptionAppsTitle)
 	update.BookmarksTitle = strings.TrimSpace(body.OptionBookmarksTitle)
-	update.BookmarkCategoryColor = define.SafeCSSColor(body.BookmarkCategoryColor, "")
-	update.BookmarkItemColor = define.SafeCSSColor(body.BookmarkItemColor, "")
+	update.BookmarkCategoryColor = categoryColor
+	update.BookmarkItemColor = itemColor
 	update.HideSettingsButton = body.HideSettingsButton
 	update.HideHelpButton = body.HideHelpButton
+	update.HideWarningsButton = body.HideWarningsButton
 	update.EnableEncryptedLink = body.EnableEncryptedLink
 	update.KeepLetterCase = body.KeepLetterCase
-	requestIconMode := strings.ToUpper(body.IconMode)
-	if requestIconMode != define.IconModeMissingBlank && requestIconMode != define.IconModeMissingFill && requestIconMode != define.IconModeHidden {
-		update.IconMode = define.IconModeMissingFill
-	} else {
-		update.IconMode = requestIconMode
+	update.IconMode = iconMode
+	if locale != "" {
+		update.Locale = locale
 	}
-	if body.Locale != "" {
-		update.Locale = body.Locale
+	update.HomeMaxColumns = homeMaxColumns
+	update.HomeMaxWidth = homeMaxWidth
+	if err := data.UpdateAppearance(update); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
-	update.HomeMaxColumns = clampFormInt(body.HomeMaxColumns, 0, 8, 0)
-	update.HomeMaxWidth = clampFormInt(body.HomeMaxWidth, 0, 2400, 0)
-	data.UpdateAppearance(update)
-	define.UpdatePagePalettes()
+	if err := define.UpdatePagePalettes(); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	return pageAppearance(c)
 }
 
-func clampFormInt(input string, min int, max int, fallback int) int {
-	value, err := strconv.Atoi(strings.TrimSpace(input))
+func optionalSafeColor(input string) (string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", nil
+	}
+	if define.SafeCSSColor(input, "") == "" {
+		return "", fmt.Errorf("invalid color value: %s", input)
+	}
+	return input, nil
+}
+
+func normalizeOptionalSiteIcon(input string) (string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", nil
+	}
+	if !mdi.IconExists(input) {
+		return "", fmt.Errorf("invalid site icon value: %s", input)
+	}
+	return input, nil
+}
+
+func normalizeIconMode(input string) (string, error) {
+	mode := strings.ToUpper(strings.TrimSpace(input))
+	if mode == "" {
+		return define.IconModeMissingFill, nil
+	}
+	switch mode {
+	case define.IconModeMissingBlank, define.IconModeMissingFill, define.IconModeHidden:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid icon mode: %s", input)
+	}
+}
+
+func normalizeLocaleOption(input string) (string, error) {
+	locale := strings.ToLower(strings.TrimSpace(input))
+	if locale == "" {
+		return "", nil
+	}
+	switch locale {
+	case "zh", "en":
+		return locale, nil
+	default:
+		return "", fmt.Errorf("invalid locale value: %s", input)
+	}
+}
+
+func parseOptionalRangedInt(input string, min int, max int, field string) (int, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(input)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("invalid %s value: %s", field, input)
 	}
-	if value < min {
-		return min
+	if value < min || value > max {
+		return 0, fmt.Errorf("%s must be between %d and %d", field, min, max)
 	}
-	if value > max {
-		return max
-	}
-	return value
+	return value, nil
 }
 
 func pageAppearance(c *echo.Context) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareSettingsOptionsForRender(options)
+	locale := options.Locale
 	iconMode := strings.ToUpper(strings.TrimSpace(options.IconMode))
 	if iconMode == "" {
 		iconMode = define.IconModeMissingFill
 	}
 	showLoginInfo := false
-	if !define.AppFlags.DisableLoginMode {
-		showLoginInfo = auth.CheckUserIsLogin(c)
+	userName := ""
+	loginDate := ""
+	loginDisplay, err := auth.ResolveLoginDisplayStateForStrictView(c)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	showLoginInfo = loginDisplay.ShowLoginInfo
+	userName = loginDisplay.UserName
+	loginDate = loginDisplay.LoginDate
+	renderWarnings = auth.AppendSessionWarnings(c, locale, renderWarnings)
+	pageStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "settings")
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["DebugMode"] = define.AppFlags.DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = "Appearance"
-	m["PageAppearance"] = define.GetAppBodyStyle()
+	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo
-	m["UserName"] = auth.GetUserName(c)
-	m["LoginDate"] = auth.GetUserLoginDate(c)
+	m["UserName"] = userName
+	m["LoginDate"] = loginDate
 	m["OptionTitle"] = options.Title
-	m["OptionFooter"] = template.HTML(options.Footer)
+	footer.BindTemplateData(m, options.Footer)
 	m["OptionSiteIcon"] = options.SiteIcon
 	m["SiteIconOptions"] = renderSiteIconOptions()
 	m["OptionOpenAppNewTab"] = options.OpenAppNewTab
@@ -143,13 +251,15 @@ func pageAppearance(c *echo.Context) error {
 	m["OptionBookmarkItemColor"] = options.BookmarkItemColor
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton
+	m["OptionHideWarningsButton"] = options.HideWarningsButton
 	m["OptionEnableEncryptedLink"] = options.EnableEncryptedLink
 	m["OptionKeepLetterCase"] = options.KeepLetterCase
 	m["OptionIconMode"] = iconMode
-	m["OptionLocale"] = options.Locale
+	m["OptionLocale"] = locale
 	m["OptionHomeMaxColumns"] = options.HomeMaxColumns
 	m["OptionHomeMaxWidth"] = options.HomeMaxWidth
-	m["Locale"] = options.Locale
+	m["Locale"] = locale
+	m["RenderWarnings"] = renderWarnings
 	return c.Render(http.StatusOK, "settings.html", m)
 }
 

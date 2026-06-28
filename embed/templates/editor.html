@@ -15,14 +15,126 @@
     <link rel="icon" type="image/png" sizes="512x512" href="{{ AndroidChrome512URL }}">
     {{ end }}
     <link rel="stylesheet" href="/assets/table/grid.css{{.DebugAssetVersion}}">
+    <script src="/assets/table/runtime.js{{.DebugAssetVersion}}"></script>
     <script src="/assets/table/grid.js{{.DebugAssetVersion}}"></script>
     <script src="/assets/table/grid.zh-CN.js{{.DebugAssetVersion}}"></script>
-    <style type="text/css">{{.PageInlineStyle}}</style>
+    <script>
+        (function () {
+            try {
+                const storedTheme = localStorage.getItem('superflare-editor-theme');
+                if (storedTheme === 'light' || storedTheme === 'dark') {
+                    document.documentElement.setAttribute('data-editor-theme', storedTheme);
+                }
+            } catch (error) { }
+        })();
+    </script>
     <style>
+        html {
+            background-color: #14181d;
+        }
+
+        html[data-editor-theme="light"] {
+            background-color: #eef3f8;
+        }
+
         body {
+            --editor-page-background: #14181d;
+            --editor-page-text: rgba(239, 251, 255, 0.96);
+            --editor-page-text-muted: rgba(239, 251, 255, 0.72);
+            --editor-page-accent: #ffa500;
+            --editor-panel-surface: rgba(15, 15, 15, 0.76);
+            --editor-panel-border: rgba(255, 253, 234, 0.16);
+            --editor-button-surface: rgba(18, 18, 18, 0.72);
+            --editor-button-surface-hover: rgba(24, 24, 24, 0.88);
+            --editor-input-surface: rgba(12, 12, 12, 0.92);
+            --editor-input-border: rgba(255, 253, 234, 0.16);
+            --editor-success-surface: rgba(56, 110, 56, 0.74);
+            --editor-success-border: rgba(118, 202, 118, 0.44);
+            --editor-warning-surface: rgba(124, 74, 24, 0.78);
+            --editor-warning-border: rgba(227, 162, 90, 0.44);
+            --editor-error-surface: rgba(122, 38, 38, 0.78);
+            --editor-error-border: rgba(228, 108, 108, 0.44);
+            --editor-neutral-surface: rgba(63, 86, 118, 0.72);
+            --editor-neutral-border: rgba(137, 176, 224, 0.34);
+            --color-background: var(--editor-page-background);
+            --color-primary: var(--editor-page-text);
+            --color-accent: var(--editor-page-accent);
+            color-scheme: dark;
             min-height: 100vh;
-            background-color: var(--color-background);
-            color: var(--color-primary);
+            background-color: var(--editor-page-background);
+            color: var(--editor-page-text);
+            --editor-table-surface: rgba(18, 18, 18, 0.97);
+            --editor-table-surface-strong: rgba(28, 28, 28, 0.99);
+            --editor-table-border: rgba(255, 253, 234, 0.14);
+            --editor-table-border-soft: rgba(255, 253, 234, 0.08);
+            --editor-table-border-medium: rgba(255, 253, 234, 0.1);
+            --editor-table-border-strong: rgba(255, 253, 234, 0.28);
+            --editor-table-text: rgba(239, 251, 255, 0.96);
+            --editor-table-text-muted: rgba(239, 251, 255, 0.72);
+            --editor-table-input-surface: rgba(239, 251, 255, 0.96);
+            --editor-table-input-text: #171717;
+            --editor-table-accent-soft: rgba(255, 194, 92, 0.72);
+            --editor-table-accent-strong: rgba(255, 179, 54, 0.88);
+            --editor-table-accent-text: #171717;
+            --editor-table-accent-text-strong: #101010;
+            --editor-table-invalid-bg: rgba(122, 38, 38, 0.62);
+            --editor-table-invalid-text: #ffd9d9;
+            --editor-table-unstable-bg: rgba(55, 78, 112, 0.58);
+            --editor-table-unstable-text: #dcecff;
+            --editor-table-restricted-bg: rgba(124, 74, 24, 0.52);
+            --editor-table-restricted-text: #ffe4b8;
+            --editor-search-active-outline: rgba(255, 247, 214, 0.42);
+            --editor-menu-shadow: 0 16px 34px rgba(0, 0, 0, 0.46), 0 0 0 1px rgba(255, 253, 234, 0.06);
+            --editor-table-separator-surface: rgba(16, 16, 16, 0.98);
+            --editor-table-separator-border-top: rgba(255, 253, 234, 0.08);
+            --editor-table-separator-border-bottom: rgba(255, 253, 234, 0.04);
+        }
+
+        html[data-editor-theme="light"] body {
+            --editor-page-background: #eef3f8;
+            --editor-page-text: rgba(21, 31, 43, 0.96);
+            --editor-page-text-muted: rgba(21, 31, 43, 0.72);
+            --editor-page-accent: #d98b00;
+            --editor-panel-surface: rgba(255, 255, 255, 0.84);
+            --editor-panel-border: rgba(36, 52, 71, 0.12);
+            --editor-button-surface: rgba(255, 255, 255, 0.82);
+            --editor-button-surface-hover: rgba(255, 255, 255, 0.96);
+            --editor-input-surface: rgba(255, 255, 255, 0.98);
+            --editor-input-border: rgba(36, 52, 71, 0.14);
+            --editor-success-surface: rgba(94, 160, 101, 0.22);
+            --editor-success-border: rgba(75, 132, 82, 0.34);
+            --editor-warning-surface: rgba(215, 156, 68, 0.28);
+            --editor-warning-border: rgba(188, 130, 38, 0.34);
+            --editor-error-surface: rgba(220, 112, 112, 0.22);
+            --editor-error-border: rgba(181, 74, 74, 0.32);
+            --editor-neutral-surface: rgba(111, 153, 216, 0.2);
+            --editor-neutral-border: rgba(82, 124, 188, 0.28);
+            color-scheme: light;
+            --editor-table-surface: rgba(250, 252, 255, 0.98);
+            --editor-table-surface-strong: rgba(236, 242, 249, 0.99);
+            --editor-table-border: rgba(36, 52, 71, 0.12);
+            --editor-table-border-soft: rgba(36, 52, 71, 0.08);
+            --editor-table-border-medium: rgba(36, 52, 71, 0.12);
+            --editor-table-border-strong: rgba(36, 52, 71, 0.2);
+            --editor-table-text: rgba(21, 31, 43, 0.96);
+            --editor-table-text-muted: rgba(21, 31, 43, 0.62);
+            --editor-table-input-surface: rgba(255, 255, 255, 0.99);
+            --editor-table-input-text: #17202b;
+            --editor-table-accent-soft: rgba(255, 208, 120, 0.74);
+            --editor-table-accent-strong: rgba(255, 187, 72, 0.9);
+            --editor-table-accent-text: #17202b;
+            --editor-table-accent-text-strong: #0f1823;
+            --editor-table-invalid-bg: rgba(255, 219, 219, 0.88);
+            --editor-table-invalid-text: #8f2727;
+            --editor-table-unstable-bg: rgba(220, 234, 255, 0.96);
+            --editor-table-unstable-text: #2f5b93;
+            --editor-table-restricted-bg: rgba(255, 237, 201, 0.96);
+            --editor-table-restricted-text: #8a5710;
+            --editor-search-active-outline: rgba(255, 245, 206, 0.92);
+            --editor-menu-shadow: 0 16px 34px rgba(16, 23, 33, 0.14), 0 0 0 1px rgba(36, 52, 71, 0.08);
+            --editor-table-separator-surface: rgba(228, 234, 242, 0.98);
+            --editor-table-separator-border-top: rgba(36, 52, 71, 0.1);
+            --editor-table-separator-border-bottom: rgba(36, 52, 71, 0.06);
         }
 
         .editor-page {
@@ -57,8 +169,13 @@
         .editor-header-actions {
             display: flex;
             flex-wrap: wrap;
+            align-items: center;
             justify-content: flex-end;
             gap: 10px;
+        }
+
+        #editor-theme-toggle {
+            min-width: 108px;
         }
 
         .editor-button,
@@ -71,7 +188,7 @@
             padding: 0 16px;
             border: 1px solid color-mix(in srgb, var(--color-primary) 16%, transparent);
             border-radius: 6px;
-            background: rgba(18, 18, 18, 0.72);
+            background: var(--editor-button-surface);
             color: var(--color-primary);
             cursor: pointer;
             text-decoration: none;
@@ -81,7 +198,7 @@
         .editor-button:hover,
         .editor-file-label:hover {
             border-color: color-mix(in srgb, var(--color-accent) 60%, white 10%);
-            background: rgba(24, 24, 24, 0.88);
+            background: var(--editor-button-surface-hover);
         }
 
         .editor-button[disabled] {
@@ -90,18 +207,23 @@
         }
 
         .editor-button-state-success {
-            background: rgba(56, 110, 56, 0.74);
-            border-color: rgba(118, 202, 118, 0.44);
+            background: var(--editor-success-surface);
+            border-color: var(--editor-success-border);
         }
 
         .editor-button-state-warning {
-            background: rgba(124, 74, 24, 0.78);
-            border-color: rgba(227, 162, 90, 0.44);
+            background: var(--editor-warning-surface);
+            border-color: var(--editor-warning-border);
         }
 
         .editor-button-state-error {
-            background: rgba(122, 38, 38, 0.78);
-            border-color: rgba(228, 108, 108, 0.44);
+            background: var(--editor-error-surface);
+            border-color: var(--editor-error-border);
+        }
+
+        .editor-button-state-neutral {
+            background: var(--editor-neutral-surface);
+            border-color: var(--editor-neutral-border);
         }
 
         .editor-toolbar {
@@ -112,9 +234,9 @@
         }
 
         .editor-panel {
-            border: 1px solid rgba(255, 253, 234, 0.16);
+            border: 1px solid var(--editor-panel-border);
             border-radius: 8px;
-            background: rgba(15, 15, 15, 0.76);
+            background: var(--editor-panel-surface);
             padding: 16px 18px;
         }
 
@@ -211,10 +333,10 @@
         .editor-search-box input {
             flex: 1 1 320px;
             min-width: 0;
-            border: 1px solid rgba(255, 253, 234, 0.16);
+            border: 1px solid var(--editor-input-border);
             border-radius: 6px;
             padding: 10px 12px;
-            background: rgba(12, 12, 12, 0.92);
+            background: var(--editor-input-surface);
             color: var(--color-primary);
             outline: none;
         }
@@ -257,6 +379,70 @@
             gap: 18px;
         }
 
+        .editor-render-warnings {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .editor-operation-notice {
+            display: none;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 18px;
+            padding: 12px 14px;
+            border: 1px solid var(--editor-neutral-border);
+            border-radius: 8px;
+            background: var(--editor-neutral-surface);
+            color: var(--color-primary);
+            line-height: 1.55;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 8%, transparent);
+        }
+
+        .editor-operation-notice.is-visible {
+            display: flex;
+        }
+
+        .editor-operation-notice-success {
+            border-color: var(--editor-success-border);
+            background: var(--editor-success-surface);
+        }
+
+        .editor-operation-notice-error {
+            border-color: var(--editor-error-border);
+            background: var(--editor-error-surface);
+        }
+
+        .editor-operation-notice-warning {
+            border-color: var(--editor-warning-border);
+            background: var(--editor-warning-surface);
+        }
+
+        .editor-operation-notice-text {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .editor-operation-notice-close {
+            flex: 0 0 auto;
+            min-width: 34px;
+            min-height: 34px;
+            padding: 0 10px;
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        .editor-render-warning {
+            padding: 12px 14px;
+            border: 1px solid var(--editor-warning-border);
+            border-radius: 8px;
+            background: var(--editor-warning-surface);
+            color: var(--color-primary);
+            line-height: 1.55;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 8%, transparent);
+        }
+
         .editor-table-panel {
             display: grid;
             gap: 14px;
@@ -279,9 +465,9 @@
         }
 
         .editor-table-shell {
-            border: 1px solid rgba(255, 253, 234, 0.12);
+            border: 1px solid var(--editor-table-border);
             border-radius: 8px;
-            background: rgba(18, 18, 18, 0.92);
+            background: var(--editor-table-surface);
             overflow: hidden;
         }
 
@@ -335,34 +521,45 @@
             background: color-mix(in srgb, var(--color-accent) 78%, var(--color-primary) 22%);
         }
 
-        .bookmark-icon {
-            background-color: var(--color-background) !important;
-        }
-
-        .bookmark-icon img {
-            height: 90%;
-        }
-
         .link-check-note {
-            color: #ff9d9d;
+            color: var(--editor-table-invalid-text);
             font-weight: 600;
         }
 
         #container-bookmarks .handsontable td.link-check-invalid,
         #container-bookmarks .handsontable .htCore td.link-check-invalid {
-            background: rgba(122, 38, 38, 0.52) !important;
+            background: var(--editor-table-invalid-bg) !important;
+            color: var(--editor-table-invalid-text) !important;
+        }
+
+        #container-bookmarks .handsontable td.link-check-unstable,
+        #container-bookmarks .handsontable .htCore td.link-check-unstable {
+            background: var(--editor-table-unstable-bg) !important;
+            color: var(--editor-table-unstable-text) !important;
+        }
+
+        #container-bookmarks .handsontable td.link-check-restricted,
+        #container-bookmarks .handsontable .htCore td.link-check-restricted {
+            background: var(--editor-table-restricted-bg) !important;
+            color: var(--editor-table-restricted-text) !important;
         }
 
         #container-bookmarks .handsontable td.editor-search-match,
         #container-bookmarks .handsontable .htCore td.editor-search-match {
-            background: color-mix(in srgb, var(--color-accent) 26%, rgba(18, 18, 18, 0.96)) !important;
-            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 36%, transparent);
+            background: var(--editor-table-accent-soft) !important;
+            color: var(--editor-table-accent-text) !important;
+            font-weight: 600 !important;
+            text-shadow: none !important;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--editor-table-accent-strong) 72%, var(--editor-table-surface));
         }
 
         #container-bookmarks .handsontable td.editor-search-match-active,
         #container-bookmarks .handsontable .htCore td.editor-search-match-active {
-            background: color-mix(in srgb, var(--color-accent) 44%, rgba(18, 18, 18, 0.96)) !important;
-            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 26%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 72%, white 8%);
+            background: var(--editor-table-accent-strong) !important;
+            color: var(--editor-table-accent-text-strong) !important;
+            font-weight: 700 !important;
+            text-shadow: none !important;
+            box-shadow: inset 0 0 0 1px var(--editor-search-active-outline), inset 0 0 0 2px color-mix(in srgb, var(--editor-table-accent-strong) 92%, var(--editor-table-surface-strong));
         }
 
         #container-category,
@@ -390,8 +587,8 @@
         #container-bookmarks .handsontable .ht_clone_left,
         #container-category .handsontable .ht_clone_top_left_corner,
         #container-bookmarks .handsontable .ht_clone_top_left_corner {
-            background: rgba(18, 18, 18, 0.96) !important;
-            color: var(--color-primary) !important;
+            background: var(--editor-table-surface) !important;
+            color: var(--editor-table-text) !important;
         }
 
         #container-category .handsontable th,
@@ -402,8 +599,8 @@
         #container-category .handsontable .htCore td,
         #container-bookmarks .handsontable .htCore th,
         #container-bookmarks .handsontable .htCore td {
-            border-color: rgba(255, 253, 234, 0.12) !important;
-            color: var(--color-primary) !important;
+            border-color: var(--editor-table-border) !important;
+            color: var(--editor-table-text) !important;
         }
 
         #container-category .handsontable thead th,
@@ -418,8 +615,8 @@
         #container-bookmarks .handsontable th.ht__row_header,
         #container-category .handsontable th.ht__column_header,
         #container-bookmarks .handsontable th.ht__column_header {
-            background: rgba(31, 31, 31, 0.98) !important;
-            color: var(--color-primary) !important;
+            background: var(--editor-table-surface-strong) !important;
+            color: var(--editor-table-text) !important;
             font-weight: 600;
         }
 
@@ -431,22 +628,65 @@
         #container-bookmarks .handsontable tbody th:first-child,
         #container-bookmarks .handsontable .ht_clone_left th,
         #container-bookmarks .handsontable .ht_clone_top_left_corner th {
-            background: rgba(31, 31, 31, 0.98) !important;
-            color: var(--color-primary) !important;
+            background: var(--editor-table-surface-strong) !important;
+            color: var(--editor-table-text) !important;
         }
 
         #container-category .handsontable td,
         #container-bookmarks .handsontable td {
-            background: rgba(18, 18, 18, 0.96) !important;
+            background: var(--editor-table-surface) !important;
         }
 
         #container-category .handsontableInput,
-        #container-bookmarks .handsontableInput {
-            background: rgba(255, 253, 234, 0.96) !important;
-            color: var(--color-background) !important;
-            border-color: rgba(255, 253, 234, 0.28) !important;
+        #container-bookmarks .handsontableInput,
+        #container-category .htSelectEditor,
+        #container-bookmarks .htSelectEditor,
+        #container-category .htNumericInput,
+        #container-bookmarks .htNumericInput {
+            background: var(--editor-table-input-surface) !important;
+            color: var(--editor-table-input-text) !important;
+            border-color: var(--editor-table-border-strong) !important;
         }
 
+        .handsontable.listbox,
+        .handsontable.listbox table,
+        .handsontable.listbox .htCore,
+        .handsontable.listbox .wtHolder,
+        .handsontable.listbox .wtHider,
+        .handsontable.listbox .wtSpreader,
+        .handsontable.listbox .ht_master,
+        .handsontable.listbox .ht_clone_top,
+        .handsontable.listbox .ht_clone_left,
+        .handsontable.listbox .ht_clone_top_left_corner {
+            background: var(--editor-table-surface-strong) !important;
+            color: var(--editor-table-text) !important;
+        }
+
+        .handsontable.listbox td,
+        .handsontable.listbox .htCore td,
+        .handsontable.listbox tbody td {
+            background: var(--editor-table-surface-strong) !important;
+            color: var(--editor-table-text) !important;
+            border-color: var(--editor-table-border-soft) !important;
+        }
+
+        .handsontable.listbox td.current,
+        .handsontable.listbox tbody td.current {
+            background: var(--editor-table-accent-soft) !important;
+            color: var(--editor-table-accent-text) !important;
+        }
+
+        .handsontable.listbox .htAutocompleteArrow {
+            color: var(--editor-table-text-muted) !important;
+        }
+
+        .htMenu.htContextMenu,
+        .htMenu.htContextMenu table,
+        .htMenu.htContextMenu .htCore,
+        .htMenu.htContextMenu .wtHolder,
+        .htMenu.htContextMenu .wtHider,
+        .htMenu.htContextMenu .wtSpreader,
+        .htMenu.htContextMenu .ht_master,
         .htContextMenu.handsontable,
         .htContextMenu.handsontable table,
         .htContextMenu.handsontable .htCore,
@@ -454,54 +694,78 @@
         .htContextMenu.handsontable .wtHider,
         .htContextMenu.handsontable .wtSpreader,
         .htContextMenu.handsontable .ht_master {
-            background: rgba(20, 20, 20, 0.98) !important;
-            color: var(--color-primary) !important;
+            background: var(--editor-table-surface-strong) !important;
+            color: var(--editor-table-text) !important;
         }
 
+        .htMenu.htContextMenu,
         .htContextMenu.handsontable {
-            border: 1px solid rgba(255, 253, 234, 0.18) !important;
+            border: 1px solid var(--editor-table-border) !important;
             border-radius: 8px !important;
-            box-shadow: 0 16px 34px rgba(0, 0, 0, 0.46), 0 0 0 1px rgba(255, 253, 234, 0.06) !important;
+            box-shadow: var(--editor-menu-shadow) !important;
             overflow: hidden !important;
         }
 
+        .htMenu.htContextMenu tbody tr,
         .htContextMenu.handsontable tbody tr {
-            background: rgba(20, 20, 20, 0.98) !important;
+            background: var(--editor-table-surface-strong) !important;
         }
 
+        .htMenu.htContextMenu td,
+        .htMenu.htContextMenu .htCore td,
+        .htMenu.htContextMenu tbody td,
         .htContextMenu.handsontable td,
         .htContextMenu.handsontable .htCore td,
         .htContextMenu.handsontable tbody td {
-            background: rgba(20, 20, 20, 0.98) !important;
-            color: color-mix(in srgb, var(--color-primary) 94%, transparent) !important;
-            border-color: rgba(255, 253, 234, 0.1) !important;
+            background: var(--editor-table-surface-strong) !important;
+            color: var(--editor-table-text) !important;
+            border-color: var(--editor-table-border-medium) !important;
             font-weight: 500 !important;
         }
 
+        .htMenu.htContextMenu .htItemWrapper,
+        .htMenu.htContextMenu .htDisabled .htItemWrapper,
+        .htMenu.htContextMenu .htSubmenu .htItemWrapper,
+        .htMenu.htContextMenu .htSeparator .htItemWrapper {
+            color: inherit !important;
+            background: transparent !important;
+        }
+
+        .htMenu.htContextMenu td.current,
+        .htMenu.htContextMenu tbody td.current,
+        .htMenu.htContextMenu td.zeroclipboard-is-hover,
+        .htMenu.htContextMenu tbody td.zeroclipboard-is-hover,
         .htContextMenu.handsontable td.current,
         .htContextMenu.handsontable tbody td.current,
         .htContextMenu.handsontable td.zeroclipboard-is-hover,
         .htContextMenu.handsontable tbody td.zeroclipboard-is-hover {
-            background: color-mix(in srgb, var(--color-accent) 28%, rgba(28, 28, 28, 0.98)) !important;
-            color: var(--color-primary) !important;
+            background: var(--editor-table-accent-soft) !important;
+            color: var(--editor-table-accent-text) !important;
         }
 
+        .htMenu.htContextMenu td.htDisabled,
+        .htMenu.htContextMenu tbody td.htDisabled,
+        .htMenu.htContextMenu td.htSeparator,
+        .htMenu.htContextMenu tbody td.htSeparator,
         .htContextMenu.handsontable td.htDisabled,
         .htContextMenu.handsontable tbody td.htDisabled,
         .htContextMenu.handsontable td.htSeparator,
         .htContextMenu.handsontable tbody td.htSeparator {
-            color: rgba(255, 253, 234, 0.42) !important;
+            color: var(--editor-table-text-muted) !important;
         }
 
+        .htMenu.htContextMenu td.htSeparator,
+        .htMenu.htContextMenu tbody td.htSeparator,
         .htContextMenu.handsontable td.htSeparator,
         .htContextMenu.handsontable tbody td.htSeparator {
-            background: rgba(16, 16, 16, 0.98) !important;
-            border-top: 1px solid rgba(255, 253, 234, 0.08) !important;
-            border-bottom: 1px solid rgba(255, 253, 234, 0.04) !important;
+            background: var(--editor-table-separator-surface) !important;
+            border-top: 1px solid var(--editor-table-separator-border-top) !important;
+            border-bottom: 1px solid var(--editor-table-separator-border-bottom) !important;
         }
 
+        .htMenu.htContextMenu .htSubmenu:after,
         .htContextMenu.handsontable .htSubmenu:after {
-            border-left-color: color-mix(in srgb, var(--color-primary) 70%, transparent) !important;
+            border-left-color: color-mix(in srgb, var(--editor-table-text) 70%, transparent) !important;
         }
 
         @media (max-width: 1080px) {
@@ -549,7 +813,7 @@
     </style>
 </head>
 
-<body style="{{.PageAppearance}}">
+<body>
     <div class="editor-page">
         <header class="editor-header">
             <div class="editor-header-copy">
@@ -557,22 +821,36 @@
                 <p>&#22312;&#19968;&#20010;&#39029;&#38754;&#20869;&#23436;&#25104;&#20998;&#31867;&#12289;&#20070;&#31614;&#12289;&#20869;&#32593;&#31471;&#21475;&#24555;&#36895;&#38142;&#25509;&#21644;&#25968;&#25454;&#22791;&#20221;&#24674;&#22797;&#12290;&#20445;&#23384;&#21518;&#20250;&#30452;&#25509;&#20889;&#22238;&#37197;&#32622;&#25991;&#20214;&#12290;</p>
             </div>
             <div class="editor-header-actions">
+                <button type="button" class="editor-button" id="editor-theme-toggle" data-label-dark="{{ if eq .Locale "en" }}Dark Mode{{ else }}深色模式{{ end }}" data-label-light="{{ if eq .Locale "en" }}Light Mode{{ else }}浅色模式{{ end }}">{{ if eq .Locale "en" }}Light Mode{{ else }}浅色模式{{ end }}</button>
                 <button type="button" class="editor-button" id="back-home">&#36820;&#22238;&#39318;&#39029;</button>
             </div>
         </header>
+
+        <div id="editor-operation-notice" class="editor-operation-notice{{ if .OperationNotice }} is-visible editor-operation-notice-{{ index .OperationNotice "Type" }}{{ end }}"{{ if not .OperationNotice }} hidden{{ end }}>
+            <div class="editor-operation-notice-text" id="editor-operation-notice-text">{{ if .OperationNotice }}{{ index .OperationNotice "Text" }}{{ end }}</div>
+            <button type="button" class="editor-button editor-operation-notice-close" id="editor-operation-notice-close" aria-label="{{ if eq .Locale "en" }}Close{{ else }}&#20851;&#38381;{{ end }}">&times;</button>
+        </div>
+
+        {{ if .RenderWarnings }}
+        <div class="editor-render-warnings">
+            {{ range .RenderWarnings }}
+            <div class="editor-render-warning">{{ . }}</div>
+            {{ end }}
+        </div>
+        {{ end }}
 
         <section class="editor-toolbar">
             <div class="editor-panel editor-panel-full">
                 <div class="editor-panel-header">
                     <h2>&#25968;&#25454;&#22791;&#20221;&#19982;&#24674;&#22797;</h2>
                     <div class="editor-backup-row">
-                        <a class="editor-button" href="/editor/backup">&#19979;&#36733;&#22791;&#20221;</a>
+                        <button type="button" class="editor-button" id="editor-backup-download">&#19979;&#36733;&#22791;&#20221;</button>
                         <form action="/editor/restore" method="POST" enctype="multipart/form-data" class="editor-restore-form">
                             <label class="editor-file-label" for="editor-backup-file">
                                 <span id="editor-backup-file-name">&#36873;&#25321;&#22791;&#20221;&#25991;&#20214;</span>
                             </label>
                             <input class="editor-file-input" type="file" name="backup" id="editor-backup-file" accept=".zip,.yml,.yaml">
-                            <button type="submit" class="editor-button">&#24674;&#22797;&#23548;&#20837;</button>
+                            <button type="submit" class="editor-button" id="editor-restore-submit">&#24674;&#22797;&#23548;&#20837;</button>
                         </form>
                     </div>
                 </div>
@@ -599,7 +877,7 @@
                 <div class="editor-table-header">
                     <div>
                         <h2>&#24212;&#29992;&#19982;&#20070;&#31614;&#32534;&#36753;</h2>
-                        <p>&#21487;&#30452;&#25509;&#32534;&#36753;&#21517;&#31216;&#12289;URL&#12289;&#20869;&#32593;&#22320;&#22336;&#12289;&#31867;&#22411;&#12289;&#23376;&#30446;&#24405;&#12289;&#22270;&#26631;&#21644;&#25551;&#36848;&#12290;&#24322;&#24120;&#26816;&#27979;&#32467;&#26524;&#20250;&#22312;&#26368;&#21518;&#19968;&#21015;&#25552;&#31034;&#12290;</p>
+                        <p>&#21487;&#30452;&#25509;&#32534;&#36753;&#21517;&#31216;&#12289;URL&#12289;&#20869;&#32593;&#22320;&#22336;&#12289;&#31867;&#22411;&#12289;&#23376;&#30446;&#24405;&#12289;&#22270;&#26631;&#21644;&#25551;&#36848;&#12290;&#20844;&#32593;&#26816;&#27979;&#32467;&#26524;&#20250;&#25353;&#26080;&#25928;&#12289;&#21463;&#38480;&#12289;&#19981;&#31283;&#23450;&#19977;&#31867;&#22312;&#26368;&#21518;&#19968;&#21015;&#25552;&#31034;&#12290;</p>
                     </div>
                 </div>
                 <div class="editor-bookmarks-toolbar">
@@ -615,7 +893,7 @@
                     </div>
                     <div class="editor-bookmarks-toolbar-actions">
                         <a class="editor-button" href="/icons" target="_blank" rel="noopener noreferrer">&#25171;&#24320;&#22270;&#26631;&#39029;</a>
-                        <button type="button" class="editor-button" id="check-links">&#26816;&#26597;&#20844;&#32593;&#26080;&#25928;&#38142;&#25509;</button>
+                        <button type="button" class="editor-button" id="check-links">&#26816;&#26597;&#20844;&#32593;&#38142;&#25509;&#29366;&#24577;</button>
                         <button type="button" class="editor-button update-data">&#20445;&#23384;&#20070;&#31614;&#25968;&#25454;</button>
                     </div>
                 </div>
@@ -637,6 +915,23 @@
 
     <script>
         const tableLocale = '{{.Locale}}' === 'en' ? 'en-US' : 'zh-CN';
+        const editorMessages = {
+            saveSuccess: '{{ if eq .Locale "en" }}Data saved successfully.{{ else }}\u6570\u636e\u4fdd\u5b58\u6210\u529f\u3002{{ end }}',
+            restoreSuccess: '{{ if eq .Locale "en" }}Backup restore completed successfully.{{ else }}\u5907\u4efd\u6062\u590d\u5bfc\u5165\u6210\u529f\u3002{{ end }}',
+            backupSuccess: '{{ if eq .Locale "en" }}Backup export completed and download started.{{ else }}\u5907\u4efd\u5bfc\u51fa\u6210\u529f\uff0c\u4e0b\u8f7d\u5df2\u5f00\u59cb\u3002{{ end }}',
+            backupFailed: '{{ if eq .Locale "en" }}Backup export failed{{ else }}\u5907\u4efd\u5bfc\u51fa\u5931\u8d25{{ end }}',
+            backupFailedShort: '{{ if eq .Locale "en" }}Export failed{{ else }}\u5bfc\u51fa\u5931\u8d25{{ end }}',
+            backupRunning: '{{ if eq .Locale "en" }}Exporting...{{ else }}\u5bfc\u51fa\u4e2d...{{ end }}',
+            restoreRunning: '{{ if eq .Locale "en" }}Restoring...{{ else }}\u6062\u590d\u4e2d...{{ end }}',
+            restoreFailedShort: '{{ if eq .Locale "en" }}Restore failed{{ else }}\u6062\u590d\u5931\u8d25{{ end }}',
+            restoreMissingFile: '{{ if eq .Locale "en" }}Select a backup file before restoring.{{ else }}\u8bf7\u5148\u9009\u62e9\u5907\u4efd\u6587\u4ef6\u518d\u6267\u884c\u6062\u590d\u3002{{ end }}',
+            backupChooseFile: '{{ if eq .Locale "en" }}Choose a backup file{{ else }}\u9009\u62e9\u5907\u4efd\u6587\u4ef6{{ end }}',
+            operationFailed: '{{ if eq .Locale "en" }}Operation failed{{ else }}\u64cd\u4f5c\u5931\u8d25{{ end }}',
+            closeNotice: '{{ if eq .Locale "en" }}Close{{ else }}\u5173\u95ed{{ end }}',
+            saveRunning: '{{ if eq .Locale "en" }}Saving...{{ else }}\u4fdd\u5b58\u4e2d...{{ end }}',
+            validationFixData: '{{ if eq .Locale "en" }}Fix data first{{ else }}\u8bf7\u5148\u4fee\u6b63\u6570\u636e{{ end }}',
+            validationFailed: '{{ if eq .Locale "en" }}Data validation failed{{ else }}\u6570\u636e\u6821\u9a8c\u5931\u8d25{{ end }}'
+        };
         const TABLE_ROW_HEIGHT = 27;
         const TABLE_HEADER_HEIGHT = 30;
         const TABLE_FRAME_HEIGHT = 4;
@@ -688,75 +983,62 @@
                 { data: 'Name' },
             ],
             height: tableHeightForRows(categories.length),
-            renderAllRows: true,
+            renderAllRows: false,
             manualColumnResize: true,
-            afterChange: (changes) => {
+            afterChange: (changes, source) => {
+                if (!changes || source === 'loadData' || source === 'category-duplicate-revert') { return }
                 if (!changes) { return }
                 changes.forEach(function ([row, prop, oldValue, newValue]) {
-                    categoriesMap = Object.keys(categoriesMap).reduce(function (prev, key) {
-                        if (categoriesMap[key] == oldValue) {
-                            prev[key] = newValue;
-                        } else {
-                            prev[key] = categoriesMap[key]
-                        }
-                        return prev;
-                    }, {});
-
+                    if (prop !== 'Name') { return; }
+                    const normalizedOldValue = (oldValue == null ? '' : String(oldValue)).trim();
+                    const normalizedNewValue = (newValue == null ? '' : String(newValue)).trim();
+                    if (normalizedNewValue === FLARE_FIX_CATEGORY[0]) {
+                        instanceCategories.setDataAtRowProp(row, 'Name', normalizedOldValue, 'category-duplicate-revert');
+                        showEditorOperationNotice('error', '分类名称“' + normalizedNewValue + '”为保留名称，请使用其他名称。', false);
+                        return;
+                    }
+                    if (normalizedNewValue !== '' && getVisualCategoryRows().some(function (item, index) {
+                        return index !== row && item.Name === normalizedNewValue;
+                    })) {
+                        instanceCategories.setDataAtRowProp(row, 'Name', normalizedOldValue, 'category-duplicate-revert');
+                        showEditorOperationNotice('error', '分类名称“' + normalizedNewValue + '”重复，请保持唯一。', false);
+                        return;
+                    }
+                    if (String(newValue) !== normalizedNewValue) {
+                        instanceCategories.setDataAtRowProp(row, 'Name', normalizedNewValue, 'category-normalize');
+                    }
                     bookmarks = bookmarks.map(function (bookmark) {
-                        if (bookmark.Category == oldValue) {
-                            bookmark.Category = newValue;
+                        if (bookmark.Category == normalizedOldValue) {
+                            bookmark.Category = normalizedNewValue;
                         }
                         return bookmark;
                     });
                 });
+                syncCategoriesStateFromTable();
                 updateDataTable()
             },
             afterCreateRow: function () {
-                scheduleTableLayoutSync();
+                syncCategoriesStateFromTable();
+                updateDataTable();
             },
             afterRemoveRow: function () {
-                scheduleTableLayoutSync();
+                syncCategoriesStateFromTable();
+                updateDataTable();
+            },
+            afterRowMove: function () {
+                syncCategoriesStateFromTable();
+                updateDataTable();
             },
             licenseKey: 'non-commercial-and-evaluation'
         });
 
-        function coverRenderer(instance, td, row, col, prop, value, cellProperties) {
-            const stringifiedValue = Handsontable.helper.stringify(value);
-
-            Handsontable.renderers.TextRenderer.apply(this, arguments);
-            return;
-
-            if (stringifiedValue.startsWith('http')) {
-                const img = document.createElement('IMG');
-
-                img.src = value;
-
-                Handsontable.dom.addEvent(img, 'mousedown', event => {
-                    event.preventDefault();
-                });
-
-                Handsontable.dom.empty(td);
-                td.appendChild(img);
-            } else if (stringifiedValue !== '') {
-
-                const img = document.createElement('IMG');
-
-                img.src = '/assets/mdi/blackboard-' + (value + '').toLowerCase() + '.svg{{.DebugAssetVersion}}';
-
-                Handsontable.dom.addEvent(img, 'mousedown', event => {
-                    event.preventDefault();
-                });
-
-                Handsontable.dom.empty(td);
-                td.className = 'bookmark-icon'
-                td.appendChild(img);
-
-            } else {
-                Handsontable.renderers.TextRenderer.apply(this, arguments);
-            }
-        }
-
-
+        const editorThemeToggle = document.getElementById('editor-theme-toggle');
+        const operationNotice = document.getElementById('editor-operation-notice');
+        const operationNoticeText = document.getElementById('editor-operation-notice-text');
+        const operationNoticeClose = document.getElementById('editor-operation-notice-close');
+        const backupDownloadButton = document.getElementById('editor-backup-download');
+        const restoreForm = document.querySelector('.editor-restore-form');
+        const restoreSubmitButton = document.getElementById('editor-restore-submit');
         const searchField = document.querySelector('#search');
         const searchApplyButton = document.getElementById('search-apply');
         const searchPrevButton = document.getElementById('search-prev');
@@ -767,11 +1049,18 @@
         const container = document.getElementById('container-bookmarks');
         const dataTableColumns = buildDataTableColumns();
         let tableLayoutFrame = null;
+        let lastCategoryTableHeight = 0;
+        let lastBookmarkTableHeight = 0;
+        let searchInvalidateFrame = null;
+        let operationNoticeTimer = null;
         const bookmarkSearchState = {
             term: '',
             matches: [],
             activeIndex: -1,
         };
+        const bookmarkSearchIndexProps = ['Name', 'URL', 'LocalURL', 'Category', 'Subdir', 'Desc', 'CheckResult'];
+        let bookmarkSearchRows = [];
+        const editorThemeStorageKey = 'superflare-editor-theme';
         let instanceBookmarks = new Handsontable(container, {
             language: tableLocale,
             data: Array.from(bookmarks),
@@ -782,7 +1071,7 @@
             columns: dataTableColumns,
             height: tableHeightForRows(bookmarks.length),
             stretchH: 'all',
-            renderAllRows: true,
+            renderAllRows: false,
             manualColumnResize: true,
             afterCreateRow: function () {
                 scheduleTableLayoutSync();
@@ -793,18 +1082,72 @@
             licenseKey: 'non-commercial-and-evaluation'
         });
 
+        function getCurrentEditorTheme() {
+            return document.documentElement.getAttribute('data-editor-theme') === 'light' ? 'light' : 'dark';
+        }
+
+        function syncEditorThemeToggle() {
+            if (!editorThemeToggle) { return; }
+            const currentTheme = getCurrentEditorTheme();
+            const nextLabel = currentTheme === 'light' ? editorThemeToggle.dataset.labelDark : editorThemeToggle.dataset.labelLight;
+            editorThemeToggle.textContent = nextLabel || '';
+            editorThemeToggle.setAttribute('aria-label', nextLabel || '');
+            editorThemeToggle.setAttribute('title', nextLabel || '');
+            editorThemeToggle.setAttribute('aria-pressed', currentTheme === 'light' ? 'true' : 'false');
+        }
+
+        function applyEditorTheme(theme, persist) {
+            const nextTheme = theme === 'light' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-editor-theme', nextTheme);
+            document.documentElement.style.backgroundColor = nextTheme === 'light' ? '#eef3f8' : '#14181d';
+            document.body.setAttribute('data-editor-theme', nextTheme);
+            document.body.style.backgroundColor = nextTheme === 'light' ? '#eef3f8' : '#14181d';
+            document.body.style.color = nextTheme === 'light' ? 'rgba(21, 31, 43, 0.96)' : 'rgba(239, 251, 255, 0.96)';
+            if (persist !== false) {
+                try {
+                    localStorage.setItem(editorThemeStorageKey, nextTheme);
+                } catch (error) { }
+            }
+            syncEditorThemeToggle();
+            if (instanceCategories && instanceCategories.render) {
+                instanceCategories.render();
+            }
+            if (instanceBookmarks && instanceBookmarks.render) {
+                instanceBookmarks.render();
+            }
+        }
+
+        applyEditorTheme(getCurrentEditorTheme(), false);
+
+        if (editorThemeToggle) {
+            editorThemeToggle.addEventListener('click', function () {
+                const nextTheme = getCurrentEditorTheme() === 'light' ? 'dark' : 'light';
+                applyEditorTheme(nextTheme, true);
+                scheduleTableLayoutSync();
+            });
+        }
+
+        if (operationNoticeClose) {
+            operationNoticeClose.setAttribute('title', editorMessages.closeNotice);
+            operationNoticeClose.addEventListener('click', function () {
+                hideEditorOperationNotice();
+            });
+        }
+
+        if (operationNotice && operationNotice.classList.contains('is-visible') && operationNoticeText && operationNoticeText.textContent.trim() !== '') {
+            stripEditorNoticeQuery();
+            scheduleEditorOperationNoticeHide(3200);
+        }
+
         fileInput.addEventListener('change', function () {
-            const selected = this.files && this.files[0] ? this.files[0].name : '\u9009\u62e9\u5907\u4efd\u6587\u4ef6';
+            const selected = this.files && this.files[0] ? this.files[0].name : editorMessages.backupChooseFile;
             fileName.textContent = selected;
+            resetEditorButton(restoreSubmitButton);
         });
 
         searchField.addEventListener('input', function () {
             if (!bookmarkSearchState.term && !bookmarkSearchState.matches.length) { return; }
-            bookmarkSearchState.term = '';
-            bookmarkSearchState.matches = [];
-            bookmarkSearchState.activeIndex = -1;
-            updateSearchStatus();
-            instanceBookmarks.render();
+            scheduleSearchReset();
         });
 
         searchField.addEventListener('keydown', function (event) {
@@ -826,12 +1169,20 @@
         });
 
         function syncTableLayouts() {
-            instanceCategories.updateSettings({
-                height: tableHeightForRows(instanceCategories.countRows())
-            });
-            instanceBookmarks.updateSettings({
-                height: tableHeightForRows(instanceBookmarks.countRows())
-            });
+            const nextCategoryHeight = tableHeightForRows(instanceCategories.countRows());
+            const nextBookmarkHeight = tableHeightForRows(instanceBookmarks.countRows());
+            if (nextCategoryHeight !== lastCategoryTableHeight) {
+                instanceCategories.updateSettings({
+                    height: nextCategoryHeight
+                });
+                lastCategoryTableHeight = nextCategoryHeight;
+            }
+            if (nextBookmarkHeight !== lastBookmarkTableHeight) {
+                instanceBookmarks.updateSettings({
+                    height: nextBookmarkHeight
+                });
+                lastBookmarkTableHeight = nextBookmarkHeight;
+            }
             instanceCategories.render();
             instanceBookmarks.render();
         }
@@ -841,16 +1192,31 @@
                 cancelAnimationFrame(tableLayoutFrame);
             }
             tableLayoutFrame = requestAnimationFrame(function () {
-                tableLayoutFrame = requestAnimationFrame(function () {
-                    syncTableLayouts();
-                    tableLayoutFrame = null;
-                });
+                syncTableLayouts();
+                tableLayoutFrame = null;
+            });
+        }
+
+        function clearSearchState() {
+            bookmarkSearchState.term = '';
+            bookmarkSearchState.matches = [];
+            bookmarkSearchState.activeIndex = -1;
+            updateSearchStatus();
+            instanceBookmarks.render();
+        }
+
+        function scheduleSearchReset() {
+            if (searchInvalidateFrame) {
+                cancelAnimationFrame(searchInvalidateFrame);
+            }
+            searchInvalidateFrame = requestAnimationFrame(function () {
+                clearSearchState();
+                searchInvalidateFrame = null;
             });
         }
 
         function bindData() {
-            const options = { bom: false, columnDelimiter: ',', columnHeaders: false, exportHiddenColumns: true, exportHiddenRows: true, rowDelimiter: '\r\n', rowHeaders: true };
-            const exportedCategories = instanceCategories.getPlugin('exportFile').exportAsString('csv', options);
+            const exportedCategories = exportCategoriesCSV();
             const exportedBookmarks = exportBookmarksCSV();
             document.getElementById('field-categories').value = exportedCategories;
             document.getElementById('field-bookmarks').value = exportedBookmarks;
@@ -865,25 +1231,315 @@
         }
 
         function exportBookmarksCSV() {
-            return instanceBookmarks.getSourceData().map(function (item, idx) {
+            return getVisualBookmarkRows().map(function (item, idx) {
                 return [
                     idx + 1,
-                    item.Name || '',
-                    item.URL || '',
-                    item.LocalURL || '',
-                    item.Category || '',
-                    item.Subdir || '',
-                    item.Icon || '',
-                    item.Desc || ''
+                    item.Name,
+                    item.URL,
+                    item.LocalURL,
+                    item.Category,
+                    item.Subdir,
+                    item.Icon,
+                    item.Desc
                 ].map(csvEscape).join(',');
             }).join('\r\n');
         }
 
+        function exportCategoriesCSV() {
+            return getVisualCategoryRows().map(function (item) {
+                return [item.ID, item.Name].map(csvEscape).join(',');
+            }).join('\r\n');
+        }
+
+        function getEditorButtonDefaultLabel(button) {
+            if (!button) { return ''; }
+            if (!button.dataset.defaultLabel) {
+                button.dataset.defaultLabel = button.textContent || '';
+            }
+            return button.dataset.defaultLabel;
+        }
+
+        function resetEditorButton(button) {
+            if (!button) { return; }
+            setButtonState(button, '', getEditorButtonDefaultLabel(button));
+            button.title = '';
+        }
+
+        function clearEditorOperationNoticeTimer() {
+            if (!operationNoticeTimer) { return; }
+            window.clearTimeout(operationNoticeTimer);
+            operationNoticeTimer = null;
+        }
+
+        function hideEditorOperationNotice() {
+            if (!operationNotice) { return; }
+            clearEditorOperationNoticeTimer();
+            operationNotice.hidden = true;
+            operationNotice.classList.remove('is-visible', 'editor-operation-notice-success', 'editor-operation-notice-error', 'editor-operation-notice-warning');
+            if (operationNoticeText) {
+                operationNoticeText.textContent = '';
+            }
+        }
+
+        function scheduleEditorOperationNoticeHide(delay) {
+            clearEditorOperationNoticeTimer();
+            const timeout = Number(delay);
+            if (!Number.isFinite(timeout) || timeout <= 0) { return; }
+            operationNoticeTimer = window.setTimeout(function () {
+                hideEditorOperationNotice();
+            }, timeout);
+        }
+
+        function showEditorOperationNotice(type, message, autoHide) {
+            if (!operationNotice || !operationNoticeText) { return; }
+            const noticeType = type === 'success' || type === 'error' || type === 'warning' ? type : 'warning';
+            const text = (message || '').trim() || editorMessages.operationFailed;
+            clearEditorOperationNoticeTimer();
+            operationNotice.hidden = false;
+            operationNotice.classList.add('is-visible');
+            operationNotice.classList.remove('editor-operation-notice-success', 'editor-operation-notice-error', 'editor-operation-notice-warning');
+            operationNotice.classList.add('editor-operation-notice-' + noticeType);
+            operationNoticeText.textContent = text;
+            if (autoHide === false) {
+                return;
+            }
+            scheduleEditorOperationNoticeHide(noticeType === 'success' ? 3200 : 4200);
+        }
+
+        function stripEditorNoticeQuery() {
+            if (!window.history || typeof window.history.replaceState !== 'function' || typeof URL !== 'function') {
+                return;
+            }
+            let currentURL;
+            try {
+                currentURL = new URL(window.location.href);
+            } catch (error) {
+                return;
+            }
+            if (!currentURL.searchParams.has('notice')) {
+                return;
+            }
+            currentURL.searchParams.delete('notice');
+            const nextURL = currentURL.pathname + (currentURL.searchParams.toString() ? '?' + currentURL.searchParams.toString() : '') + currentURL.hash;
+            window.history.replaceState(window.history.state, '', nextURL);
+        }
+
+        function parseDownloadFilename(disposition) {
+            const raw = String(disposition || '').trim();
+            if (!raw) {
+                return '';
+            }
+            const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i);
+            if (utf8Match && utf8Match[1]) {
+                try {
+                    return decodeURIComponent(utf8Match[1].replace(/["']/g, '').trim());
+                } catch (error) {
+                    return utf8Match[1].replace(/["']/g, '').trim();
+                }
+            }
+            const simpleMatch = raw.match(/filename="?([^";]+)"?/i);
+            if (!simpleMatch || !simpleMatch[1]) {
+                return '';
+            }
+            return simpleMatch[1].trim();
+        }
+
+        function replaceEditorDocumentWithHTML(html) {
+            if (typeof html !== 'string' || html.trim() === '') {
+                return false;
+            }
+            document.open();
+            document.write(html);
+            document.close();
+            return true;
+        }
+
+        function formatEditorFailureMessage(prefix, detail) {
+            const title = (prefix || '').trim() || editorMessages.operationFailed;
+            const reason = (detail || '').trim();
+            if (!reason || reason === title || reason.indexOf(title) === 0) {
+                return title;
+            }
+            return tableLocale === 'en-US' ? (title + ': ' + reason) : (title + '：' + reason);
+        }
+
+        function showEditorValidationError(button, message) {
+            if (!button) { return; }
+            setButtonState(button, 'editor-button-state-error', editorMessages.validationFixData);
+            button.title = message || '';
+            showEditorOperationNotice('error', message || editorMessages.validationFailed, false);
+            setTimeout(function () {
+                resetEditorButton(button);
+            }, 2500);
+        }
+
+        function parseEditorJSONFailure(response, fallbackMessage) {
+            return response.text().then(function (raw) {
+                if (!raw) {
+                    return fallbackMessage;
+                }
+                try {
+                    const payload = JSON.parse(raw);
+                    if (payload && payload.error) {
+                        return summarizeEditorErrorMessage(String(payload.error).trim(), fallbackMessage);
+                    }
+                } catch (error) { }
+                return summarizeEditorErrorMessage(raw.trim(), fallbackMessage);
+            }).then(function (message) {
+                throw new Error(message || fallbackMessage);
+            });
+        }
+
+        function summarizeEditorErrorMessage(message, fallbackMessage) {
+            const trimmed = (message || '').trim();
+            if (!trimmed) {
+                return fallbackMessage;
+            }
+            const collapsed = trimmed.replace(/\s+/g, ' ');
+            if (collapsed.indexOf('<') !== -1 || collapsed.indexOf('>') !== -1) {
+                return fallbackMessage;
+            }
+            if (collapsed.length > 160) {
+                return collapsed.slice(0, 157) + '...';
+            }
+            return collapsed;
+        }
+
+        function responseLooksLikeHTML(contentType, raw) {
+            const normalizedContentType = String(contentType || '').toLowerCase();
+            if (normalizedContentType.indexOf('text/html') !== -1) {
+                return true;
+            }
+            const trimmed = String(raw || '').trim().toLowerCase();
+            return trimmed.indexOf('<!doctype html') === 0 || trimmed.indexOf('<html') === 0 || trimmed.indexOf('status-panel') !== -1;
+        }
+
+        function validateEditorDataBeforeSubmit() {
+            const visualCategories = getVisualCategoryRows()
+                .map(function (item) { return (item.Name || '').trim(); })
+                .filter(function (name) { return name !== ''; });
+            const seenCategories = new Set();
+            for (let index = 0; index < visualCategories.length; index += 1) {
+                const name = visualCategories[index];
+                if (name === FLARE_FIX_CATEGORY[0]) {
+                    return '分类名称“' + name + '”为保留名称，请使用其他名称。';
+                }
+                if (seenCategories.has(name)) {
+                    return '分类名称“' + name + '”重复，请保持唯一。';
+                }
+                seenCategories.add(name);
+            }
+
+            const visualBookmarks = getVisualBookmarkRows();
+            for (let rowIndex = 0; rowIndex < visualBookmarks.length; rowIndex += 1) {
+                const bookmark = visualBookmarks[rowIndex];
+                const categoryName = (bookmark.Category || '').trim();
+                if (!categoryName || categoryName === FLARE_FIX_CATEGORY[0]) {
+                    continue;
+                }
+                if (!seenCategories.has(categoryName)) {
+                    return '书签“' + (bookmark.Name || ('第' + (rowIndex + 1) + ' 行')) + '”引用了不存在的分类“' + categoryName + '”。';
+                }
+            }
+            return '';
+        }
+
+        getEditorButtonDefaultLabel(backupDownloadButton);
+        getEditorButtonDefaultLabel(restoreSubmitButton);
+
         Array.from(document.getElementsByClassName('update-data')).forEach(function (btn) {
+            getEditorButtonDefaultLabel(btn);
             btn.addEventListener('click', function (event) {
                 event.preventDefault();
+                const validationError = validateEditorDataBeforeSubmit();
+                if (validationError) {
+                    showEditorValidationError(btn, validationError);
+                    return;
+                }
                 bindData();
+                btn.disabled = true;
+                setButtonState(btn, 'editor-button-state-neutral', editorMessages.saveRunning);
                 document.getElementById('form-categories').submit();
+            });
+        });
+
+        restoreForm.addEventListener('submit', function (event) {
+            if (!fileInput.files || !fileInput.files[0]) {
+                event.preventDefault();
+                showEditorOperationNotice('error', editorMessages.restoreMissingFile, false);
+                setButtonState(restoreSubmitButton, 'editor-button-state-error', editorMessages.restoreFailedShort);
+                restoreSubmitButton.title = editorMessages.restoreMissingFile;
+                window.setTimeout(function () {
+                    resetEditorButton(restoreSubmitButton);
+                }, 2500);
+                return;
+            }
+            restoreSubmitButton.disabled = true;
+            setButtonState(restoreSubmitButton, 'editor-button-state-neutral', editorMessages.restoreRunning);
+        });
+
+        backupDownloadButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            const btn = this;
+            btn.disabled = true;
+            setButtonState(btn, 'editor-button-state-neutral', editorMessages.backupRunning);
+            fetch('/editor/backup', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/zip,text/html;q=0.9,*/*;q=0.8',
+                    'X-SuperFlare-Async': '1'
+                }
+            }).then(function (response) {
+                const contentType = response.headers.get('Content-Type') || '';
+                if (contentType.toLowerCase().indexOf('text/html') !== -1) {
+                    return response.text().then(function (raw) {
+                        if (responseLooksLikeHTML(contentType, raw) && replaceEditorDocumentWithHTML(raw)) {
+                            const handled = new Error('editor-page-replaced');
+                            handled.__editorHandled = true;
+                            throw handled;
+                        }
+                        throw new Error(summarizeEditorErrorMessage(raw, editorMessages.backupFailed));
+                    });
+                }
+                if (!response.ok) {
+                    return parseEditorJSONFailure(response, editorMessages.backupFailed);
+                }
+                return response.blob().then(function (blob) {
+                    return { response: response, blob: blob };
+                });
+            }).then(function (payload) {
+                if (!payload) { return; }
+                const filename = parseDownloadFilename(payload.response.headers.get('Content-Disposition')) || 'superflare-backup.zip';
+                const downloadURL = window.URL.createObjectURL(payload.blob);
+                const anchor = document.createElement('a');
+                anchor.href = downloadURL;
+                anchor.download = filename;
+                anchor.rel = 'noopener';
+                anchor.style.display = 'none';
+                document.body.appendChild(anchor);
+                anchor.click();
+                window.setTimeout(function () {
+                    anchor.remove();
+                    window.URL.revokeObjectURL(downloadURL);
+                }, 1000);
+                showEditorOperationNotice('success', editorMessages.backupSuccess, true);
+                setButtonState(btn, 'editor-button-state-success', getEditorButtonDefaultLabel(btn));
+                window.setTimeout(function () {
+                    resetEditorButton(btn);
+                    btn.disabled = false;
+                }, 2500);
+            }).catch(function (error) {
+                if (error && error.__editorHandled) {
+                    return;
+                }
+                const detail = error && error.message ? error.message : editorMessages.backupFailed;
+                showEditorOperationNotice('error', formatEditorFailureMessage(editorMessages.backupFailed, detail), false);
+                setButtonState(btn, 'editor-button-state-error', editorMessages.backupFailedShort);
+                btn.title = detail;
+                window.setTimeout(function () {
+                    resetEditorButton(btn);
+                    btn.disabled = false;
+                }, 2800);
             });
         });
 
@@ -894,10 +1550,102 @@
                 { data: 'LocalURL', type: 'autocomplete', source: localPortOptions, strict: false, filter: false, allowInvalid: true, renderer: localURLRenderer },
                 { data: 'Category', editor: 'select', selectOptions: FLARE_FIX_CATEGORY.concat(categories.map(item => item.Name)), allowInvalid: false, renderer: textSearchRenderer },
                 { data: 'Subdir', renderer: textSearchRenderer },
-                { data: 'Icon', renderer: coverRenderer },
+                { data: 'Icon', renderer: textSearchRenderer },
                 { data: 'Desc', renderer: textSearchRenderer },
                 { data: 'CheckResult', readOnly: true, renderer: linkCheckRenderer }
             ]
+        }
+
+        function getBookmarkVisualRowDataFromTable(table, rowIndex) {
+            if (!table || typeof table.getDataAtRowProp !== 'function') {
+                return {
+                    Name: '',
+                    URL: '',
+                    LocalURL: '',
+                    Category: '',
+                    Subdir: '',
+                    Icon: '',
+                    Desc: '',
+                    CheckResult: '',
+                    CheckStatus: ''
+                };
+            }
+            return {
+                Name: table.getDataAtRowProp(rowIndex, 'Name') || '',
+                URL: table.getDataAtRowProp(rowIndex, 'URL') || '',
+                LocalURL: table.getDataAtRowProp(rowIndex, 'LocalURL') || '',
+                Category: table.getDataAtRowProp(rowIndex, 'Category') || '',
+                Subdir: table.getDataAtRowProp(rowIndex, 'Subdir') || '',
+                Icon: table.getDataAtRowProp(rowIndex, 'Icon') || '',
+                Desc: table.getDataAtRowProp(rowIndex, 'Desc') || '',
+                CheckResult: table.getDataAtRowProp(rowIndex, 'CheckResult') || '',
+                CheckStatus: table.getDataAtRowProp(rowIndex, 'CheckStatus') || ''
+            };
+        }
+
+        function getBookmarkVisualRowData(rowIndex) {
+            return getBookmarkVisualRowDataFromTable(instanceBookmarks, rowIndex);
+        }
+
+        function getVisualCategoryRows() {
+            const rowCount = instanceCategories.countRows();
+            return Array.from({ length: rowCount }, function (_, rowIndex) {
+                return {
+                    ID: String(rowIndex + 1),
+                    Name: instanceCategories.getDataAtRowProp(rowIndex, 'Name') || ''
+                };
+            });
+        }
+
+        function syncCategoriesStateFromTable() {
+            categories = getVisualCategoryRows();
+            categoriesMap = categories.reduce(function (prev, item) {
+                if (item.ID && item.Name) {
+                    prev[item.ID] = item.Name;
+                }
+                return prev;
+            }, {});
+        }
+
+        function getVisualBookmarkRows() {
+            const rowCount = instanceBookmarks.countRows();
+            return Array.from({ length: rowCount }, function (_, rowIndex) {
+                return getBookmarkVisualRowData(rowIndex);
+            });
+        }
+
+        function syncBookmarksStateFromTable() {
+            bookmarks = getVisualBookmarkRows();
+        }
+
+        function rebuildBookmarkSearchIndex() {
+            bookmarkSearchRows = getVisualBookmarkRows().map(function (item, rowIndex) {
+                const values = bookmarkSearchIndexProps.map(function (prop) {
+                    return normalizeSearchText(getBookmarkCellDisplayValue(item, prop));
+                });
+                return { row: rowIndex, values: values };
+            });
+        }
+
+        function updateBookmarkSearchIndexRow(rowIndex) {
+            if (rowIndex == null || rowIndex < 0) { return; }
+            const item = getBookmarkVisualRowData(rowIndex);
+            bookmarkSearchRows[rowIndex] = {
+                row: rowIndex,
+                values: bookmarkSearchIndexProps.map(function (prop) {
+                    return normalizeSearchText(getBookmarkCellDisplayValue(item, prop));
+                })
+            };
+        }
+
+        function refreshBookmarkSearchAfterDataChange() {
+            if (bookmarkSearchState.term) {
+                runBookmarkSearch(searchField.value, false);
+                return;
+            }
+            if (bookmarkSearchState.matches.length) {
+                clearSearchState();
+            }
         }
 
         function normalizeSearchText(value) {
@@ -938,8 +1686,16 @@
 
         function linkCheckRenderer(instance, td, row, col, prop, value, cellProperties) {
             Handsontable.renderers.TextRenderer.apply(this, arguments);
+            const rowData = getBookmarkVisualRowDataFromTable(instance, row);
+            td.classList.remove('link-check-invalid', 'link-check-restricted', 'link-check-unstable', 'link-check-note');
             if (value) {
-                td.className = (td.className || '') + ' link-check-invalid link-check-note';
+                let statusClass = 'link-check-invalid';
+                if (rowData.CheckStatus === 'restricted') {
+                    statusClass = 'link-check-restricted';
+                } else if (rowData.CheckStatus === 'unstable') {
+                    statusClass = 'link-check-unstable';
+                }
+                td.className = (td.className || '') + ' ' + statusClass + ' link-check-note';
             }
             applySearchCellState(td, row, prop, value);
         }
@@ -974,16 +1730,13 @@
             bookmarkSearchState.activeIndex = -1;
 
             if (term) {
-                const rowCount = instanceBookmarks.countRows();
-                for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
-                    const item = instanceBookmarks.getSourceDataAtRow(rowIndex) || {};
-                    ['Name', 'URL', 'LocalURL', 'Category', 'Subdir', 'Desc', 'CheckResult'].forEach(function (prop) {
-                        const display = normalizeSearchText(getBookmarkCellDisplayValue(item, prop));
+                bookmarkSearchRows.forEach(function (rowEntry) {
+                    rowEntry.values.forEach(function (display, propIndex) {
                         if (display && display.indexOf(term) !== -1) {
-                            bookmarkSearchState.matches.push({ row: rowIndex, prop: prop });
+                            bookmarkSearchState.matches.push({ row: rowEntry.row, prop: bookmarkSearchIndexProps[propIndex] });
                         }
                     });
-                }
+                });
             }
 
             if (bookmarkSearchState.matches.length) {
@@ -1007,13 +1760,72 @@
         }
 
         function setButtonState(button, stateClass, text) {
-            button.classList.remove('editor-button-state-success', 'editor-button-state-warning', 'editor-button-state-error');
+            button.classList.remove('editor-button-state-success', 'editor-button-state-warning', 'editor-button-state-error', 'editor-button-state-neutral');
             if (stateClass) {
                 button.classList.add(stateClass);
             }
             if (text) {
                 button.textContent = text;
             }
+        }
+
+        function summarizeLinkCheckReason(result) {
+            if (!result) {
+                return '';
+            }
+            if (result.status === 'unstable') {
+                return result.reason || '\u8fde\u63a5\u4e0d\u7a33\u5b9a';
+            }
+            if (result.status === 'restricted') {
+                return result.reason || '\u8fde\u63a5\u53d7\u9650';
+            }
+            return result.reason || '\u8fde\u63a5\u65e0\u6548';
+        }
+
+        function applyLinkCheckResults(results) {
+            const nextRows = getVisualBookmarkRows();
+            let unstableCount = 0;
+            let restrictedCount = 0;
+            let invalidCount = 0;
+
+            nextRows.forEach(function (item) {
+                item.CheckResult = '';
+                item.CheckStatus = '';
+            });
+
+            (results || []).forEach(function (result) {
+                if (!result) {
+                    return;
+                }
+                const visualRow = Math.max(0, Number(result.row || 1) - 1);
+                if (!Number.isFinite(visualRow) || visualRow >= nextRows.length) {
+                    return;
+                }
+
+                const rowData = nextRows[visualRow];
+                rowData.CheckResult = summarizeLinkCheckReason(result);
+                rowData.CheckStatus = result.status || 'invalid';
+
+                if (result.status === 'unstable') {
+                    unstableCount += 1;
+                } else if (result.status === 'restricted') {
+                    restrictedCount += 1;
+                } else {
+                    invalidCount += 1;
+                }
+            });
+
+            bookmarks = nextRows;
+            instanceBookmarks.updateData(bookmarks);
+            rebuildBookmarkSearchIndex();
+            runBookmarkSearch(searchField.value, false);
+            instanceBookmarks.render();
+
+            return {
+                unstableCount: unstableCount,
+                restrictedCount: restrictedCount,
+                invalidCount: invalidCount
+            };
         }
 
         document.getElementById('back-home').addEventListener('click', function (e) {
@@ -1032,30 +1844,42 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ bookmarks: document.getElementById('field-bookmarks').value })
             }).then(function (res) {
+                if (!res.ok) {
+                    return parseEditorJSONFailure(res, '\u68c0\u67e5\u5931\u8d25');
+                }
                 return res.json();
             }).then(function (results) {
-                bookmarks.forEach(function (item) { item.CheckResult = ''; });
-                (results || []).forEach(function (result) {
-                    const idx = Math.max(0, (result.row || 1) - 1);
-                    if (bookmarks[idx]) {
-                        bookmarks[idx].CheckResult = result.reason || '\u8fde\u63a5\u65e0\u6548';
+                const summary = applyLinkCheckResults(results);
+                const unstableCount = summary.unstableCount;
+                const restrictedCount = summary.restrictedCount;
+                const invalidCount = summary.invalidCount;
+                if (invalidCount || restrictedCount || unstableCount) {
+                    const parts = [];
+                    if (invalidCount) {
+                        parts.push('\u65e0\u6548 ' + invalidCount);
                     }
-                });
-                runBookmarkSearch(searchField.value, false);
-                instanceBookmarks.render();
-                if (results && results.length) {
-                    setButtonState(btn, 'editor-button-state-warning', '\u53d1\u73b0 ' + results.length + ' \u4e2a\u5f02\u5e38\u94fe\u63a5');
+                    if (unstableCount) {
+                        parts.push('\u4e0d\u7a33\u5b9a ' + unstableCount);
+                    }
+                    if (restrictedCount) {
+                        parts.push('\u53d7\u9650 ' + restrictedCount);
+                    }
+                    const buttonState = invalidCount ? 'editor-button-state-warning' : ((unstableCount || restrictedCount) ? 'editor-button-state-neutral' : 'editor-button-state-success');
+                    setButtonState(btn, buttonState, parts.join(' / '));
                 } else {
                     setButtonState(btn, 'editor-button-state-success', '\u672a\u53d1\u73b0\u5f02\u5e38\u94fe\u63a5');
                 }
                 setTimeout(function () {
-                    setButtonState(btn, '', '\u68c0\u67e5\u516c\u7f51\u65e0\u6548\u94fe\u63a5');
+                    setButtonState(btn, '', '\u68c0\u67e5\u516c\u7f51\u94fe\u63a5\u72b6\u6001');
                     btn.disabled = false;
                 }, 2500);
-            }).catch(function () {
+            }).catch(function (error) {
+                const detail = error && error.message ? error.message : '\u68c0\u67e5\u5931\u8d25';
                 setButtonState(btn, 'editor-button-state-error', '\u68c0\u67e5\u5931\u8d25');
+                btn.title = detail;
                 setTimeout(function () {
-                    setButtonState(btn, '', '\u68c0\u67e5\u516c\u7f51\u65e0\u6548\u94fe\u63a5');
+                    setButtonState(btn, '', '\u68c0\u67e5\u516c\u7f51\u94fe\u63a5\u72b6\u6001');
+                    btn.title = '';
                     btn.disabled = false;
                 }, 2500);
             });
@@ -1073,20 +1897,47 @@
                 columns: buildDataTableColumns(),
                 height: tableHeightForRows(bookmarks.length)
             })
+            rebuildBookmarkSearchIndex();
             runBookmarkSearch(searchField.value, false);
             scheduleTableLayoutSync();
         }
 
         instanceBookmarks.addHook('afterChange', function (changes, source) {
             if (!changes || source === 'loadData') { return; }
+            const touchedRows = {};
             changes.forEach(function (change) {
                 const row = change[0];
                 const prop = change[1];
                 const newValue = change[3];
+                touchedRows[row] = true;
                 if (prop === 'LocalURL' && localPortValueMap[newValue]) {
                     instanceBookmarks.setDataAtRowProp(row, 'LocalURL', localPortValueMap[newValue], 'local-port-select');
                 }
             });
+            Object.keys(touchedRows).forEach(function (rowKey) {
+                const rowIndex = Number(rowKey);
+                bookmarks[rowIndex] = getBookmarkVisualRowData(rowIndex);
+                updateBookmarkSearchIndexRow(rowIndex);
+            });
+            refreshBookmarkSearchAfterDataChange();
+        });
+
+        instanceBookmarks.addHook('afterCreateRow', function () {
+            syncBookmarksStateFromTable();
+            rebuildBookmarkSearchIndex();
+            refreshBookmarkSearchAfterDataChange();
+        });
+
+        instanceBookmarks.addHook('afterRemoveRow', function () {
+            syncBookmarksStateFromTable();
+            rebuildBookmarkSearchIndex();
+            refreshBookmarkSearchAfterDataChange();
+        });
+
+        instanceBookmarks.addHook('afterRowMove', function () {
+            syncBookmarksStateFromTable();
+            rebuildBookmarkSearchIndex();
+            refreshBookmarkSearchAfterDataChange();
         });
 
         instanceBookmarks.addHook('beforeKeyDown', function (event) {
@@ -1115,6 +1966,7 @@
 
         window.addEventListener('load', scheduleTableLayoutSync);
         window.addEventListener('resize', scheduleTableLayoutSync);
+        rebuildBookmarkSearchIndex();
         updateSearchStatus();
         scheduleTableLayoutSync();
 
@@ -1123,3 +1975,4 @@
 </body>
 
 </html>
+

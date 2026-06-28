@@ -9,6 +9,8 @@ import (
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
+var getHelpIconByName = mdi.GetIconByName
+
 func GenerateHelpTemplate(locale string) template.HTML {
 	locale = i18n.NormalizeLocale(locale)
 	apps := []model.Bookmark{
@@ -63,19 +65,30 @@ func GenerateHelpTemplate(locale string) template.HTML {
 		if app.Desc != "" {
 			desc = app.Desc
 		}
+		escapedID := template.HTMLEscapeString(app.Icon)
+		escapedURL := template.HTMLEscapeString(app.URL)
+		escapedName := template.HTMLEscapeString(app.Name)
+		escapedDesc := template.HTMLEscapeString(desc)
 		tpl += `
-			<div class="app-container" data-id="` + app.Icon + `">
-			<a href="` + app.URL + `" class="app-item" title="` + app.Name + `">
-			  <div class="app-icon">` + mdi.GetIconByName(app.Icon) + `</div>
+			<div class="app-container" data-id="` + escapedID + `">
+			<a href="` + escapedURL + `" class="app-item" title="` + escapedName + `">
+			  <div class="app-icon">` + renderHelpIcon(app.Icon) + `</div>
 			  <div class="app-text">
-				<p class="app-title">` + app.Name + `</p>
-				<p class="app-desc">` + desc + `</p>
+				<p class="app-title">` + escapedName + `</p>
+				<p class="app-desc">` + escapedDesc + `</p>
 			  </div>
 			</a>
 			</div>
 			`
 	}
 	return template.HTML(tpl)
+}
+
+func renderHelpIcon(icon string) string {
+	if rendered := getHelpIconByName(icon); rendered != "" {
+		return rendered
+	}
+	return mdi.GetIconByName("bookmark")
 }
 
 func localeLabel(locale string, zh string, en string) string {

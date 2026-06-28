@@ -1,6 +1,9 @@
 package theme
 
 import (
+	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,7 +16,11 @@ import (
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/background"
 	"github.com/junfuchang/superflare/internal/pool"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
+
+var beginUploadedBackgroundActivation = background.BeginStagedUploadedBackgroundActivation
+var discardUploadedBackgroundStage = background.DiscardStagedUploadedBackgrounds
 
 func RegisterRouting(e *echo.Echo) {
 	e.GET(define.SettingPages.Theme.Path, pageTheme, auth.AuthRequired)
@@ -21,6 +28,9 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateThemes(c *echo.Context) error {
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	var body struct {
 		Action                string `form:"action"`
 		Theme                 string `form:"theme"`
@@ -34,42 +44,133 @@ func updateThemes(c *echo.Context) error {
 		GlassIntensity        string `form:"glass-intensity"`
 	}
 	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusForbidden, "missing form data")
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing form data"))
 	}
-	themeName := strings.TrimSpace(body.Theme)
-	if themeName == "" {
-		themeName = "blackboard"
+	if strings.TrimSpace(body.Theme) == "" {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing theme value"))
+	}
+	themeName, err := normalizeThemeName(body.Theme)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+	}
+	var (
+		backgroundColor   string
+		primaryColor      string
+		accentColor       string
+		backgroundBlur    int
+		backgroundOpacity int
+		glassEffect       string
+		glassIntensity    int
+	)
+	if themeName == "custom" {
+		backgroundColor, err = optionalSafeColor(body.CustomThemeBackground, "custom-theme-background")
+		if err != nil {
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+		}
+		primaryColor, err = optionalSafeColor(body.CustomThemePrimary, "custom-theme-primary")
+		if err != nil {
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+		}
+		accentColor, err = optionalSafeColor(body.CustomThemeAccent, "custom-theme-accent")
+		if err != nil {
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+		}
+		if body.BackgroundBlur != "" {
+			backgroundBlur, err = parseOptionalRangedInt(body.BackgroundBlur, 0, 80, "background-blur")
+			if err != nil {
+				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+			}
+		}
+		if body.BackgroundOpacity != "" {
+			backgroundOpacity, err = parseOptionalRangedInt(body.BackgroundOpacity, 0, 100, "background-opacity")
+			if err != nil {
+				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+			}
+		}
+		if body.GlassEffect != "" {
+			glassEffect, err = normalizeGlassEffect(body.GlassEffect)
+			if err != nil {
+				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+			}
+		}
+		if body.GlassIntensity != "" {
+			glassIntensity, err = parseOptionalRangedInt(body.GlassIntensity, 0, 100, "glass-intensity")
+			if err != nil {
+				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
+			}
+		}
 	}
 	if themeName == "custom" && strings.TrimSpace(body.Action) == "custom-theme" {
 		currentOptions, err := data.GetAllSettingsOptions()
 		if err != nil {
-			return c.String(http.StatusInternalServerError, "config error")
+			statuspage.BindOptionsLoadError(c, err)
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+		}
+		statuspage.BindOptions(c, currentOptions)
+		locale := currentOptions.Locale
+		hasBackgroundImageField := hasFormField(c, "background-image")
+		backgroundImage := strings.TrimSpace(body.BackgroundImage)
+		backgroundImageMode := "url"
+		if !hasBackgroundImageField {
+			backgroundImage = currentOptions.BackgroundImage
+			backgroundImageMode = currentOptions.BackgroundImageMode
 		}
 		update := model.Application{
 			Theme:                 themeName,
-			CustomThemeBackground: define.SafeCSSColor(body.CustomThemeBackground, "rgba(26, 26, 26, 1)"),
-			CustomThemePrimary:    define.SafeCSSColor(body.CustomThemePrimary, "rgba(255, 253, 234, 1)"),
-			CustomThemeAccent:     define.SafeCSSColor(body.CustomThemeAccent, "rgba(92, 92, 92, 1)"),
-			BackgroundImage:       strings.TrimSpace(body.BackgroundImage),
-			BackgroundImageMode:   "url",
-			BackgroundBlur:        clampFormInt(body.BackgroundBlur, 0, 80, 0),
-			BackgroundOpacity:     clampFormInt(body.BackgroundOpacity, 0, 100, 100),
-			GlassEffect:           normalizeGlassEffect(body.GlassEffect),
-			GlassIntensity:        clampFormInt(body.GlassIntensity, 0, 100, 0),
+			ThemeBase:             resolveThemeBase(currentOptions),
+			CustomThemeBackground: backgroundColor,
+			CustomThemePrimary:    primaryColor,
+			CustomThemeAccent:     accentColor,
+			BackgroundImage:       backgroundImage,
+			BackgroundImageMode:   backgroundImageMode,
+			BackgroundBlur:        backgroundBlur,
+			BackgroundOpacity:     backgroundOpacity,
+			GlassEffect:           glassEffect,
+			GlassIntensity:        glassIntensity,
 		}
 		if strings.HasPrefix(update.BackgroundImage, "/user-assets/") {
 			update.BackgroundImageMode = "upload"
 		}
+		stagedUpload := false
 		uploadedBackground, uploadErr := saveUploadedBackground(c)
 		if uploadErr != nil {
-			return uploadErr
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, uploadErr.Error()))
 		}
 		if uploadedBackground != "" {
+			stagedUpload = true
 			update.BackgroundImage = uploadedBackground
 			update.BackgroundImageMode = "upload"
 		}
 		if update.BackgroundImage == "" {
 			update.BackgroundImageMode = "url"
+		}
+		var activation *background.StagedUploadedBackgroundActivation
+		if stagedUpload {
+			activation, err = beginUploadedBackgroundActivation()
+			if err != nil {
+				if discardErr := discardUploadedBackgroundStage(); discardErr != nil {
+					log.Printf("discard staged background after failed activation: %v", discardErr)
+				}
+				log.Printf("begin staged background activation failed: %v", err)
+				return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+			}
+		}
+		if err := data.UpdateThemeAndBackgroundSettings(update); err != nil {
+			if activation != nil {
+				if err := activation.Rollback(); err != nil {
+					log.Printf("rollback activated background after failed config save: %v", err)
+				}
+			} else if stagedUpload {
+				if err := discardUploadedBackgroundStage(); err != nil {
+					log.Printf("discard staged background after failed config save: %v", err)
+				}
+			}
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+		}
+		if activation != nil {
+			if err := activation.Commit(); err != nil {
+				log.Printf("commit activated background backup cleanup failed: %v", err)
+			}
 		}
 		if err := background.DeleteStaleAssets(
 			currentOptions.BackgroundImage,
@@ -77,83 +178,172 @@ func updateThemes(c *echo.Context) error {
 			update.BackgroundImage,
 			update.BackgroundImageMode,
 		); err != nil {
-			return err
+			log.Printf("delete stale background assets failed: %v", err)
 		}
-		data.UpdateThemeAndBackgroundSettings(update)
 	} else if themeName == "custom" {
-		data.UpdateThemeSettings(
+		if err := data.UpdateThemeSettings(
 			themeName,
-			define.SafeCSSColor(body.CustomThemeBackground, "rgba(26, 26, 26, 1)"),
-			define.SafeCSSColor(body.CustomThemePrimary, "rgba(255, 253, 234, 1)"),
-			define.SafeCSSColor(body.CustomThemeAccent, "rgba(92, 92, 92, 1)"),
-		)
+			"",
+			backgroundColor,
+			primaryColor,
+			accentColor,
+		); err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+		}
 	} else {
-		data.UpdateThemeName(themeName)
+		if err := data.UpdateThemeName(themeName); err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+		}
 	}
-	define.UpdatePagePalettes()
+	if err := define.UpdatePagePalettes(); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	return pageTheme(c)
 }
 
 func saveUploadedBackground(c *echo.Context) (string, error) {
 	file, err := c.FormFile("background-file")
 	if err != nil {
-		return "", nil
+		if errors.Is(err, http.ErrMissingFile) {
+			return "", nil
+		}
+		if errors.Is(err, http.ErrNotMultipart) || errors.Is(err, http.ErrMissingBoundary) {
+			return "", nil
+		}
+		return "", echo.NewHTTPError(http.StatusBadRequest, "parse background upload failed: "+err.Error())
 	}
 	src, err := file.Open()
 	if err != nil {
 		return "", err
 	}
 	defer src.Close()
-	savedPath, err := background.PrepareUploadedBackground(file.Filename, src)
+	savedPath, err := background.PrepareUploadedBackgroundStage(file.Filename, src)
 	if err != nil {
 		return "", echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	return savedPath, nil
 }
 
-func clampFormInt(input string, min int, max int, fallback int) int {
-	value, err := strconv.Atoi(strings.TrimSpace(input))
-	if err != nil {
-		return fallback
+func normalizeThemeName(input string) (string, error) {
+	themeName := strings.TrimSpace(input)
+	if themeName == "" {
+		return "", fmt.Errorf("missing theme value")
 	}
-	if value < min {
-		return min
+	if themeName == "custom" {
+		return themeName, nil
 	}
-	if value > max {
-		return max
+	for _, themePresent := range define.ThemePalettes {
+		if themePresent.Name == themeName {
+			return themeName, nil
+		}
 	}
-	return value
+	return "", fmt.Errorf("invalid theme value: %s", input)
 }
 
-func normalizeGlassEffect(input string) string {
+func normalizeGlassEffect(input string) (string, error) {
+	input = strings.ToLower(strings.TrimSpace(input))
+	if input == "" {
+		return "none", nil
+	}
 	switch strings.ToLower(strings.TrimSpace(input)) {
 	case "frosted", "liquid":
-		return strings.ToLower(strings.TrimSpace(input))
+		return input, nil
+	case "none":
+		return "none", nil
 	default:
-		return "none"
+		return "", fmt.Errorf("invalid glass-effect value: %s", input)
 	}
+}
+
+func optionalSafeColor(input string, field string) (string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", nil
+	}
+	if define.SafeCSSColor(input, "") == "" {
+		return "", fmt.Errorf("invalid %s value: %s", field, input)
+	}
+	return input, nil
+}
+
+func resolveThemeBase(options model.Application) string {
+	themeBase := strings.TrimSpace(options.ThemeBase)
+	if themeBase != "" && !strings.EqualFold(themeBase, "custom") {
+		return strings.ToLower(themeBase)
+	}
+	themeName := strings.ToLower(strings.TrimSpace(options.Theme))
+	if themeName != "" && themeName != "custom" {
+		return themeName
+	}
+	return "blackboard"
+}
+
+func parseOptionalRangedInt(input string, min int, max int, field string) (int, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(input)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s value: %s", field, input)
+	}
+	if value < min || value > max {
+		return 0, fmt.Errorf("%s must be between %d and %d", field, min, max)
+	}
+	return value, nil
+}
+
+func hasFormField(c *echo.Context, field string) bool {
+	if c == nil || c.Request() == nil {
+		return false
+	}
+	req := c.Request()
+	if req.Form == nil {
+		if err := req.ParseForm(); err != nil {
+			return false
+		}
+	}
+	if req.Form == nil {
+		return false
+	}
+	_, ok := req.Form[field]
+	return ok
 }
 
 func pageTheme(c *echo.Context) error {
 	themes := define.ThemePalettes
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareSettingsOptionsForRender(options)
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
-	}
 	showLoginInfo := false
-	if !define.AppFlags.DisableLoginMode {
-		showLoginInfo = auth.CheckUserIsLogin(c)
+	userName := ""
+	loginDate := ""
+	loginDisplay, err := auth.ResolveLoginDisplayStateForStrictView(c)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	showLoginInfo = loginDisplay.ShowLoginInfo
+	userName = loginDisplay.UserName
+	loginDate = loginDisplay.LoginDate
+	renderWarnings = auth.AppendSessionWarnings(c, locale, renderWarnings)
+	pageStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "settings")
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
 	m["DebugMode"] = define.AppFlags.DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
-	m["PageAppearance"] = define.GetAppBodyStyle()
+	m["PageAppearance"] = pageStyle
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["PageName"] = "Theme"
 	m["SettingPages"] = define.SettingPages
@@ -162,16 +352,23 @@ func pageTheme(c *echo.Context) error {
 	m["OptionSiteIcon"] = options.SiteIcon
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo
-	m["UserName"] = auth.GetUserName(c)
-	m["LoginDate"] = auth.GetUserLoginDate(c)
+	m["UserName"] = userName
+	m["LoginDate"] = loginDate
 	m["OptionTheme"] = options.Theme
-	m["CustomThemeBackground"] = options.CustomThemeBackground
-	m["CustomThemePrimary"] = options.CustomThemePrimary
-	m["CustomThemeAccent"] = options.CustomThemeAccent
+	if options.Theme == "custom" {
+		m["CustomThemeBackground"] = options.CustomThemeBackground
+		m["CustomThemePrimary"] = options.CustomThemePrimary
+		m["CustomThemeAccent"] = options.CustomThemeAccent
+	} else {
+		m["CustomThemeBackground"] = ""
+		m["CustomThemePrimary"] = ""
+		m["CustomThemeAccent"] = ""
+	}
 	m["OptionBackgroundImage"] = options.BackgroundImage
 	m["OptionBackgroundBlur"] = options.BackgroundBlur
 	m["OptionBackgroundOpacity"] = options.BackgroundOpacity
 	m["OptionGlassEffect"] = options.GlassEffect
 	m["OptionGlassIntensity"] = options.GlassIntensity
+	m["RenderWarnings"] = renderWarnings
 	return c.Render(http.StatusOK, "settings.html", m)
 }

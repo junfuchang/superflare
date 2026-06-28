@@ -2,11 +2,13 @@ package redir
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v5"
 
@@ -18,6 +20,8 @@ import (
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
+var requestLooksLocalNetwork = fn.RequestLooksLocalNetwork
+
 func RegisterRouting(e *echo.Echo) {
 	e.GET(define.MiscPages.RedirHome.Path, func(c *echo.Context) error {
 		return c.Redirect(http.StatusFound, define.RegularPages.Home.Path)
@@ -26,50 +30,78 @@ func RegisterRouting(e *echo.Echo) {
 	e.GET(define.MiscPages.RedirHelper.Path, func(c *echo.Context) error {
 		encoded := c.QueryParam("go")
 		if len(encoded) < 1 {
-			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
+			return renderRedirectInvalidTarget(c)
 		}
 		decoded, err := data.Base64DecodeUrl(encoded)
 		if err != nil {
-			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
+			return renderRedirectInvalidTarget(c)
 		}
 		decodeURL := string(decoded)
+		requestURL := fn.ParseRequestURLTo(c.Request())
 		appsData, errApps := data.LoadFavoriteBookmarks()
-		if errApps == nil {
-			for _, bookmark := range appsData.Items {
-				if bookmark.URL == decodeURL {
-					return c.Redirect(http.StatusFound, string(decoded))
-				}
+		if errApps != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, errApps.Error()))
+		}
+		for _, bookmark := range appsData.Items {
+			if fn.ParseDynamicUrlWith(bookmark.URL, &requestURL) == decodeURL {
+				return c.Redirect(http.StatusFound, string(decoded))
 			}
 		}
 		bookmarksData, errBookmarks := data.LoadNormalBookmarks()
-		if errBookmarks == nil {
-			for _, bookmark := range bookmarksData.Items {
-				if bookmark.URL == decodeURL {
-					return c.Redirect(http.StatusFound, string(decoded))
-				}
+		if errBookmarks != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, errBookmarks.Error()))
+		}
+		for _, bookmark := range bookmarksData.Items {
+			if fn.ParseDynamicUrlWith(bookmark.URL, &requestURL) == decodeURL {
+				return c.Redirect(http.StatusFound, string(decoded))
 			}
 		}
-		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
+		return renderRedirectInvalidTarget(c)
 	})
 
 	e.GET(define.MiscPages.RedirLocal.Path, func(c *echo.Context) error {
 		sourceURL, errSource := decodeRedirectParam(c.QueryParam("go"))
 		localURL, errLocal := decodeRedirectParam(c.QueryParam("local"))
-		if errSource != nil || errLocal != nil || !isHTTPRedirectURL(localURL) {
-			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
+		if errSource != nil || errLocal != nil || !isHTTPRedirectURL(sourceURL) || !isHTTPRedirectURL(localURL) {
+			return renderRedirectInvalidTarget(c)
 		}
-		if !bookmarkLocalURLPairExists(c.Request(), sourceURL, localURL) {
-			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
+		pairExists, err := bookmarkLocalURLPairExists(c.Request(), sourceURL, localURL)
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 		}
-		if !fn.RequestLooksLocalNetwork(c.Request()) {
+		if !pairExists {
+			return renderRedirectInvalidTarget(c)
+		}
+		if !requestLooksLocalNetwork(c.Request()) {
 			return c.Redirect(http.StatusFound, sourceURL)
 		}
 		options, err := data.GetAllSettingsOptions()
 		if err != nil {
-			options.Locale = "zh"
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 		}
-		return c.HTMLBlob(http.StatusOK, renderLocalRedirectPage(sourceURL, localURL, options))
+		statuspage.BindOptions(c, options)
+		locale := options.Locale
+		bodyStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "")
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+		}
+		var renderWarnings []string
+		if styleWarning != "" {
+			renderWarnings = append(renderWarnings, styleWarning)
+		}
+		page, err := renderLocalRedirectPage(sourceURL, localURL, options, bodyStyle, renderWarnings)
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+		}
+		return c.HTMLBlob(http.StatusOK, page)
 	})
+}
+
+func renderRedirectInvalidTarget(c *echo.Context) error {
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
+	return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
 }
 
 func decodeRedirectParam(encoded string) (string, error) {
@@ -91,15 +123,23 @@ func isHTTPRedirectURL(rawURL string) bool {
 	return (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != ""
 }
 
-func bookmarkLocalURLPairExists(r *http.Request, sourceURL string, localURL string) bool {
+func bookmarkLocalURLPairExists(r *http.Request, sourceURL string, localURL string) (bool, error) {
 	requestURL := fn.ParseRequestURLTo(r)
-	if appsData, errApps := data.LoadFavoriteBookmarks(); errApps == nil && bookmarksContainLocalPair(appsData.Items, &requestURL, sourceURL, localURL) {
-		return true
+	appsData, errApps := data.LoadFavoriteBookmarks()
+	if errApps != nil {
+		return false, errApps
 	}
-	if bookmarksData, errBookmarks := data.LoadNormalBookmarks(); errBookmarks == nil && bookmarksContainLocalPair(bookmarksData.Items, &requestURL, sourceURL, localURL) {
-		return true
+	if bookmarksContainLocalPair(appsData.Items, &requestURL, sourceURL, localURL) {
+		return true, nil
 	}
-	return false
+	bookmarksData, errBookmarks := data.LoadNormalBookmarks()
+	if errBookmarks != nil {
+		return false, errBookmarks
+	}
+	if bookmarksContainLocalPair(bookmarksData.Items, &requestURL, sourceURL, localURL) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func bookmarksContainLocalPair(bookmarks []model.Bookmark, requestURL *fn.DynamicURL, sourceURL string, localURL string) bool {
@@ -168,23 +208,72 @@ func getLocalRedirectTexts(locale string) localRedirectTexts {
 	}
 }
 
-func renderLocalRedirectPage(sourceURL string, localURL string, options model.Application) []byte {
+func renderLocalRedirectPage(sourceURL string, localURL string, options model.Application, bodyStyle template.CSS, renderWarnings []string) ([]byte, error) {
 	texts := getLocalRedirectTexts(options.Locale)
 	sourceHTML := template.HTMLEscapeString(sourceURL)
 	localHTML := template.HTMLEscapeString(localURL)
-	bodyStyle := template.HTMLEscapeString(string(define.GetAppBodyStyle()))
+	bodyStyleValue := template.HTMLEscapeString(string(bodyStyle))
 	backgroundHTML := renderLocalRedirectBackground(options)
 	customStyle := renderLocalRedirectCustomStyle(options)
+	warningsHTML := renderLocalRedirectWarnings(renderWarnings)
 
-	sourceJS, _ := json.Marshal(sourceURL)
-	localJS, _ := json.Marshal(localURL)
-	checkingJS, _ := json.Marshal(texts.Checking)
-	successJS, _ := json.Marshal(texts.Success)
-	failedPrefixJS, _ := json.Marshal(texts.FailedPrefix)
-	failedSuffixJS, _ := json.Marshal(texts.FailedSuffix)
+	sourceJS, err := marshalRedirectJSValue("source url", sourceURL)
+	if err != nil {
+		return nil, err
+	}
+	localJS, err := marshalRedirectJSValue("local url", localURL)
+	if err != nil {
+		return nil, err
+	}
+	checkingJS, err := marshalRedirectJSValue("checking text", texts.Checking)
+	if err != nil {
+		return nil, err
+	}
+	successJS, err := marshalRedirectJSValue("success text", texts.Success)
+	if err != nil {
+		return nil, err
+	}
+	failedPrefixJS, err := marshalRedirectJSValue("failed prefix text", texts.FailedPrefix)
+	if err != nil {
+		return nil, err
+	}
+	failedSuffixJS, err := marshalRedirectJSValue("failed suffix text", texts.FailedSuffix)
+	if err != nil {
+		return nil, err
+	}
 
-	page := `<!doctype html><html lang="` + texts.Lang + `"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>` + template.HTMLEscapeString(texts.Title) + `</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{--color-background:#2d3436;--color-primary:#effbff;--color-accent:#ffa500;--spacing-ui:10px;min-height:100vh;background:var(--color-background);color:var(--color-primary);font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;}a{text-decoration:none;color:var(--color-primary);}.page-background{position:fixed;inset:0;z-index:-2;pointer-events:none;overflow:hidden;}.page-background img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center center;transform:scale(1.08);will-change:auto;}.page-background-preview{opacity:1;}.page-background-full{opacity:0;}.page-background.is-loaded .page-background-full{opacity:1;}.page-background.is-loaded .page-background-preview{opacity:0;}.page-background.is-failed .page-background-full{opacity:0;}.pageview{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px;position:relative;overflow:hidden;}.local-redirect-panel{width:min(680px,100%);border:1px solid color-mix(in srgb,var(--color-primary) 18%,transparent);background:color-mix(in srgb,var(--color-background) 82%,transparent);border-radius:8px;padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.22);}.local-redirect-eyebrow{color:var(--color-accent);font-weight:700;letter-spacing:0;text-transform:uppercase;font-size:12px;margin-bottom:10px;}.local-redirect-panel h1{font-size:30px;line-height:1.2;margin-bottom:12px;color:var(--color-primary);}.local-redirect-lead{line-height:1.8;opacity:.82;margin-bottom:22px;}.local-status{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:8px;background:rgba(0,0,0,.16);margin-bottom:18px;}.local-status-dot{width:10px;height:10px;border-radius:50%;background:var(--color-accent);box-shadow:0 0 0 0 color-mix(in srgb,var(--color-accent) 45%,transparent);animation:pulse 1.3s infinite;flex:0 0 auto;}.local-status.done .local-status-dot{animation:none;}.local-countdown{margin-left:auto;display:flex;align-items:center;gap:5px;color:var(--color-accent);font-weight:700;}.local-countdown[hidden]{display:none;}.local-countdown strong{min-width:18px;text-align:center;}.address-list{display:grid;gap:10px;margin:18px 0 22px;}.address-row{border-left:3px solid var(--color-accent);background:rgba(0,0,0,.12);border-radius:4px;padding:10px 12px;min-width:0;}.address-row span{display:block;color:var(--color-accent);font-size:12px;margin-bottom:5px;}.address-row code{display:block;color:var(--color-primary);font-family:Consolas,"SFMono-Regular",monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.actions{display:flex;gap:12px;flex-wrap:wrap;}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 14px;border-radius:4px;border:1px solid var(--color-accent);color:var(--color-primary);transition:background-color .15s,color .15s,opacity .15s;}.btn-primary{background:var(--color-accent);color:var(--color-background);font-weight:700;}.btn:hover{background:var(--color-primary);color:var(--color-background);}.btn-primary:hover{opacity:.86;}noscript p{margin-top:18px;line-height:1.7;color:var(--color-accent);}@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--color-accent) 45%,transparent);}70%{box-shadow:0 0 0 10px transparent;}100%{box-shadow:0 0 0 0 transparent;}}@supports not (color:color-mix(in srgb,#fff 50%,transparent)){.local-redirect-panel{border-color:rgba(255,255,255,.16);background:rgba(0,0,0,.22);}.local-status-dot{box-shadow:none;}}@media (max-width:520px){.pageview{padding:20px 14px;align-items:flex-start;}.local-redirect-panel{padding:22px 18px;}.local-redirect-panel h1{font-size:24px;}.local-status{align-items:flex-start;}.local-countdown{margin-left:0;}.actions{display:grid;grid-template-columns:1fr;width:100%;}.btn{width:100%;}.address-row code{white-space:normal;word-break:break-all;}}</style>` + customStyle + `</head><body style="` + bodyStyle + `">` + backgroundHTML + `<main class="pageview"><section class="local-redirect-panel"><p class="local-redirect-eyebrow">` + template.HTMLEscapeString(texts.Eyebrow) + `</p><h1>` + template.HTMLEscapeString(texts.Heading) + `</h1><p class="local-redirect-lead">` + template.HTMLEscapeString(texts.Lead) + `</p><div class="local-status" id="status-box"><span class="local-status-dot" aria-hidden="true"></span><p id="status-text">` + template.HTMLEscapeString(texts.Checking) + `</p><span class="local-countdown" id="countdown-wrap" hidden><strong id="countdown">3</strong><span>` + template.HTMLEscapeString(texts.CountdownUnit) + `</span></span></div><div class="address-list"><div class="address-row"><span>` + template.HTMLEscapeString(texts.LocalLabel) + `</span><code>` + localHTML + `</code></div><div class="address-row"><span>` + template.HTMLEscapeString(texts.SourceLabel) + `</span><code>` + sourceHTML + `</code></div></div><div class="actions"><a class="btn btn-primary" href="` + localHTML + `" rel="noopener">` + template.HTMLEscapeString(texts.LocalButton) + `</a><a class="btn" href="` + sourceHTML + `" rel="noopener">` + template.HTMLEscapeString(texts.SourceButton) + `</a></div><noscript><p>` + template.HTMLEscapeString(texts.Noscript) + `</p></noscript></section></main><script>` + background.InlineLoaderScript + `</script><script>(function(){var localURL=` + string(localJS) + `;var sourceURL=` + string(sourceJS) + `;var checkingText=` + string(checkingJS) + `;var successText=` + string(successJS) + `;var failedPrefix=` + string(failedPrefixJS) + `;var failedSuffix=` + string(failedSuffixJS) + `;var statusBox=document.getElementById("status-box");var statusText=document.getElementById("status-text");var countdownWrap=document.getElementById("countdown-wrap");var countdown=document.getElementById("countdown");var done=false;var probeTimer=window.setTimeout(startFallbackCountdown,2500);function setStatus(text){if(statusText){statusText.textContent=text;}}function failureMessage(seconds){return failedPrefix+seconds+failedSuffix;}function startFallbackCountdown(){if(done){return;}done=true;window.clearTimeout(probeTimer);var seconds=3;if(statusBox){statusBox.classList.add("done");}if(countdownWrap){countdownWrap.hidden=false;}function render(){if(countdown){countdown.textContent=String(seconds);}setStatus(failureMessage(seconds));}render();var interval=window.setInterval(function(){seconds-=1;if(seconds<=0){window.clearInterval(interval);window.location.replace(sourceURL);return;}render();},1000);}function openLocal(){if(done){return;}done=true;window.clearTimeout(probeTimer);if(statusBox){statusBox.classList.add("done");}setStatus(successText);window.location.replace(localURL);}setStatus(checkingText);try{fetch(localURL,{method:"GET",mode:"no-cors",cache:"no-store"}).then(openLocal).catch(startFallbackCountdown);}catch(e){startFallbackCountdown();}}());</script></body></html>`
-	return []byte(page)
+	page := `<!doctype html><html lang="` + texts.Lang + `"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>` + template.HTMLEscapeString(texts.Title) + `</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{--color-background:#2d3436;--color-primary:#effbff;--color-accent:#ffa500;--spacing-ui:10px;min-height:100vh;background:var(--color-background);color:var(--color-primary);font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;}a{text-decoration:none;color:var(--color-primary);}.page-background{position:fixed;inset:0;z-index:-2;pointer-events:none;overflow:hidden;}.page-background img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center center;transform:scale(1.08);will-change:auto;}.page-background-preview{opacity:1;}.page-background-full{opacity:0;}.page-background.is-loaded .page-background-full{opacity:1;}.page-background.is-loaded .page-background-preview{opacity:0;}.page-background.is-failed .page-background-full{opacity:0;}.pageview{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px;position:relative;overflow:hidden;}.local-redirect-shell{width:min(680px,100%);display:grid;gap:14px;}.local-redirect-warnings{display:grid;gap:10px;}.local-redirect-warning{padding:12px 14px;border:1px solid color-mix(in srgb,var(--color-accent) 36%,transparent);border-radius:6px;background:color-mix(in srgb,var(--color-background) 78%,var(--color-accent) 22%);color:var(--color-primary);line-height:1.5;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-primary) 8%,transparent);}.local-redirect-panel{width:100%;border:1px solid color-mix(in srgb,var(--color-primary) 18%,transparent);background:color-mix(in srgb,var(--color-background) 82%,transparent);border-radius:8px;padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.22);}.local-redirect-eyebrow{color:var(--color-accent);font-weight:700;letter-spacing:0;text-transform:uppercase;font-size:12px;margin-bottom:10px;}.local-redirect-panel h1{font-size:30px;line-height:1.2;margin-bottom:12px;color:var(--color-primary);}.local-redirect-lead{line-height:1.8;opacity:.82;margin-bottom:22px;}.local-status{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:8px;background:rgba(0,0,0,.16);margin-bottom:18px;}.local-status-dot{width:10px;height:10px;border-radius:50%;background:var(--color-accent);box-shadow:0 0 0 0 color-mix(in srgb,var(--color-accent) 45%,transparent);animation:pulse 1.3s infinite;flex:0 0 auto;}.local-status.done .local-status-dot{animation:none;}.local-countdown{margin-left:auto;display:flex;align-items:center;gap:5px;color:var(--color-accent);font-weight:700;}.local-countdown[hidden]{display:none;}.local-countdown strong{min-width:18px;text-align:center;}.address-list{display:grid;gap:10px;margin:18px 0 22px;}.address-row{border-left:3px solid var(--color-accent);background:rgba(0,0,0,.12);border-radius:4px;padding:10px 12px;min-width:0;}.address-row span{display:block;color:var(--color-accent);font-size:12px;margin-bottom:5px;}.address-row code{display:block;color:var(--color-primary);font-family:Consolas,"SFMono-Regular",monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.actions{display:flex;gap:12px;flex-wrap:wrap;}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 14px;border-radius:4px;border:1px solid var(--color-accent);color:var(--color-primary);transition:background-color .15s,color .15s,opacity .15s;}.btn-primary{background:var(--color-accent);color:var(--color-background);font-weight:700;}.btn:hover{background:var(--color-primary);color:var(--color-background);}.btn-primary:hover{opacity:.86;}noscript p{margin-top:18px;line-height:1.7;color:var(--color-accent);}@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--color-accent) 45%,transparent);}70%{box-shadow:0 0 0 10px transparent;}100%{box-shadow:0 0 0 0 transparent;}}@supports not (color:color-mix(in srgb,#fff 50%,transparent)){.local-redirect-panel{border-color:rgba(255,255,255,.16);background:rgba(0,0,0,.22);}.local-status-dot{box-shadow:none;}}@media (max-width:520px){.pageview{padding:20px 14px;align-items:flex-start;}.local-redirect-panel{padding:22px 18px;}.local-redirect-panel h1{font-size:24px;}.local-status{align-items:flex-start;}.local-countdown{margin-left:0;}.actions{display:grid;grid-template-columns:1fr;width:100%;}.btn{width:100%;}.address-row code{white-space:normal;word-break:break-all;}}</style>` + customStyle + `</head><body style="` + bodyStyleValue + `">` + backgroundHTML + `<main class="pageview"><div class="local-redirect-shell">` + warningsHTML + `<section class="local-redirect-panel"><p class="local-redirect-eyebrow">` + template.HTMLEscapeString(texts.Eyebrow) + `</p><h1>` + template.HTMLEscapeString(texts.Heading) + `</h1><p class="local-redirect-lead">` + template.HTMLEscapeString(texts.Lead) + `</p><div class="local-status" id="status-box"><span class="local-status-dot" aria-hidden="true"></span><p id="status-text">` + template.HTMLEscapeString(texts.Checking) + `</p><span class="local-countdown" id="countdown-wrap" hidden><strong id="countdown">3</strong><span>` + template.HTMLEscapeString(texts.CountdownUnit) + `</span></span></div><div class="address-list"><div class="address-row"><span>` + template.HTMLEscapeString(texts.LocalLabel) + `</span><code>` + localHTML + `</code></div><div class="address-row"><span>` + template.HTMLEscapeString(texts.SourceLabel) + `</span><code>` + sourceHTML + `</code></div></div><div class="actions"><a class="btn btn-primary" href="` + localHTML + `" rel="noopener">` + template.HTMLEscapeString(texts.LocalButton) + `</a><a class="btn" href="` + sourceHTML + `" rel="noopener">` + template.HTMLEscapeString(texts.SourceButton) + `</a></div><noscript><p>` + template.HTMLEscapeString(texts.Noscript) + `</p></noscript></section></div></main><script>` + background.InlineLoaderScript + `</script><script>(function(){var localURL=` + string(localJS) + `;var sourceURL=` + string(sourceJS) + `;var checkingText=` + string(checkingJS) + `;var successText=` + string(successJS) + `;var failedPrefix=` + string(failedPrefixJS) + `;var failedSuffix=` + string(failedSuffixJS) + `;var statusBox=document.getElementById("status-box");var statusText=document.getElementById("status-text");var countdownWrap=document.getElementById("countdown-wrap");var countdown=document.getElementById("countdown");var done=false;var probeTimer=window.setTimeout(startFallbackCountdown,2500);function setStatus(text){if(statusText){statusText.textContent=text;}}function failureMessage(seconds){return failedPrefix+seconds+failedSuffix;}function startFallbackCountdown(){if(done){return;}done=true;window.clearTimeout(probeTimer);var seconds=3;if(statusBox){statusBox.classList.add("done");}if(countdownWrap){countdownWrap.hidden=false;}function render(){if(countdown){countdown.textContent=String(seconds);}setStatus(failureMessage(seconds));}render();var interval=window.setInterval(function(){seconds-=1;if(seconds<=0){window.clearInterval(interval);window.location.replace(sourceURL);return;}render();},1000);}function openLocal(){if(done){return;}done=true;window.clearTimeout(probeTimer);if(statusBox){statusBox.classList.add("done");}setStatus(successText);window.location.replace(localURL);}setStatus(checkingText);try{fetch(localURL,{method:"GET",mode:"no-cors",cache:"no-store"}).then(openLocal).catch(startFallbackCountdown);}catch(e){startFallbackCountdown();}}());</script></body></html>`
+	return []byte(page), nil
+}
+
+func marshalRedirectJSValue(label string, value string) ([]byte, error) {
+	if !utf8.ValidString(value) {
+		return nil, fmt.Errorf("marshal redirect %s failed: input contains invalid UTF-8", label)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal redirect %s failed: %w", label, err)
+	}
+	return raw, nil
+}
+
+func renderLocalRedirectWarnings(warnings []string) string {
+	if len(warnings) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="local-redirect-warnings">`)
+	for _, item := range warnings {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		b.WriteString(`<div class="local-redirect-warning">`)
+		b.WriteString(template.HTMLEscapeString(item))
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
 }
 
 func renderLocalRedirectBackground(options model.Application) string {

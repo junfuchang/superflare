@@ -1,7 +1,6 @@
 package cmd_test
 
 import (
-	"os"
 	"testing"
 
 	env "github.com/caarlos0/env/v6"
@@ -12,23 +11,13 @@ import (
 )
 
 func TestParseEnvVars(t *testing.T) {
-	os.Setenv("FLARE_PORT", "5000")
-	defer os.Unsetenv("FLARE_PORT")
-
-	os.Setenv("FLARE_GUIDE", "false")
-	defer os.Unsetenv("FLARE_GUIDE")
-
-	os.Setenv("FLARE_USER", "test")
-	defer os.Unsetenv("FLARE_USER")
-
-	os.Setenv("FLARE_VISIBILITY", "private")
-	defer os.Unsetenv("FLARE_VISIBILITY")
-
-	os.Setenv("FLARE_COOKIE_NAME", "flare_test")
-	defer os.Unsetenv("FLARE_COOKIE_NAME")
-
-	os.Setenv("FLARE_COOKIE_SECRET", "test_cookie_secret")
-	defer os.Unsetenv("FLARE_COOKIE_SECRET")
+	resetCmdEnv(t)
+	t.Setenv("FLARE_PORT", "5000")
+	t.Setenv("FLARE_GUIDE", "false")
+	t.Setenv("FLARE_USER", "test")
+	t.Setenv("FLARE_VISIBILITY", "private")
+	t.Setenv("FLARE_COOKIE_NAME", "flare_test")
+	t.Setenv("FLARE_COOKIE_SECRET", "test_cookie_secret")
 
 	flags := cmd.ParseEnvVars()
 
@@ -40,6 +29,7 @@ func TestParseEnvVars(t *testing.T) {
 	assert.Equal(t, flags.CookieSecret, "test_cookie_secret")
 }
 func TestInitAccountFromEnvVars_normal(t *testing.T) {
+	resetCmdEnv(t)
 	defaultEnvs := define.DefaultEnvVars
 
 	err := env.Parse(&defaultEnvs)
@@ -64,6 +54,7 @@ func TestInitAccountFromEnvVars_normal(t *testing.T) {
 }
 
 func TestInitAccountFromEnvVars_EmptyUser(t *testing.T) {
+	resetCmdEnv(t)
 	defaultEnvs := define.DefaultEnvVars
 
 	err := env.Parse(&defaultEnvs)
@@ -88,6 +79,7 @@ func TestInitAccountFromEnvVars_EmptyUser(t *testing.T) {
 }
 
 func TestInitAccountFromEnvVars_EmptyPass(t *testing.T) {
+	resetCmdEnv(t)
 	defaultEnvs := define.DefaultEnvVars
 
 	err := env.Parse(&defaultEnvs)
@@ -112,6 +104,7 @@ func TestInitAccountFromEnvVars_EmptyPass(t *testing.T) {
 }
 
 func TestInitAccountFromEnvVars_Pass(t *testing.T) {
+	resetCmdEnv(t)
 	defaultEnvs := define.DefaultEnvVars
 
 	err := env.Parse(&defaultEnvs)

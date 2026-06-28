@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,9 @@ func TestAppConfig(t *testing.T) {
 	filePath := getConfigPath("config")
 	os.Remove(filePath)
 
+	if err := EnsureAppConfigExists(); err != nil {
+		t.Fatalf("EnsureAppConfigExists: %v", err)
+	}
 	data, err := loadAppConfigFromYaml("config")
 	if err != nil {
 		t.Fatalf("Load App Config: %v", err)
@@ -20,9 +24,8 @@ func TestAppConfig(t *testing.T) {
 	if data.Title != "superflare" {
 		t.Fatal("Load App Config Failed")
 	}
-	ok := saveAppConfigToYamlFile("config", data)
-	if !ok {
-		t.Fatal("Save App Config Failed")
+	if err := saveAppConfigToYamlFile("config", data); err != nil {
+		t.Fatalf("Save App Config Failed: %v", err)
 	}
 
 	os.Remove(filePath)
@@ -35,14 +38,16 @@ func TestLoadAppConfigFromYamlDefaultValues(t *testing.T) {
 	require.NoError(t, os.Chdir(tmpDir))
 	defer func() { _ = os.Chdir(origWd) }()
 
+	require.NoError(t, EnsureAppConfigExists())
 	data, err := loadAppConfigFromYaml("config")
 	require.NoError(t, err)
 	assert.Equal(t, "superflare", data.Title, "default Title")
 	assert.Equal(t, "blackboard", data.Theme, "default Theme")
+	assert.Equal(t, "blackboard", data.ThemeBase, "default ThemeBase")
 	assert.Equal(t, "zh", data.Locale, "default Locale")
-	assert.Equal(t, "rgba(26, 26, 26, 1)", data.CustomThemeBackground, "default custom background")
-	assert.Equal(t, "rgba(255, 253, 234, 1)", data.CustomThemePrimary, "default custom primary")
-	assert.Equal(t, "rgba(92, 92, 92, 1)", data.CustomThemeAccent, "default custom accent")
+	assert.Equal(t, "", data.CustomThemeBackground, "default custom background")
+	assert.Equal(t, "", data.CustomThemePrimary, "default custom primary")
+	assert.Equal(t, "", data.CustomThemeAccent, "default custom accent")
 }
 
 func TestLoadAppConfigFromYamlInvalidYAML(t *testing.T) {
@@ -58,4 +63,79 @@ func TestLoadAppConfigFromYamlInvalidYAML(t *testing.T) {
 	_, err = loadAppConfigFromYaml("config")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse config", "should return a parse error")
+}
+
+func TestLoadAppConfigFromYamlReturnsErrorWhenConfigMissing(t *testing.T) {
+	origWd, err := os.Getwd()
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { _ = os.Chdir(origWd) }()
+
+	_, err = loadAppConfigFromYaml("config")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config config is missing")
+}
+
+func TestLoadAppConfigFromYamlCacheSeparatesDifferentWorkingDirs(t *testing.T) {
+	origWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer func() { _ = os.Chdir(origWd) }()
+
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dirA, "config.yml"), []byte("Title: dir-a\nTheme: blackboard\nLocale: zh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dirB, "config.yml"), []byte("Title: dir-b\nTheme: blackboard\nLocale: zh\n"), 0644))
+
+	require.NoError(t, os.Chdir(dirA))
+	configA, err := loadAppConfigFromYaml("config")
+	require.NoError(t, err)
+	assert.Equal(t, "dir-a", configA.Title)
+
+	require.NoError(t, os.Chdir(dirB))
+	configB, err := loadAppConfigFromYaml("config")
+	require.NoError(t, err)
+	assert.Equal(t, "dir-b", configB.Title)
+}
+
+func TestLoadAppConfigFromYamlReturnsErrorWhenStatFails(t *testing.T) {
+	origWd, err := os.Getwd()
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { _ = os.Chdir(origWd) }()
+
+	targetPath := filepath.Join(tmpDir, "config.yml")
+	originalStat := osStat
+	defer func() { osStat = originalStat }()
+	osStat = func(path string) (os.FileInfo, error) {
+		if filepath.Clean(path) == filepath.Clean(targetPath) {
+			return nil, errors.New("forced stat failure")
+		}
+		return originalStat(path)
+	}
+
+	_, err = loadAppConfigFromYaml("config")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stat config config failed")
+}
+
+func TestLoadAppConfigFromYamlReturnsErrorWhenGetwdFails(t *testing.T) {
+	originalGetwd := osGetwd
+	defer func() { osGetwd = originalGetwd }()
+
+	osGetwd = func() (string, error) {
+		return "", errors.New("forced getwd failure")
+	}
+
+	_, err := loadAppConfigFromYaml("config")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve config working directory failed")
+}
+
+func TestLoadAppConfigFromRawReturnsErrorWhenConfigValuesInvalid(t *testing.T) {
+	_, err := LoadAppConfigFromRaw([]byte("Title: SuperFlare\nLocale: zh\nTheme: mystery\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid theme value: mystery")
 }

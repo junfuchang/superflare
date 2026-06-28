@@ -1,13 +1,16 @@
 package mdi
 
 import (
+	"crypto/sha256"
 	"embed"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/labstack/echo/v5"
@@ -23,6 +26,7 @@ const _ASSETS_WEB_URI = "/" + _ASSETS_BASE_DIR
 
 var _CACHE_MDI_ICON_EXIST map[string]bool
 var _CACHE_MDI_ICON_DATA map[string]string
+var cacheMu sync.RWMutex
 
 //go:embed mdi-cheat-sheets
 var MdiExampleAssets embed.FS
@@ -33,6 +37,8 @@ func Init() error {
 	if err != nil {
 		return err
 	}
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
 	_CACHE_MDI_ICON_EXIST = make(map[string]bool)
 	_CACHE_MDI_ICON_DATA = make(map[string]string)
 	return nil
@@ -59,6 +65,7 @@ func serveGeneratedIcon(c *echo.Context) error {
 
 const _EMPTY_ICON = ""
 const _DEFAULT_FAVICON = "/favicon.ico"
+const fallbackThemePrimaryColor = "#FFFDEA"
 
 func IconNames() []string {
 	names := make([]string, 0, len(iconMap))
@@ -84,6 +91,79 @@ func normalizeIconName(name string) string {
 	return b.String()
 }
 
+func iconSVGContent(icon string, fill string) string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="` + icon + `" style="fill:` + fill + `;"></path></svg>`
+}
+
+func themedIconFillColor() string {
+	fill := strings.TrimSpace(define.ThemePrimaryColor)
+	if fill == "" {
+		return fallbackThemePrimaryColor
+	}
+	return fill
+}
+
+func inlineIconMarkup(icon string) string {
+	return `<svg viewBox="0 0 24 24"><path d="` + icon + `" style="fill: var(--color-primary);"></path></svg>`
+}
+
+func GetIconSVGDataByName(name string) ([]byte, error) {
+	iconName := normalizeIconName(name)
+	if iconName == "" {
+		return nil, fmt.Errorf("icon name is empty")
+	}
+	icon := iconMap[iconName]
+	if icon == "" {
+		return nil, fmt.Errorf("icon %q not found", name)
+	}
+	return []byte(iconSVGContent(icon, themedIconFillColor())), nil
+}
+
+func themeCacheNamespace() string {
+	themeName := strings.TrimSpace(define.ThemeCurrent)
+	if themeName == "" {
+		return "default"
+	}
+	if themeName != "custom" {
+		return themeName
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(define.ThemePrimaryColor)))
+	return themeName + "-" + fmt.Sprintf("%x", sum[:4])
+}
+
+func themeCacheKey(iconName string) string {
+	return themeCacheNamespace() + "-" + iconName
+}
+
+func ensureCacheMapsLocked() {
+	if _CACHE_MDI_ICON_EXIST == nil {
+		_CACHE_MDI_ICON_EXIST = make(map[string]bool)
+	}
+	if _CACHE_MDI_ICON_DATA == nil {
+		_CACHE_MDI_ICON_DATA = make(map[string]string)
+	}
+}
+
+func iconCacheExists(key string) bool {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	return _CACHE_MDI_ICON_EXIST[key]
+}
+
+func getInlineCacheValue(key string) string {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	return _CACHE_MDI_ICON_DATA[key]
+}
+
+func setInlineCacheValue(key string, value string) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	ensureCacheMapsLocked()
+	_CACHE_MDI_ICON_DATA[key] = value
+	_CACHE_MDI_ICON_EXIST[key] = true
+}
+
 func GetIconURLByName(name string) string {
 	iconName := normalizeIconName(name)
 	if iconName == "" {
@@ -93,24 +173,36 @@ func GetIconURLByName(name string) string {
 	if icon == "" || MemFs == nil {
 		return _DEFAULT_FAVICON
 	}
-	cacheKey := define.ThemeCurrent + "-" + iconName
+	cacheKey := themeCacheKey(iconName)
 	svgFile := path.Join(_ASSETS_BASE_DIR, cacheKey+".svg")
-	if _CACHE_MDI_ICON_EXIST == nil {
-		_CACHE_MDI_ICON_EXIST = make(map[string]bool)
-	}
-	if !_CACHE_MDI_ICON_EXIST[cacheKey] {
-		content := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="` + icon + `" style="fill:` + define.ThemePrimaryColor + `;"></path></svg>`
-		if err := MemFs.WriteFile(svgFile, []byte(content), 0755); err != nil {
-			log.Println("cache mdi favicon error:", err)
-			return _DEFAULT_FAVICON
+	if !iconCacheExists(cacheKey) {
+		cacheMu.Lock()
+		ensureCacheMapsLocked()
+		if !_CACHE_MDI_ICON_EXIST[cacheKey] {
+			content := iconSVGContent(icon, themedIconFillColor())
+			if err := MemFs.WriteFile(svgFile, []byte(content), 0755); err != nil {
+				cacheMu.Unlock()
+				log.Println("cache mdi favicon error:", err)
+				return _DEFAULT_FAVICON
+			}
+			_CACHE_MDI_ICON_EXIST[cacheKey] = true
 		}
-		_CACHE_MDI_ICON_EXIST[cacheKey] = true
+		cacheMu.Unlock()
 	}
 	svgURL := "/" + svgFile
 	if define.AppFlags.DebugMode {
 		svgURL += "?v=dev"
 	}
 	return svgURL
+}
+
+func IconExists(name string) bool {
+	iconName := normalizeIconName(name)
+	if iconName == "" {
+		return false
+	}
+	_, ok := iconMap[iconName]
+	return ok
 }
 
 func GetIconByName(name string) string {
@@ -122,39 +214,38 @@ func GetIconByName(name string) string {
 	if icon == "" {
 		return _EMPTY_ICON
 	}
-	content := ""
-	if _CACHE_MDI_ICON_EXIST == nil {
-		_CACHE_MDI_ICON_EXIST = make(map[string]bool)
-	}
-	if _CACHE_MDI_ICON_DATA == nil {
-		_CACHE_MDI_ICON_DATA = make(map[string]string)
-	}
 	if define.AppFlags.EnableMinimumRequest {
 		cacheKey := "inline-" + iconName
-		if !_CACHE_MDI_ICON_EXIST[cacheKey] {
-			content = `<svg viewBox="0 0 24 24"><path d="` + icon + `" style="fill: var(--color-primary);"></path></svg>`
-			_CACHE_MDI_ICON_DATA[cacheKey] = content
-			_CACHE_MDI_ICON_EXIST[cacheKey] = true
+		if !iconCacheExists(cacheKey) {
+			setInlineCacheValue(cacheKey, inlineIconMarkup(icon))
 		}
-		return _CACHE_MDI_ICON_DATA[cacheKey]
+		return getInlineCacheValue(cacheKey)
 	}
 	if MemFs == nil {
-		return _EMPTY_ICON
+		return inlineIconMarkup(icon)
 	}
-	cacheKey := define.ThemeCurrent + "-" + iconName
+	cacheKey := themeCacheKey(iconName)
 	svgFile := path.Join(_ASSETS_BASE_DIR, cacheKey+".svg")
-	if !_CACHE_MDI_ICON_EXIST[cacheKey] {
-		content = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="` + icon + `" style="fill:` + define.ThemePrimaryColor + `;"></path></svg>`
-		err := MemFs.WriteFile(svgFile, []byte(content), 0755)
-		if err != nil {
-			log.Println("缓存内置图标出错:", err)
+	if !iconCacheExists(cacheKey) {
+		cacheMu.Lock()
+		ensureCacheMapsLocked()
+		if !_CACHE_MDI_ICON_EXIST[cacheKey] {
+			content := iconSVGContent(icon, themedIconFillColor())
+			err := MemFs.WriteFile(svgFile, []byte(content), 0755)
+			if err != nil {
+				cacheMu.Unlock()
+				log.Println("cache builtin icon failed:", err)
+				return inlineIconMarkup(icon)
+			}
+			_, err = fs.ReadFile(MemFs, svgFile)
+			if err != nil {
+				cacheMu.Unlock()
+				log.Println("read cached builtin icon failed:", err)
+				return inlineIconMarkup(icon)
+			}
+			_CACHE_MDI_ICON_EXIST[cacheKey] = true
 		}
-		_, err = fs.ReadFile(MemFs, svgFile)
-		if err != nil {
-			log.Println("读取内置图标缓存出错:", err)
-			return _EMPTY_ICON
-		}
-		_CACHE_MDI_ICON_EXIST[cacheKey] = true
+		cacheMu.Unlock()
 	}
 	svgURL := "/" + svgFile
 	if define.AppFlags.DebugMode {

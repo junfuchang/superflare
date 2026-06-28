@@ -3,7 +3,6 @@ package data
 import (
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -16,51 +15,70 @@ import (
 
 func LoadPortBindings() (model.Ports, error) {
 	var result model.Ports
-	filePath := getPortsConfigPath()
-	if !checkExists(filePath) {
-		out, err := yaml.Marshal(result)
-		if err != nil {
-			return result, err
-		}
-		if !saveFile(filePath, out) {
-			return result, fmt.Errorf("init ports config failed: %s", filePath)
-		}
-		return result, nil
+	filePath, err := portsConfigPath()
+	if err != nil {
+		return result, err
 	}
-	configFile, err := readFileCached("ports", func() ([]byte, error) { return readFile(filePath) })
+	exists, err := pathExists(filePath)
+	if err != nil {
+		return result, fmt.Errorf("stat ports config failed: %w", err)
+	}
+	if !exists {
+		return result, fmt.Errorf("ports config is missing")
+	}
+	configFile, err := readFileCached(filePath, func() ([]byte, error) { return readFile(filePath) })
 	if err != nil {
 		return result, err
 	}
 	if err := yaml.Unmarshal(configFile, &result); err != nil {
 		return result, err
 	}
+	if err := validateLoadedPortBindings(result.Items); err != nil {
+		return result, err
+	}
 	result.Items = normalizePortBindings(result.Items)
 	return result, nil
 }
 
-func SavePortBindings(data model.Ports) bool {
+func LoadPortBindingsFromRaw(raw []byte) (model.Ports, error) {
+	var result model.Ports
+	if err := yaml.Unmarshal(raw, &result); err != nil {
+		return result, fmt.Errorf("parse ports raw failed: %w", err)
+	}
+	if err := validateLoadedPortBindings(result.Items); err != nil {
+		return result, err
+	}
+	result.Items = normalizePortBindings(result.Items)
+	return result, nil
+}
+
+func SavePortBindings(data model.Ports) error {
 	data.Items = normalizePortBindings(data.Items)
 	out, err := yaml.Marshal(data)
 	if err != nil {
 		log.Println("marshal ports failed")
-		return false
+		return fmt.Errorf("marshal ports failed: %w", err)
 	}
-	if !saveFile(getPortsConfigPath(), out) {
+	filePath, err := portsConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := saveFile(filePath, out); err != nil {
 		log.Println("save ports failed")
-		return false
+		return fmt.Errorf("save ports failed: %w", err)
 	}
-	invalidateFileCache("ports")
-	return true
+	invalidateFileCachePath(filePath)
+	return nil
 }
 
-func UpdatePortRemarks(items []model.PortBinding) bool {
+func UpdatePortRemarks(items []model.PortBinding) error {
 	return SavePortBindings(model.Ports{Items: items})
 }
 
-func GetPortBindingMap() map[string]model.PortBinding {
+func GetPortBindingMapWithError() (map[string]model.PortBinding, error) {
 	ports, err := LoadPortBindings()
 	if err != nil {
-		return map[string]model.PortBinding{}
+		return map[string]model.PortBinding{}, err
 	}
 	bindings := make(map[string]model.PortBinding, len(ports.Items))
 	for _, item := range ports.Items {
@@ -71,16 +89,19 @@ func GetPortBindingMap() map[string]model.PortBinding {
 		item.Remark = strings.TrimSpace(item.Remark)
 		bindings[portBindingKey(item.Protocol, item.Port)] = item
 	}
-	return bindings
+	return bindings, nil
 }
 
-func GetPortRemarkMap() map[string]string {
-	bindings := GetPortBindingMap()
+func GetPortRemarkMapWithError() (map[string]string, error) {
+	bindings, err := GetPortBindingMapWithError()
+	if err != nil {
+		return map[string]string{}, err
+	}
 	remarks := make(map[string]string, len(bindings))
 	for key, item := range bindings {
 		remarks[key] = strings.TrimSpace(item.Remark)
 	}
-	return remarks
+	return remarks, nil
 }
 
 func normalizePortBindings(items []model.PortBinding) []model.PortBinding {
@@ -110,6 +131,21 @@ func normalizePortBindings(items []model.PortBinding) []model.PortBinding {
 	return result
 }
 
+func validateLoadedPortBindings(items []model.PortBinding) error {
+	for index, item := range items {
+		if item.Port <= 0 || item.Port > 65535 {
+			return fmt.Errorf("invalid port binding at row %d: port %d is out of range", index+1, item.Port)
+		}
+		protocol := strings.ToLower(strings.TrimSpace(item.Protocol))
+		switch protocol {
+		case "", "tcp", "udp":
+		default:
+			return fmt.Errorf("invalid port binding at row %d: protocol %q is not supported", index+1, item.Protocol)
+		}
+	}
+	return nil
+}
+
 func normalizePortProtocol(protocol string) string {
 	protocol = strings.ToLower(strings.TrimSpace(protocol))
 	switch protocol {
@@ -128,10 +164,22 @@ func GetPortsConfigPath() string {
 	return getPortsConfigPath()
 }
 
+func portsConfigPath() (string, error) {
+	rootDir, err := configRootDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(rootDir, "ports.yaml"), nil
+}
+
 func getPortsConfigPath() string {
-	rootDir, err := os.Getwd()
+	rootDir, err := configRootDir()
 	if err != nil {
 		return filepath.Join(".", "ports.yaml")
 	}
 	return filepath.Join(rootDir, "ports.yaml")
+}
+
+func GetPortsConfigPathErr() (string, error) {
+	return portsConfigPath()
 }

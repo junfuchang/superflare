@@ -1,6 +1,7 @@
 package ports
 
 import (
+	"fmt"
 	"net"
 	"sort"
 	"strings"
@@ -16,13 +17,62 @@ type runtimePort struct {
 	PID         int
 }
 
-func Collect() []model.PortInfo {
-	return CollectWithHidden(false)
+type CollectionWarning struct {
+	Code          string
+	Detail        string
+	MissingOwners int
+	RuntimePorts  int
 }
 
-func CollectWithHidden(includeHidden bool) []model.PortInfo {
-	runtimePorts := collectRuntimePorts()
-	return MergeRuntimeAndBindings(runtimePorts, data.GetPortBindingMap(), includeHidden)
+type CollectionReport struct {
+	Items    []model.PortInfo
+	Warnings []CollectionWarning
+}
+
+type runtimeCollectorResult struct {
+	Ports    []runtimePort
+	Warnings []CollectionWarning
+	Err      error
+}
+
+var collectRuntimePortsErr = collectRuntimePortsResult
+
+func unsupportedRuntimeCollectorResult() runtimeCollectorResult {
+	return runtimeCollectorResult{
+		Err: fmt.Errorf("runtime port collection is not supported on this platform"),
+	}
+}
+
+func CollectErr() ([]model.PortInfo, error) {
+	return CollectWithHiddenErr(false)
+}
+
+func CollectWithHiddenErr(includeHidden bool) ([]model.PortInfo, error) {
+	bindings, err := data.GetPortBindingMapWithError()
+	if err != nil {
+		return nil, fmt.Errorf("load port bindings failed: %w", err)
+	}
+	return CollectWithBindingsErr(bindings, includeHidden)
+}
+
+func CollectReportWithBindingsErr(bindings map[string]model.PortBinding, includeHidden bool) (CollectionReport, error) {
+	result := collectRuntimePortsErr()
+	if result.Err != nil {
+		return CollectionReport{}, fmt.Errorf("collect runtime ports failed: %w", result.Err)
+	}
+	runtimePorts := result.Ports
+	return CollectionReport{
+		Items:    MergeRuntimeAndBindings(runtimePorts, bindings, includeHidden),
+		Warnings: result.Warnings,
+	}, nil
+}
+
+func CollectWithBindingsErr(bindings map[string]model.PortBinding, includeHidden bool) ([]model.PortInfo, error) {
+	report, err := CollectReportWithBindingsErr(bindings, includeHidden)
+	if err != nil {
+		return nil, err
+	}
+	return report.Items, nil
 }
 
 func MergeRuntimeAndBindings(runtimePorts []runtimePort, bindings map[string]model.PortBinding, includeHidden bool) []model.PortInfo {
@@ -46,7 +96,7 @@ func MergeRuntimeAndBindings(runtimePorts []runtimePort, bindings map[string]mod
 			Remark:      strings.TrimSpace(binding.Remark),
 			Hidden:      binding.Hidden,
 		}
-		if prev, ok := merged[key]; ok && prev.PID > 0 && info.PID == 0 {
+		if prev, ok := merged[key]; ok && runtimePortInfoScore(prev) >= runtimePortInfoScore(info) {
 			info.PID = prev.PID
 			info.ServiceName = prev.ServiceName
 		}
@@ -82,6 +132,39 @@ func MergeRuntimeAndBindings(runtimePorts []runtimePort, bindings map[string]mod
 		return result[i].Port < result[j].Port
 	})
 	return result
+}
+
+func runtimePortInfoScore(item model.PortInfo) int {
+	score := 0
+	if item.PID > 0 {
+		score++
+	}
+	if strings.TrimSpace(item.ServiceName) != "" {
+		score += 2
+	}
+	return score
+}
+
+func countRuntimePortsMissingOwnerInfo(items []runtimePort) int {
+	count := 0
+	for _, item := range items {
+		if item.Port <= 0 || item.Port > 65535 {
+			continue
+		}
+		if item.PID <= 0 || strings.TrimSpace(item.ServiceName) == "" {
+			count++
+		}
+	}
+	return count
+}
+
+func ownerResolutionWarning(items []runtimePort, detail string) CollectionWarning {
+	return CollectionWarning{
+		Code:          "owner_resolution_partial",
+		Detail:        strings.TrimSpace(detail),
+		MissingOwners: countRuntimePortsMissingOwnerInfo(items),
+		RuntimePorts:  len(items),
+	}
 }
 
 func LocalLANHost() string {

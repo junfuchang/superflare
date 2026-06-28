@@ -35,6 +35,42 @@
         </div>
 
         <div class="form-group">
+            <label for="search-mode">{{ T .Locale "search_mode" }}</label>
+            <select name="search-mode" id="search-mode">
+                <option value="bookmarks" {{ if eq .SearchMode "bookmarks" }}selected{{ end }}>{{ T .Locale "search_mode_bookmarks" }}</option>
+                <option value="engine" {{ if eq .SearchMode "engine" }}selected{{ end }}>{{ T .Locale "search_mode_engine" }}</option>
+            </select>
+            <p class="help-text">{{ T .Locale "search_mode_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="search-engine">{{ T .Locale "search_engine" }}</label>
+            <select name="search-engine" id="search-engine">
+                <option value="bing" {{ if eq .SearchEngine "bing" }}selected{{ end }}>Bing</option>
+                <option value="baidu" {{ if eq .SearchEngine "baidu" }}selected{{ end }}>Baidu</option>
+                <option value="google" {{ if eq .SearchEngine "google" }}selected{{ end }}>Google</option>
+                <option value="duckduckgo" {{ if eq .SearchEngine "duckduckgo" }}selected{{ end }}>DuckDuckGo</option>
+                <option value="custom" {{ if eq .SearchEngine "custom" }}selected{{ end }}>{{ T .Locale "search_engine_custom" }}</option>
+            </select>
+            <p class="help-text">{{ T .Locale "search_engine_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="search-engine-open-mode">{{ T .Locale "search_engine_open_mode" }}</label>
+            <select name="search-engine-open-mode" id="search-engine-open-mode">
+                <option value="same-tab" {{ if eq .SearchEngineOpenMode "same-tab" }}selected{{ end }}>{{ T .Locale "search_engine_open_same_tab" }}</option>
+                <option value="new-tab" {{ if eq .SearchEngineOpenMode "new-tab" }}selected{{ end }}>{{ T .Locale "search_engine_open_new_tab" }}</option>
+            </select>
+            <p class="help-text">{{ T .Locale "search_engine_open_mode_help" }}</p>
+        </div>
+
+        <div class="form-group">
+            <label for="search-engine-custom-template">{{ T .Locale "search_engine_custom_template" }}</label>
+            <input class="option-input" type="text" name="search-engine-custom-template" id="search-engine-custom-template" value="{{ .SearchEngineCustomTemplate }}" placeholder="{{ T .Locale "search_engine_custom_template_placeholder" }}" />
+            <p class="help-text">{{ T .Locale "search_engine_custom_template_help" }}</p>
+        </div>
+
+        <div class="form-group">
             <input class="btn-submit" type="submit" value='{{ T .Locale "save_changes" }}' />
         </div>
 

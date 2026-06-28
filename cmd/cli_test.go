@@ -1,8 +1,8 @@
 package cmd_test
 
 import (
-	"flag"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/junfuchang/superflare/cmd"
@@ -15,32 +15,46 @@ func TestGetCliFlags(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	tests := []struct {
-		name       string
-		args       []string
-		wantPort   int
-		wantEnable bool
+		name     string
+		args     []string
+		wantPort int
 	}{
 		{
-			name:       "empty args",
-			args:       []string{""},
-			wantPort:   define.DEFAULT_PORT,
-			wantEnable: false,
+			name:     "empty args",
+			args:     nil,
+			wantPort: define.DEFAULT_PORT,
 		},
 		{
-			name:       "set port and enable guide",
-			args:       []string{"app", "--port", "9090", "--enable-guide"},
-			wantPort:   9090,
-			wantEnable: true,
+			name:     "set port",
+			args:     []string{"--port", "9090"},
+			wantPort: 9090,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			os.Args = append([]string{"app"}, tt.args...)
-			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-			gotFlags, _ := cmd.GetCliFlags()
+			gotFlags, _, err := cmd.GetCliFlags()
+			if err != nil {
+				t.Fatalf("GetCliFlags: %v", err)
+			}
 			assert.Equal(t, tt.wantPort, gotFlags.Port)
+			assert.Equal(t, define.DEFAULT_ENABLE_GUIDE, gotFlags.EnableGuide)
 		})
+	}
+}
+
+func TestGetCliFlagsReturnsErrorForInvalidArguments(t *testing.T) {
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"app", "--port=bad"}
+	_, _, err := cmd.GetCliFlags()
+	if err == nil {
+		t.Fatal("expected GetCliFlags to fail")
+	}
+	if !strings.Contains(err.Error(), "parse cli flags failed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

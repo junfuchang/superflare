@@ -52,3 +52,14 @@ func TestGenerateHelpTemplate_UsesEnglishWhenLocaleIsEnglish(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateHelpTemplateFallsBackWhenIconLookupFails(t *testing.T) {
+	orig := getHelpIconByName
+	getHelpIconByName = func(string) string { return "" }
+	defer func() { getHelpIconByName = orig }()
+
+	html := string(GenerateHelpTemplate("zh"))
+	if !strings.Contains(html, "<svg") {
+		t.Fatalf("expected builtin fallback svg icon, got %s", html)
+	}
+}

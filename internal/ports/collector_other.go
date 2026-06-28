@@ -3,5 +3,9 @@
 package ports
 
 func collectRuntimePorts() []runtimePort {
-	return nil
+	return unsupportedRuntimeCollectorResult().Ports
+}
+
+func collectRuntimePortsResult() runtimeCollectorResult {
+	return unsupportedRuntimeCollectorResult()
 }

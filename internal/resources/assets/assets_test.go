@@ -86,6 +86,38 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIcon(t *testing.T) {
 	}
 }
 
+func TestSiteIconProxyFallsBackToBuiltinBookmarkIconWithoutMDICache(t *testing.T) {
+	define.Init()
+	define.AppFlags.DebugMode = true
+	define.ThemeCurrent = "blackboard"
+	define.ThemePrimaryColor = ""
+
+	originalMemFs := mdi.MemFs
+	mdi.MemFs = nil
+	defer func() { mdi.MemFs = originalMemFs }()
+
+	e := echo.New()
+	RegisterRouting(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/site-icons?src=https://example.invalid/favicon.ico", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("site icon proxy fallback without mdi cache status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
+		t.Fatalf("site icon proxy fallback without mdi cache content-type = %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<svg") {
+		t.Fatalf("site icon proxy fallback without mdi cache should return builtin svg icon, got %q", body)
+	}
+	if strings.Contains(strings.ToLower(body), "superflare") {
+		t.Fatalf("site icon proxy fallback without mdi cache should not return project favicon, got %q", body)
+	}
+}
+
 func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	define.Init()
 	define.AppFlags.DebugMode = true
@@ -133,5 +165,28 @@ func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
 		t.Fatalf("site icon proxy cache-hit content-type = %q", got)
+	}
+}
+
+func TestServeUserAssetReturnsServerErrorWhenGetwdFails(t *testing.T) {
+	originalGetwd := fnGetwdForAssetsTest()
+	defer restoreFnGetwdForAssetsTest(originalGetwd)
+
+	setFnGetwdForAssetsTest(func() (string, error) {
+		return "", os.ErrPermission
+	})
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/user-assets/icon.png", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := serveUserAssetByName(c, "icon.png")
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected HTTPError, got %T", err)
+	}
+	if httpErr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", httpErr.Code)
 	}
 }

@@ -1,7 +1,7 @@
 package others
 
 import (
-	"html/template"
+	"log"
 	"net/http"
 	"strings"
 
@@ -9,9 +9,12 @@ import (
 
 	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/appver"
 	"github.com/junfuchang/superflare/internal/auth"
+	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/pool"
+	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 func RegisterRouting(e *echo.Echo) {
@@ -20,34 +23,46 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateLoginOptions(c *echo.Context) error {
+	if err := statuspage.BindCurrentOptions(c); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	var body struct {
 		LoginUser        string `form:"login-user"`
 		LoginPass        string `form:"login-pass"`
 		LoginPassConfirm string `form:"login-pass-confirm"`
 	}
 	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusForbidden, "提交数据缺失")
+		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing form data"))
 	}
 	user := strings.TrimSpace(body.LoginUser)
 	pass := strings.TrimSpace(body.LoginPass)
 	confirm := strings.TrimSpace(body.LoginPassConfirm)
-	currentUser, currentPass, _ := data.GetLoginConfig()
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
+	currentLoginConfig, err := resolveCurrentLoginConfig(c, statuspage.CurrentLocale(c), options)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
 	if user == "" {
-		user = strings.TrimSpace(currentUser)
+		user = strings.TrimSpace(currentLoginConfig.User)
 	}
 	if pass == "" && confirm == "" {
-		pass = strings.TrimSpace(currentPass)
+		pass = strings.TrimSpace(currentLoginConfig.Pass)
 		confirm = pass
 	}
 	if pass != confirm {
 		return renderOthers(c, "login_pass_confirm_error")
 	}
-	data.UpdateLoginConfig(user, pass)
-	applyRuntimeLoginConfig(user, pass)
+	if err := data.UpdateLoginConfig(user, pass); err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	}
+	applyRuntimeLoginConfig(c, user, pass)
 	return pageOthers(c)
 }
 
-func applyRuntimeLoginConfig(user string, pass string) {
+func applyRuntimeLoginConfig(c *echo.Context, user string, pass string) {
 	next := define.AppBaseFlags
 	if next.Port == 0 {
 		next = define.AppFlags
@@ -60,40 +75,67 @@ func applyRuntimeLoginConfig(user string, pass string) {
 		next.Pass = pass
 		next.PassIsGenerated = false
 	}
+	define.AppBaseFlags.User = next.User
+	define.AppBaseFlags.Pass = next.Pass
+	define.AppBaseFlags.UserIsGenerated = next.UserIsGenerated
+	define.AppBaseFlags.PassIsGenerated = next.PassIsGenerated
 	define.AppFlags.User = next.User
 	define.AppFlags.Pass = next.Pass
 	define.AppFlags.UserIsGenerated = next.UserIsGenerated
 	define.AppFlags.PassIsGenerated = next.PassIsGenerated
+	auth.StoreLoginRuntimeConfigForRequest(c, auth.SnapshotLoginRuntimeConfigFromFlags(next))
 }
 
 func pageOthers(c *echo.Context) error {
 	return renderOthers(c, "")
 }
 
+type resolvedLoginConfig struct {
+	User          string
+	Pass          string
+	WarningKey    string
+	WarningDetail string
+}
+
 func renderOthers(c *echo.Context, loginConfigError string) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "config error")
+		statuspage.BindOptionsLoadError(c, err)
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
+	statuspage.BindOptions(c, options)
+	options, renderWarnings := statuspage.PrepareSettingsOptionsForRender(options)
 	locale := options.Locale
-	if locale == "" {
-		locale = "zh"
-	}
+	disableLoginMode := auth.IsLoginDisabled(c)
 	isLogined := false
-	if !define.AppFlags.DisableLoginMode {
-		isLogined = auth.CheckUserIsLogin(c)
+	userName := ""
+	loginDate := ""
+	loginDisplay, err := auth.ResolveLoginDisplayStateForStrictView(c)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	isLogined = loginDisplay.ShowLoginInfo
+	userName = loginDisplay.UserName
+	loginDate = loginDisplay.LoginDate
+	renderWarnings = auth.AppendSessionWarnings(c, locale, renderWarnings)
+	pageStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "settings")
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if styleWarning != "" {
+		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
 	m["DebugMode"] = define.AppFlags.DebugMode
-	m["DisableLoginMode"] = define.AppFlags.DisableLoginMode
+	m["DisableLoginMode"] = disableLoginMode
 	m["UserIsLogin"] = isLogined
 	m["ShowLoginInfo"] = isLogined
-	m["UserName"] = auth.GetUserName(c)
-	m["LoginDate"] = auth.GetUserLoginDate(c)
+	m["UserName"] = userName
+	m["LoginDate"] = loginDate
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
-	m["PageAppearance"] = define.GetAppBodyStyle()
+	m["PageAppearance"] = pageStyle
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["LoginURI"] = define.MiscPages.Login.Path
 	m["LogoutURI"] = define.MiscPages.Logout.Path
@@ -101,10 +143,86 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	m["SettingPages"] = define.SettingPages
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
-	loginUser, _, _ := data.GetLoginConfig()
-	m["OptionLoginUser"] = loginUser
+	currentLoginConfig, err := resolveCurrentLoginConfig(c, locale, options)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	if loginConfigError == "" && currentLoginConfig.WarningKey != "" {
+		loginConfigError = currentLoginConfig.WarningKey
+	}
+	m["OptionLoginUser"] = currentLoginConfig.User
 	m["LoginConfigError"] = loginConfigError
+	m["LoginConfigErrorDetail"] = currentLoginConfig.WarningDetail
 	m["Version"] = appver.DisplayVersion()
-	m["OptionFooter"] = template.HTML(options.Footer)
+	footer.BindTemplateData(m, options.Footer)
+	m["RenderWarnings"] = renderWarnings
 	return c.Render(http.StatusOK, "settings.html", m)
+}
+
+func resolveCurrentLoginConfig(c *echo.Context, locale string, options model.Application) (resolvedLoginConfig, error) {
+	runtimeCfg := auth.SnapshotLoginRuntimeConfigForRequest(c)
+	runtimeUser := strings.TrimSpace(runtimeCfg.User)
+	runtimePass := strings.TrimSpace(runtimeCfg.Pass)
+
+	user, pass, err := data.GetLoginConfig()
+	if err != nil {
+		if runtimeUser == "" && runtimePass == "" {
+			return resolvedLoginConfig{}, err
+		}
+		log.Printf("fallback to request runtime login config after persistent login config read failed: %v", err)
+		if strings.TrimSpace(user) == "" {
+			user = runtimeUser
+		}
+		if strings.TrimSpace(pass) == "" {
+			pass = runtimePass
+		}
+		return resolvedLoginConfig{
+			User:          strings.TrimSpace(user),
+			Pass:          strings.TrimSpace(pass),
+			WarningKey:    "login_config_runtime_fallback",
+			WarningDetail: formatLoginConfigFallbackDetail(locale, err),
+		}, nil
+	}
+
+	if strings.TrimSpace(user) == "" && runtimeUser != "" {
+		user = runtimeUser
+	}
+	if strings.TrimSpace(pass) == "" && runtimePass != "" {
+		pass = runtimePass
+	}
+	warningKey := ""
+	if shouldWarnRuntimeLoginSource(options, runtimeUser, runtimePass, user, pass) {
+		warningKey = "login_config_runtime_source"
+	}
+	return resolvedLoginConfig{
+		User:       strings.TrimSpace(user),
+		Pass:       strings.TrimSpace(pass),
+		WarningKey: warningKey,
+	}, nil
+}
+
+func shouldWarnRuntimeLoginSource(options model.Application, runtimeUser string, runtimePass string, user string, pass string) bool {
+	if strings.TrimSpace(options.LoginUser) != "" || strings.TrimSpace(options.LoginPass) != "" {
+		return false
+	}
+	runtimeUser = strings.TrimSpace(runtimeUser)
+	runtimePass = strings.TrimSpace(runtimePass)
+	if runtimeUser == "" || runtimePass == "" {
+		return false
+	}
+	return strings.TrimSpace(user) == runtimeUser && strings.TrimSpace(pass) == runtimePass
+}
+
+func formatLoginConfigFallbackDetail(locale string, err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := strings.TrimSpace(err.Error())
+	if detail == "" {
+		return ""
+	}
+	if locale == "en" {
+		return "Current read error: " + detail
+	}
+	return "当前读取错误：" + detail
 }

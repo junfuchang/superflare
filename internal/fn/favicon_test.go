@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -67,6 +68,13 @@ func TestGetSiteFaviconAssetURL_LocalUsesDirectURL(t *testing.T) {
 	const expected = "https://nas.local/favicon.ico"
 	if out != expected {
 		t.Fatalf("GetSiteFaviconAssetURL local: expected %q, got %q", expected, out)
+	}
+}
+
+func TestGetSiteFaviconAssetURLFast_LocalCacheMissReturnsEmpty(t *testing.T) {
+	out := GetSiteFaviconAssetURLFast("https://nas.local/apps")
+	if out != "" {
+		t.Fatalf("GetSiteFaviconAssetURLFast local cache miss should be empty, got %q", out)
 	}
 }
 
@@ -188,6 +196,83 @@ func TestReadCachedSiteFaviconRecognizesSVG(t *testing.T) {
 	}
 	if contentType != "image/svg+xml" {
 		t.Fatalf("cached svg content type = %q", contentType)
+	}
+}
+
+func TestReadCachedSiteFaviconRemovesInvalidCacheFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	iconURL := "https://example.com/favicon.ico"
+	cachePath := filepath.Join(tmpDir, "var", "cache", "site-icons", SiteFaviconCacheKeyForTest(iconURL)+".bin")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("<html>broken</html>"), 0644); err != nil {
+		t.Fatalf("WriteFile cache: %v", err)
+	}
+
+	_, _, err = readCachedSiteFavicon(iconURL)
+	if err == nil {
+		t.Fatal("readCachedSiteFavicon should reject invalid cached html")
+	}
+	if _, statErr := os.Stat(cachePath); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid cache file should be removed, statErr=%v", statErr)
+	}
+}
+
+func TestWriteCachedSiteFaviconIsAtomicAndLeavesNoTempFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	iconURL := "https://example.com/favicon.ico"
+	if err := writeCachedSiteFavicon(iconURL, []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)); err != nil {
+		t.Fatalf("writeCachedSiteFavicon: %v", err)
+	}
+
+	cachePath := filepath.Join(tmpDir, "var", "cache", "site-icons", SiteFaviconCacheKeyForTest(iconURL)+".bin")
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("ReadFile cache: %v", err)
+	}
+	if !strings.Contains(string(data), "<svg") {
+		t.Fatalf("cache file should contain svg data, got %q", string(data))
+	}
+
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(cachePath), ".*.tmp-*"))
+	if err != nil {
+		t.Fatalf("Glob temp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("atomic cache write should not leave temp files, got %v", matches)
+	}
+}
+
+func TestSiteFaviconCachePathReturnsErrorWhenGetwdFails(t *testing.T) {
+	originalGetwd := osGetwd
+	defer func() { osGetwd = originalGetwd }()
+
+	osGetwd = func() (string, error) {
+		return "", errors.New("forced getwd failure")
+	}
+
+	_, err := siteFaviconCachePath("https://example.com/favicon.ico")
+	if err == nil {
+		t.Fatal("expected siteFaviconCachePath to fail")
 	}
 }
 

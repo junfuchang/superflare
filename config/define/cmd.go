@@ -8,7 +8,7 @@ const (
 	DEFAULT_PORT                = 3636
 	DEFAULT_ENABLE_GUIDE        = true
 	DEFAULT_ENABLE_MINI_REQUEST = false
-	DEFAULT_DISABLE_LOGIN       = true
+	DEFAULT_DISABLE_LOGIN       = false
 	DEFAULT_USER_NAME           = "admin"
 	DEFAULT_ENABLE_EDITOR       = true
 	DEFAULT_VISIBILITY          = "DEFAULT"
@@ -44,6 +44,7 @@ var DefaultEnvVars = GetDefaultEnvVars()
 
 var AppFlags model.Flags
 var AppBaseFlags model.Flags
+var AppSourceFlags model.Flags
 
 // FLARE_VISIBLE defines visibility levels: "DEFAULT" or "PRIVATE".
 var FLARE_VISIBLE = "PRIVATE"

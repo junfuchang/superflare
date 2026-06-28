@@ -47,6 +47,10 @@
 }
 
 #container-apps .apps-container .app-text {
+  margin-left: 0;
+}
+
+#container-apps .apps-container .app-text.has-icon {
   margin-left: 35px;
 }
 

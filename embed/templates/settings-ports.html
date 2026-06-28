@@ -23,12 +23,29 @@
     </form>
     <script type="text/html" id="data-ports">{{.PortsData}}</script>
     <style>
+        .setting-group-container {
+            --ports-table-surface: rgba(18, 18, 18, 0.97);
+            --ports-table-surface-strong: rgba(28, 28, 28, 0.99);
+            --ports-table-border: rgba(255, 253, 234, 0.14);
+            --ports-table-text: rgba(239, 251, 255, 0.96);
+            --ports-table-text-muted: rgba(239, 251, 255, 0.72);
+            --ports-table-input-surface: rgba(239, 251, 255, 0.96);
+            --ports-table-input-text: #171717;
+            --ports-table-accent: rgba(255, 165, 0, 0.24);
+            --ports-table-danger: rgba(122, 38, 38, 0.62);
+        }
+
         .ports-toggle {
             display: inline-flex;
             align-items: center;
             gap: 6px;
             margin: 6px 0 6px 12px;
             color: var(--color-primary);
+            font-weight: 500;
+        }
+
+        .ports-toggle input {
+            accent-color: color-mix(in srgb, var(--color-accent) 78%, var(--color-primary) 22%);
         }
 
         .ports-status {
@@ -36,7 +53,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            color: var(--color-primary);
+            color: color-mix(in srgb, var(--color-primary) 84%, transparent);
             opacity: .86;
         }
 
@@ -44,14 +61,18 @@
             content: "";
             width: 13px;
             height: 13px;
-            border: 2px solid rgba(255, 253, 234, .35);
-            border-top-color: var(--color-primary);
+            border: 2px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
+            border-top-color: color-mix(in srgb, var(--color-primary) 84%, transparent);
             border-radius: 50%;
             animation: ports-spin .8s linear infinite;
         }
 
         .ports-status.error {
-            color: #ff9d9d;
+            color: #a73636;
+        }
+
+        .ports-status.warning {
+            color: color-mix(in srgb, var(--color-accent) 84%, var(--color-primary) 16%);
         }
 
         .ports-actions {
@@ -71,8 +92,8 @@
 
         .ports-table-shell {
             margin-top: 8px;
-            border: 1px solid rgba(255, 253, 234, .18);
-            background: rgba(18, 18, 18, .96);
+            border: 1px solid var(--ports-table-border);
+            background: var(--ports-table-surface);
             min-height: 160px;
             overflow: hidden;
         }
@@ -86,26 +107,26 @@
         #container-ports .handsontable .ht_clone_top,
         #container-ports .handsontable .ht_clone_left,
         #container-ports .handsontable .ht_clone_top_left_corner {
-            background: rgba(18, 18, 18, .96) !important;
-            color: var(--color-primary) !important;
+            background: var(--ports-table-surface) !important;
+            color: var(--ports-table-text) !important;
         }
 
         #container-ports .handsontable table,
         #container-ports .handsontable .htCore {
-            background: rgba(18, 18, 18, .96) !important;
-            color: var(--color-primary) !important;
+            background: var(--ports-table-surface) !important;
+            color: var(--ports-table-text) !important;
         }
 
         #container-ports .handsontable col.rowHeader {
-            background: rgba(34, 34, 34, .98) !important;
+            background: var(--ports-table-surface-strong) !important;
         }
 
         #container-ports .handsontable th,
         #container-ports .handsontable td,
         #container-ports .handsontable .htCore th,
         #container-ports .handsontable .htCore td {
-            border-color: rgba(255, 253, 234, .14) !important;
-            color: var(--color-primary) !important;
+            border-color: var(--ports-table-border) !important;
+            color: var(--ports-table-text) !important;
         }
 
         #container-ports .handsontable thead th,
@@ -114,8 +135,8 @@
         #container-ports .handsontable .ht_clone_top_left_corner th,
         #container-ports .handsontable th.ht__row_header,
         #container-ports .handsontable th.ht__column_header {
-            background: rgba(34, 34, 34, .98) !important;
-            color: var(--color-primary) !important;
+            background: var(--ports-table-surface-strong) !important;
+            color: var(--ports-table-text) !important;
             font-weight: 600;
         }
 
@@ -123,10 +144,10 @@
         #container-ports .handsontable tbody th:first-child,
         #container-ports .handsontable .ht_clone_left th,
         #container-ports .handsontable .ht_clone_top_left_corner th {
-            background: rgba(34, 34, 34, .98) !important;
-            color: var(--color-primary) !important;
+            background: var(--ports-table-surface-strong) !important;
+            color: var(--ports-table-text) !important;
             font-weight: 600;
-            border-right-color: rgba(255, 253, 234, .14) !important;
+            border-right-color: var(--ports-table-border) !important;
         }
 
         #container-ports .handsontable tbody th .relative,
@@ -139,18 +160,38 @@
             color: inherit !important;
         }
 
+        #container-ports .handsontable thead th .relative,
+        #container-ports .handsontable .ht_clone_top th .relative,
+        #container-ports .handsontable .ht_clone_top_left_corner th .relative,
+        #container-ports .handsontable thead th .colHeader,
+        #container-ports .handsontable .ht_clone_top th .colHeader,
+        #container-ports .handsontable .ht_clone_top_left_corner th .colHeader,
+        #container-ports .handsontable thead th .cornerHeader,
+        #container-ports .handsontable .ht_clone_top th .cornerHeader,
+        #container-ports .handsontable .ht_clone_top_left_corner th .cornerHeader {
+            background: transparent !important;
+            color: inherit !important;
+        }
+
         #container-ports .handsontable td {
-            background: rgba(18, 18, 18, .96) !important;
+            background: var(--ports-table-surface) !important;
         }
 
         #container-ports .handsontable .htDimmed,
         #container-ports .handsontable .htAutocompleteArrow {
-            color: rgba(255, 253, 234, .72) !important;
+            color: var(--ports-table-text-muted) !important;
         }
 
         #container-ports .handsontableInput {
-            background: #1f1f1f !important;
-            color: var(--color-primary) !important;
+            background: var(--ports-table-input-surface) !important;
+            color: var(--ports-table-input-text) !important;
+            border-color: rgba(255, 253, 234, .3) !important;
+        }
+
+        #container-ports .htSelectEditor,
+        #container-ports .htNumericInput {
+            background: var(--ports-table-input-surface) !important;
+            color: var(--ports-table-input-text) !important;
             border-color: rgba(255, 253, 234, .3) !important;
         }
 
@@ -194,9 +235,49 @@
                 });
             }
 
-            function setStatus(text, loading, error) {
+            function setStatus(text, loading, error, warning) {
                 status.textContent = text || '';
-                status.className = 'ports-status' + (loading ? ' loading' : '') + (error ? ' error' : '');
+                status.className = 'ports-status'
+                    + (loading ? ' loading' : '')
+                    + (error ? ' error' : '')
+                    + (warning ? ' warning' : '');
+            }
+
+            function parseFailureResponse(response, fallbackMessage) {
+                return response.text().then(function (raw) {
+                    if (!raw) {
+                        return fallbackMessage;
+                    }
+                    try {
+                        const payload = JSON.parse(raw);
+                        const detail = payload && payload.detail ? String(payload.detail).trim() : '';
+                        const message = payload && payload.error ? String(payload.error).trim() : fallbackMessage;
+                        return detail ? (message + ': ' + detail) : message;
+                    } catch (error) {
+                        return raw.trim() || fallbackMessage;
+                    }
+                }).then(function (message) {
+                    throw new Error(message || fallbackMessage);
+                });
+            }
+
+            function extractItems(payload) {
+                if (Array.isArray(payload)) {
+                    return payload;
+                }
+                if (payload && Array.isArray(payload.items)) {
+                    return payload.items;
+                }
+                return [];
+            }
+
+            function extractWarnings(payload) {
+                if (!payload || !Array.isArray(payload.warnings)) {
+                    return [];
+                }
+                return payload.warnings.map(function (item) {
+                    return String(item || '').trim();
+                }).filter(Boolean);
             }
 
             function setHiddenStateForAll(nextHidden) {
@@ -204,7 +285,7 @@
                     return Object.assign({}, item, { Hidden: !!nextHidden });
                 });
                 hot.loadData(data);
-                setStatus(nextHidden ? '{{ T .Locale "ports_all_hidden" }}' : '{{ T .Locale "ports_all_unhidden" }}', false, false);
+                setStatus(nextHidden ? '{{ T .Locale "ports_all_hidden" }}' : '{{ T .Locale "ports_all_unhidden" }}', false, false, false);
             }
 
             const hot = new Handsontable(document.getElementById('container-ports'), {
@@ -242,16 +323,24 @@
                 return fetch(dataURI + query, { headers: { 'Accept': 'application/json' } })
                     .then(function (response) {
                         if (!response.ok) {
-                            throw new Error('ports request failed');
+                            return parseFailureResponse(response, 'ports request failed');
                         }
                         return response.json();
                     })
-                    .then(function (items) {
+                    .then(function (payload) {
+                        const items = extractItems(payload);
+                        const warnings = extractWarnings(payload);
                         hot.loadData(normalizeData(items));
-                        setStatus('', false, false);
+                        if (warnings.length > 0) {
+                            setStatus(warnings.join(' '), false, false, true);
+                            return;
+                        }
+                        setStatus('', false, false, false);
                     })
-                    .catch(function () {
-                        setStatus('{{ T .Locale "ports_load_failed" }}', false, true);
+                    .catch(function (error) {
+                        const detail = error && error.message ? error.message : '';
+                        const text = detail ? ('{{ T .Locale "ports_load_failed" }}: ' + detail) : '{{ T .Locale "ports_load_failed" }}';
+                        setStatus(text, false, true, false);
                     });
             }
 
@@ -268,7 +357,7 @@
                     };
                 });
                 fieldPorts.value = JSON.stringify(payload);
-                setStatus('{{ T .Locale "ports_saving" }}', true, false);
+                setStatus('{{ T .Locale "ports_saving" }}', true, false, false);
                 const body = new URLSearchParams();
                 body.set('ports', fieldPorts.value);
                 body.set('includeHidden', showHidden.checked ? '1' : '0');
@@ -281,12 +370,14 @@
                     body: body.toString()
                 }).then(function (response) {
                     if (!response.ok) {
-                        throw new Error('save failed');
+                        return parseFailureResponse(response, 'save failed');
                     }
-                    setStatus('{{ T .Locale "ports_saved" }}', false, false);
+                    setStatus('{{ T .Locale "ports_saved" }}', false, false, false);
                     return loadPorts();
-                }).catch(function () {
-                    setStatus('{{ T .Locale "ports_save_failed" }}', false, true);
+                }).catch(function (error) {
+                    const detail = error && error.message ? error.message : '';
+                    const text = detail ? ('{{ T .Locale "ports_save_failed" }}: ' + detail) : '{{ T .Locale "ports_save_failed" }}';
+                    setStatus(text, false, true, false);
                 });
             });
 

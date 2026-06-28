@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 	"strings"
 
@@ -12,15 +13,46 @@ import (
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/appver"
+	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/logger"
 	version "github.com/soulteary/version-kit"
 )
 
 func Parse() model.Flags {
-	envs := ParseEnvFile(ParseEnvVars())
-	resolved := parseCLI(envs)
+	resolved, err := ParseE()
+	if err != nil {
+		panic(err)
+	}
+	return resolved
+}
+
+func ParseE() (model.Flags, error) {
+	cliFlags, fs, err := GetCliFlags()
+	if err != nil {
+		return model.Flags{}, err
+	}
+	if ExecuteCLI(cliFlags, fs) {
+		os.Exit(0)
+	}
+
+	envs, err := ParseEnvVarsE()
+	if err != nil {
+		return model.Flags{}, err
+	}
+	envs, err = ParseEnvFileE(envs)
+	if err != nil {
+		return model.Flags{}, err
+	}
+	resolved, err := resolveCLIFlags(envs, cliFlags, fs)
+	if err != nil {
+		return model.Flags{}, err
+	}
+	define.AppSourceFlags = resolved
+	resolved, err = applyAccountConfig(resolved)
+	if err != nil {
+		return model.Flags{}, err
+	}
 	define.AppBaseFlags = resolved
-	resolved = applyAccountConfig(resolved)
 
 	log := logger.GetLogger()
 	log.Info("程序服务端口", slog.Int(_KEY_PORT, resolved.Port))
@@ -45,10 +77,22 @@ func Parse() model.Flags {
 	}
 
 	define.AppFlags = resolved
-	return resolved
+	auth.StoreLoginRuntimeConfigFromFlags(resolved)
+	return resolved, nil
 }
 
 func ApplyAccountConfigToFlags(flags model.Flags, options model.Application) model.Flags {
+	resolved, err := ApplyAccountConfigToFlagsE(flags, options)
+	if err != nil {
+		panic(err)
+	}
+	return resolved
+}
+
+func ApplyAccountConfigToFlagsE(flags model.Flags, options model.Application) (model.Flags, error) {
+	if err := data.ValidateLoginCredentialPair(options.LoginUser, options.LoginPass, "config.yml"); err != nil {
+		return flags, err
+	}
 	if user := strings.TrimSpace(options.LoginUser); user != "" {
 		flags.User = user
 		flags.UserIsGenerated = false
@@ -57,15 +101,22 @@ func ApplyAccountConfigToFlags(flags model.Flags, options model.Application) mod
 		flags.Pass = pass
 		flags.PassIsGenerated = false
 	}
-	return flags
+	return flags, nil
 }
 
-func applyAccountConfig(flags model.Flags) model.Flags {
+func applyAccountConfig(flags model.Flags) (model.Flags, error) {
+	if err := data.EnsureAppConfigExists(); err != nil {
+		return flags, fmt.Errorf("read account config failed: %w", err)
+	}
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
-		return flags
+		return flags, fmt.Errorf("read account config failed: %w", err)
 	}
-	return ApplyAccountConfigToFlags(flags, options)
+	flags, err = ApplyAccountConfigToFlagsE(flags, options)
+	if err != nil {
+		return flags, fmt.Errorf("read account config failed: %w", err)
+	}
+	return flags, nil
 }
 
 // ExecuteCLI handles --help and --version; returns true if the program should exit.

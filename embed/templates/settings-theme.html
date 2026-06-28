@@ -24,15 +24,15 @@
         <h2>{{ T .Locale "custom_rgba_theme" }}</h2>
         <div class="form-group">
             <label for="custom-theme-background">{{ T .Locale "theme_background_color" }}</label>
-            <input type="text" name="custom-theme-background" id="custom-theme-background" class="option-input" placeholder="rgba(26, 26, 26, 1)" value="{{.CustomThemeBackground}}">
+            <input type="text" name="custom-theme-background" id="custom-theme-background" class="option-input" data-color-picker="true" placeholder="rgba(26, 26, 26, 1)" value="{{.CustomThemeBackground}}">
         </div>
         <div class="form-group">
             <label for="custom-theme-primary">{{ T .Locale "theme_primary_color" }}</label>
-            <input type="text" name="custom-theme-primary" id="custom-theme-primary" class="option-input" placeholder="rgba(255, 253, 234, 1)" value="{{.CustomThemePrimary}}">
+            <input type="text" name="custom-theme-primary" id="custom-theme-primary" class="option-input" data-color-picker="true" placeholder="rgba(255, 253, 234, 1)" value="{{.CustomThemePrimary}}">
         </div>
         <div class="form-group">
             <label for="custom-theme-accent">{{ T .Locale "theme_accent_color" }}</label>
-            <input type="text" name="custom-theme-accent" id="custom-theme-accent" class="option-input" placeholder="rgba(92, 92, 92, 1)" value="{{.CustomThemeAccent}}">
+            <input type="text" name="custom-theme-accent" id="custom-theme-accent" class="option-input" data-color-picker="true" placeholder="rgba(92, 92, 92, 1)" value="{{.CustomThemeAccent}}">
             <p class="help-text">{{ T .Locale "custom_theme_help" }}</p>
         </div>
         <div class="form-group">
