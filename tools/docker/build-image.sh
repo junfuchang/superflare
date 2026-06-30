@@ -35,11 +35,8 @@ for item in \
   config \
   embed \
   internal \
-  tools/docker \
-  config.yml \
-  apps.yml \
-  bookmarks.yml \
-  ports.yaml \
+  tools/docker/Dockerfile \
+  tools/docker/docker-entrypoint.sh \
   go.mod \
   go.sum \
   main.go \

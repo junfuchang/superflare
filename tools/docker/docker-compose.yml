@@ -10,7 +10,7 @@ services:
     environment:
       FLARE_PORT: "3636"
       FLARE_DISABLE_LOGIN: "false"
-      # 首次部署前建议替换为稳定且足够随机的值，避免容器重建后登录会话失效。
+      # Replace this with a stable random value before first deployment.
       FLARE_COOKIE_SECRET: "please-change-superflare-cookie-secret"
 
 volumes:
