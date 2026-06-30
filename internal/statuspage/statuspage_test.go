@@ -347,6 +347,57 @@ func TestBuildHTTPErrorPageSurfacesSpecificInternalErrorDetail(t *testing.T) {
 	}
 }
 
+func TestChineseStatusPagesDoNotContainMojibake(t *testing.T) {
+	pages := []Page{
+		BuildAuthInvalidCredentialsPage("zh"),
+		BuildAuthEmptyCredentialsPage("zh"),
+		BuildAuthSessionSaveErrorPage("zh"),
+		BuildRedirectInvalidTargetPage("zh"),
+		BuildHTTPErrorPage("zh", http.StatusNotFound, ""),
+		BuildHTTPErrorPage("zh", http.StatusForbidden, ""),
+		BuildHTTPErrorPage("zh", http.StatusBadRequest, ""),
+		BuildHTTPErrorPage("zh", http.StatusInternalServerError, "boom"),
+	}
+	for _, page := range pages {
+		text := page.Title + page.Eyebrow + page.Heading + page.Lead + page.Detail + page.StatusLabel
+		for _, action := range page.Actions {
+			text += action.Label
+		}
+		if containsMojibake(text) {
+			t.Fatalf("status page contains mojibake: %#v", page)
+		}
+	}
+
+	warnings := []string{
+		formatRenderIssue("zh", "theme", errors.New("boom")),
+		formatRenderIssue("zh", "background", errors.New("boom")),
+		formatSettingsRenderIssue("zh", "site_icon", errors.New("boom")),
+		formatOptionsLoadIssue("zh", errors.New("boom")),
+		formatHomeRenderIssue("zh", "site_icon", errors.New("boom")),
+		formatBodyStyleRecoveryIssue("zh", "settings"),
+		formatBodyStyleRecoveryIssue("zh", "home"),
+		formatBodyStyleRecoveryIssue("zh", ""),
+		localStatusText(http.StatusBadRequest),
+		localStatusText(http.StatusForbidden),
+		localStatusText(http.StatusNotFound),
+		localStatusText(http.StatusInternalServerError),
+	}
+	for _, warning := range warnings {
+		if containsMojibake(warning) {
+			t.Fatalf("status warning contains mojibake: %q", warning)
+		}
+	}
+}
+
+func containsMojibake(text string) bool {
+	for _, marker := range []string{"鐧", "璇", "涓", "銆", "锛", "鍥", "椤", "閾", "绋", "褰", "杩", "缂", "榛", "澶", "鍙", "閰", "鐘", "浼", "鏈", "搴", "绔"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidatePageRenderOptionsReturnsErrorWhenSiteIconInvalid(t *testing.T) {
 	err := ValidatePageRenderOptions(model.Application{Locale: "en", SiteIcon: "not-a-real-icon"})
 	if err == nil {

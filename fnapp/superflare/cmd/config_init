@@ -10,12 +10,25 @@ else
     ETC_DIR="$(CDPATH= cd -- "${SCRIPT_DIR}/../etc" 2>/dev/null && pwd)"
 fi
 
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/common.sh"
+
 emit_wizard_value() {
     local key="$1"
     local value="$2"
 
     printf '%s=%s\n' "${key}" "${value}"
 }
+
+disable_login="$(read_env_value "${ETC_DIR}/.env" "FLARE_DISABLE_LOGIN")"
+case "${disable_login}" in
+    true|1|yes|on)
+        emit_wizard_value "wizard_login_enabled" "false"
+        ;;
+    *)
+        emit_wizard_value "wizard_login_enabled" "true"
+        ;;
+esac
 
 # App settings should never reveal the current credentials. Leave all fields
 # blank so this screen only acts as a reset form.

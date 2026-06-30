@@ -2,6 +2,7 @@ package home
 
 import (
 	"html/template"
+	"sync"
 
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
@@ -9,10 +10,70 @@ import (
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
+type helpRuntimeSnapshot struct {
+	EnableGuide  bool
+	EnableEditor bool
+}
+
+type helpRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg helpRuntimeSnapshot
+}
+
+func (h *helpRuntimeHolder) Load() helpRuntimeSnapshot {
+	if h == nil {
+		return helpRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return helpRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *helpRuntimeHolder) Store(cfg helpRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var helpRuntimeFlags = &helpRuntimeHolder{}
+
+func helpRuntimeSnapshotFromFlags(flags model.Flags) helpRuntimeSnapshot {
+	return helpRuntimeSnapshot{
+		EnableGuide:  flags.EnableGuide,
+		EnableEditor: flags.EnableEditor,
+	}
+}
+
+func SetHelpRuntimeFlags(flags model.Flags) {
+	helpRuntimeFlags.Store(helpRuntimeSnapshotFromFlags(flags))
+}
+
+func currentHelpRuntime() helpRuntimeSnapshot {
+	helpRuntimeFlags.mu.RLock()
+	hasValue := helpRuntimeFlags.set
+	cfg := helpRuntimeFlags.cfg
+	helpRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = helpRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	helpRuntimeFlags.Store(cfg)
+	return cfg
+}
+
 var getHelpIconByName = mdi.GetIconByName
 
 func GenerateHelpTemplate(locale string) template.HTML {
 	locale = i18n.NormalizeLocale(locale)
+	runtime := currentHelpRuntime()
 	apps := []model.Bookmark{
 		{
 			Name: i18n.T(locale, "page_home"),
@@ -34,7 +95,7 @@ func GenerateHelpTemplate(locale string) template.HTML {
 		},
 	}
 
-	if define.AppFlags.EnableGuide {
+	if runtime.EnableGuide {
 		apps = append(apps, model.Bookmark{
 			Name: localeLabel(locale, "使用向导", "Guide"),
 			URL:  define.RegularPages.Guide.Path,
@@ -43,7 +104,7 @@ func GenerateHelpTemplate(locale string) template.HTML {
 		})
 	}
 
-	if define.AppFlags.EnableEditor {
+	if runtime.EnableEditor {
 		apps = append(apps, model.Bookmark{
 			Name: localeLabel(locale, "在线编辑", "Editor"),
 			URL:  define.RegularPages.Editor.Path,

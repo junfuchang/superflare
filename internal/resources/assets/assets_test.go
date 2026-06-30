@@ -31,6 +31,7 @@ func TestDefaultIconURLsContainVersion(t *testing.T) {
 }
 
 func TestWebsiteIconRoutesServeEmbeddedAssets(t *testing.T) {
+	setupAssetsConfigDir(t)
 	define.Init()
 	define.AppFlags.DebugMode = true
 
@@ -55,11 +56,65 @@ func TestWebsiteIconRoutesServeEmbeddedAssets(t *testing.T) {
 	}
 }
 
+func TestWebsiteIconRoutesKeepDebugCachePolicyAfterAppFlagsChange(t *testing.T) {
+	setupAssetsConfigDir(t)
+	define.Init()
+	originalFlags := define.AppFlags
+	defer func() { define.AppFlags = originalFlags }()
+
+	define.AppFlags.DebugMode = true
+	e := echo.New()
+	RegisterRouting(e)
+
+	define.AppFlags.DebugMode = false
+
+	req := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected debug cache policy to stay bound to route registration, got %q", got)
+	}
+}
+
+func TestOptimizeResourceCacheTimeKeepsDebugModeAfterAppFlagsChange(t *testing.T) {
+	setupAssetsConfigDir(t)
+	define.Init()
+	originalFlags := define.AppFlags
+	defer func() { define.AppFlags = originalFlags }()
+
+	define.AppFlags.DebugMode = true
+	e := echo.New()
+	e.Use(optimizeResourceCacheTime())
+	e.GET("/assets/demo.css", func(c *echo.Context) error {
+		return c.String(http.StatusOK, "body{}")
+	})
+
+	define.AppFlags.DebugMode = false
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/demo.css", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("asset status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected debug middleware cache policy to stay bound, got %q", got)
+	}
+}
+
 func TestSiteIconProxyFallsBackToBuiltinBookmarkIcon(t *testing.T) {
+	setupAssetsConfigDir(t)
 	define.Init()
 	define.AppFlags.DebugMode = true
-	define.ThemeCurrent = "blackboard"
-	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
+	define.StoreThemeRuntimeSnapshot(define.ThemeRuntimeSnapshot{
+		Name:    "blackboard",
+		Primary: "rgba(255, 253, 234, 1)",
+	})
 	if err := mdi.Init(); err != nil {
 		t.Fatalf("mdi.Init: %v", err)
 	}
@@ -87,10 +142,13 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIcon(t *testing.T) {
 }
 
 func TestSiteIconProxyFallsBackToBuiltinBookmarkIconWithoutMDICache(t *testing.T) {
+	setupAssetsConfigDir(t)
 	define.Init()
 	define.AppFlags.DebugMode = true
-	define.ThemeCurrent = "blackboard"
-	define.ThemePrimaryColor = ""
+	define.StoreThemeRuntimeSnapshot(define.ThemeRuntimeSnapshot{
+		Name:    "blackboard",
+		Primary: "",
+	})
 
 	originalMemFs := mdi.MemFs
 	mdi.MemFs = nil
@@ -119,10 +177,13 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIconWithoutMDICache(t *testing.T
 }
 
 func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
+	setupAssetsConfigDir(t)
 	define.Init()
 	define.AppFlags.DebugMode = true
-	define.ThemeCurrent = "blackboard"
-	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
+	define.StoreThemeRuntimeSnapshot(define.ThemeRuntimeSnapshot{
+		Name:    "blackboard",
+		Primary: "rgba(255, 253, 234, 1)",
+	})
 	if err := mdi.Init(); err != nil {
 		t.Fatalf("mdi.Init: %v", err)
 	}
@@ -166,6 +227,25 @@ func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
 		t.Fatalf("site icon proxy cache-hit content-type = %q", got)
 	}
+}
+
+func setupAssetsConfigDir(t *testing.T) string {
+	t.Helper()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\n"), 0644); err != nil {
+		t.Fatalf("WriteFile config.yml: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+	return tmpDir
 }
 
 func TestServeUserAssetReturnsServerErrorWhenGetwdFails(t *testing.T) {

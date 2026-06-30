@@ -69,8 +69,13 @@ func TestGetUserHomePageRejectsNonHomePageContent(t *testing.T) {
 
 func TestRenderReturnsStyledErrorPageWhenGuideSourceUnavailable(t *testing.T) {
 	origFlags := define.AppFlags
-	defer func() { define.AppFlags = origFlags }()
+	origRuntime, origRuntimeSet := saveGuideRuntimeFlags()
+	defer func() {
+		define.AppFlags = origFlags
+		restoreGuideRuntimeFlags(origRuntime, origRuntimeSet)
+	}()
 	define.AppFlags = model.Flags{Port: 1}
+	guideRuntimeFlags.Store(guideRuntimeSnapshotFromFlags(define.AppFlags))
 
 	tmpDir := t.TempDir()
 	oldWd, err := os.Getwd()
@@ -131,4 +136,45 @@ func TestRenderReturnsStyledErrorPageWhenConfigBroken(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "status-panel") {
 		t.Fatalf("expected styled status page, got %s", rec.Body.String())
 	}
+}
+
+func TestGetUserHomePageUsesStoredRuntimePortAfterAppFlagsChange(t *testing.T) {
+	origFetch := getGuideHTML
+	origFlags := define.AppFlags
+	origRuntime, origRuntimeSet := saveGuideRuntimeFlags()
+	t.Cleanup(func() {
+		getGuideHTML = origFetch
+		define.AppFlags = origFlags
+		restoreGuideRuntimeFlags(origRuntime, origRuntimeSet)
+	})
+
+	define.AppFlags = model.Flags{Port: 3636}
+	guideRuntimeFlags.Store(guideRuntimeSnapshotFromFlags(define.AppFlags))
+	define.AppFlags = model.Flags{Port: 3737}
+
+	var gotURL string
+	getGuideHTML = func(url string) (string, error) {
+		gotURL = url
+		return `<!doctype html><html><head><title>x</title></head><body><div class="pageview" id="page-home"></div></body></html>`, nil
+	}
+
+	if _, err := getUserHomePage(); err != nil {
+		t.Fatalf("getUserHomePage: %v", err)
+	}
+	if gotURL != "http://localhost:3636/" {
+		t.Fatalf("expected stored runtime port to be used, got %q", gotURL)
+	}
+}
+
+func saveGuideRuntimeFlags() (guideRuntimeSnapshot, bool) {
+	guideRuntimeFlags.mu.RLock()
+	defer guideRuntimeFlags.mu.RUnlock()
+	return guideRuntimeFlags.cfg, guideRuntimeFlags.set
+}
+
+func restoreGuideRuntimeFlags(cfg guideRuntimeSnapshot, set bool) {
+	guideRuntimeFlags.mu.Lock()
+	guideRuntimeFlags.cfg = cfg
+	guideRuntimeFlags.set = set
+	guideRuntimeFlags.mu.Unlock()
 }

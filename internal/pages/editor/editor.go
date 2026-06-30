@@ -56,6 +56,61 @@ const editorNoticeQueryKey = "notice"
 const editorNoticeSaveSuccess = "save_success"
 const editorNoticeRestoreSuccess = "restore_success"
 
+type editorRuntimeSnapshot struct {
+	DebugMode bool
+}
+
+type editorRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg editorRuntimeSnapshot
+}
+
+func (h *editorRuntimeHolder) Load() editorRuntimeSnapshot {
+	if h == nil {
+		return editorRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return editorRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *editorRuntimeHolder) Store(cfg editorRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var editorRuntimeFlags = &editorRuntimeHolder{}
+
+func editorRuntimeSnapshotFromFlags(flags model.Flags) editorRuntimeSnapshot {
+	return editorRuntimeSnapshot{DebugMode: flags.DebugMode}
+}
+
+func currentEditorRuntime() editorRuntimeSnapshot {
+	editorRuntimeFlags.mu.RLock()
+	hasValue := editorRuntimeFlags.set
+	cfg := editorRuntimeFlags.cfg
+	editorRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = editorRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	editorRuntimeFlags.Store(cfg)
+	return cfg
+}
+
+func SetRuntimeFlags(flags model.Flags) {
+	editorRuntimeFlags.Store(editorRuntimeSnapshotFromFlags(flags))
+}
+
 //go:embed editor-assets
 var editorAssets embed.FS
 
@@ -79,7 +134,7 @@ func RegisterRouting(e *echo.Echo) {
 
 func RegisterAssetRouting(e *echo.Echo) {
 	var assetFS fs.FS
-	if define.AppFlags.DebugMode && registerLocalVendorAssets(e) {
+	if currentEditorRuntime().DebugMode && registerLocalVendorAssets(e) {
 		assetFS = os.DirFS("embed/assets/vendor/editor-assets")
 		// Local development can run without copying generated assets first.
 	} else if introAssets, err := fs.Sub(editorAssets, "editor-assets"); err == nil {
@@ -118,7 +173,7 @@ func serveEditorAsset(assetFS fs.FS, name string, contentType string) echo.Handl
 }
 
 func getDebugAssetVersion() string {
-	if define.AppFlags.DebugMode {
+	if currentEditorRuntime().DebugMode {
 		return "?v=dev"
 	}
 	return ""
@@ -387,6 +442,12 @@ func validateRestorePayload(name string, raw []byte) error {
 }
 
 func writeRestoreFilesAtomically(files map[string][]byte) error {
+	return data.WithConfigWriteLock(func() error {
+		return writeRestoreFilesAtomicallyLocked(files)
+	})
+}
+
+func writeRestoreFilesAtomicallyLocked(files map[string][]byte) error {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -538,13 +599,7 @@ func refreshRuntimeLoginConfig() error {
 	if err != nil {
 		return err
 	}
-	updated := define.AppSourceFlags
-	if updated.Port == 0 {
-		updated = define.AppBaseFlags
-	}
-	if updated.Port == 0 {
-		updated = define.AppFlags
-	}
+	updated := define.SourceAppRuntimeFlags()
 	if strings.TrimSpace(user) != "" {
 		updated.User = strings.TrimSpace(user)
 		updated.UserIsGenerated = false
@@ -553,14 +608,6 @@ func refreshRuntimeLoginConfig() error {
 		updated.Pass = strings.TrimSpace(pass)
 		updated.PassIsGenerated = false
 	}
-	define.AppBaseFlags.User = updated.User
-	define.AppBaseFlags.Pass = updated.Pass
-	define.AppBaseFlags.UserIsGenerated = updated.UserIsGenerated
-	define.AppBaseFlags.PassIsGenerated = updated.PassIsGenerated
-	define.AppFlags.User = updated.User
-	define.AppFlags.Pass = updated.Pass
-	define.AppFlags.UserIsGenerated = updated.UserIsGenerated
-	define.AppFlags.PassIsGenerated = updated.PassIsGenerated
 	auth.StoreLoginRuntimeConfigFromFlags(updated)
 	return nil
 }
@@ -569,7 +616,7 @@ func refreshRequestLoginRuntime(c *echo.Context) {
 	if c == nil {
 		return
 	}
-	auth.StoreLoginRuntimeConfigForRequest(c, auth.SnapshotLoginRuntimeConfigFromFlags(define.AppFlags))
+	auth.StoreLoginRuntimeConfigForRequest(c, auth.SnapshotLoginRuntimeConfigFromFlags(define.CurrentAppRuntimeFlags()))
 }
 
 func rollbackPendingRestoreFiles(items []pendingRestoreFile, appliedIndex int) error {
@@ -978,7 +1025,7 @@ func render(c *echo.Context) error {
 	defer pool.PutTemplateMap(m)
 	m["PageName"] = "Editor"
 	m["SettingPages"] = define.SettingPages
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = currentEditorRuntime().DebugMode
 	m["DebugAssetVersion"] = getDebugAssetVersion()
 	m["DataCategories"] = template.HTML(dataCategories)
 	m["DataBookmarks"] = template.HTML(dataBookmarks)

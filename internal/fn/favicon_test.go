@@ -2,13 +2,17 @@ package fn
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestGetSiteFaviconURL_ValidURL(t *testing.T) {
@@ -20,7 +24,7 @@ func TestGetSiteFaviconURL_ValidURL(t *testing.T) {
 }
 
 func TestGetSiteFaviconURL_InvalidOrUnsupportedURL(t *testing.T) {
-	tests := []string{"", "://invalid", "chrome-extension://abc/index.html", "/relative/path"}
+	tests := []string{"", "://invalid", "/relative/path"}
 	for _, input := range tests {
 		if out := GetSiteFaviconURL(input); out != "" {
 			t.Fatalf("GetSiteFaviconURL(%q) should be empty, got %q", input, out)
@@ -38,13 +42,10 @@ func TestGetSiteFavicon_ValidURL(t *testing.T) {
 	}
 }
 
-func TestGetSiteFavicon_LocalURLStaysDirect(t *testing.T) {
+func TestGetSiteFavicon_LocalURLUsesProxyFallbackRoute(t *testing.T) {
 	out := GetSiteFavicon("http://192.168.1.20:8080/a/b", "fallback")
-	if !strings.Contains(out, `src="http://192.168.1.20:8080/favicon.ico"`) {
-		t.Fatalf("GetSiteFavicon should keep local-network favicon direct, got %q", out)
-	}
-	if strings.Contains(out, "/assets/site-icons?src=") {
-		t.Fatalf("GetSiteFavicon local-network favicon should not use proxy route, got %q", out)
+	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2F192.168.1.20%3A8080%2Ffavicon.ico"`) {
+		t.Fatalf("GetSiteFavicon should use proxy fallback route for local-network favicon, got %q", out)
 	}
 }
 
@@ -63,9 +64,9 @@ func TestGetSiteFaviconAssetURLFast_PublicCacheMissReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestGetSiteFaviconAssetURL_LocalUsesDirectURL(t *testing.T) {
+func TestGetSiteFaviconAssetURL_LocalUsesProxyFallbackRoute(t *testing.T) {
 	out := GetSiteFaviconAssetURL("https://nas.local/apps")
-	const expected = "https://nas.local/favicon.ico"
+	const expected = `/assets/site-icons?src=https%3A%2F%2Fnas.local%2Ffavicon.ico`
 	if out != expected {
 		t.Fatalf("GetSiteFaviconAssetURL local: expected %q, got %q", expected, out)
 	}
@@ -317,6 +318,354 @@ func TestFetchPublicSiteFaviconAcceptsSVGWithTextPlainHeader(t *testing.T) {
 	}
 	if contentType != "image/svg+xml" {
 		t.Fatalf("FetchPublicSiteFavicon content type = %q", contentType)
+	}
+}
+
+func TestFetchPublicSiteFaviconAllowsRedirectToPrivateTarget(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/favicon.ico", nil)
+
+	err := validateSiteFaviconRedirect(req, []*http.Request{
+		httptest.NewRequest(http.MethodGet, "https://example.com/favicon.ico", nil),
+	})
+	if err != nil {
+		t.Fatalf("expected favicon redirect to private target to be allowed, got %v", err)
+	}
+}
+
+func TestFetchPublicSiteFaviconAllowsPublicRedirectToImageAssetPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	siteIconHTTPClient = &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: validateSiteFaviconRedirect,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/favicon.ico":
+				return &http.Response{
+					StatusCode: http.StatusFound,
+					Header: http.Header{
+						"Location": []string{"https://example.com/goofy/ies/douyin_web/public/favicon.ico"},
+					},
+					Body:    io.NopCloser(strings.NewReader("")),
+					Request: req,
+				}, nil
+			case "/goofy/ies/douyin_web/public/favicon.ico":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+					Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+					Request:    req,
+				}, nil
+			default:
+				t.Fatalf("unexpected favicon request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+
+	data, contentType, err := FetchPublicSiteFavicon("https://example.com/favicon.ico")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon should allow public favicon redirect asset paths: %v", err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Fatalf("redirected favicon content type = %q", contentType)
+	}
+	if !strings.Contains(string(data), "<svg") {
+		t.Fatalf("redirected favicon body = %q", string(data))
+	}
+}
+
+func TestFetchPublicSiteFaviconAcceptsPublicImageAssetPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/static/icons/favicon.svg" {
+				t.Fatalf("unexpected favicon request path: %s", req.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	data, contentType, err := FetchPublicSiteFavicon("https://example.com/static/icons/favicon.svg")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon should accept public image asset paths: %v", err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Fatalf("public image asset content type = %q", contentType)
+	}
+	if !strings.Contains(string(data), "<svg") {
+		t.Fatalf("public image asset body = %q", string(data))
+	}
+}
+
+func TestFetchPublicSiteFaviconAcceptsLocalNetworkSource(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/favicon.ico" {
+			t.Fatalf("unexpected local favicon path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+	}))
+	defer server.Close()
+
+	oldClient := siteIconHTTPClient
+	siteIconHTTPClient = server.Client()
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	data, contentType, err := FetchPublicSiteFavicon(server.URL + "/favicon.ico")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon should accept local-network favicon sources: %v", err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Fatalf("local favicon content type = %q", contentType)
+	}
+	if !strings.Contains(string(data), "<svg") {
+		t.Fatalf("local favicon body = %q", string(data))
+	}
+}
+
+func TestFetchPublicSiteFaviconDoesNotRejectNonHTTPSchemeBeforeFetch(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	_, _, err = FetchPublicSiteFavicon("ftp://example.com/favicon.ico")
+	if err == nil {
+		t.Fatal("unsupported protocols should still fail when the client cannot fetch them")
+	}
+	if strings.Contains(err.Error(), "unsupported site favicon url") || strings.Contains(err.Error(), "unsupported scheme") {
+		t.Fatalf("non-http favicon schemes should not be rejected by preflight rules, got %v", err)
+	}
+}
+
+func TestFetchPublicSiteFaviconDiscoversHTMLDeclaredIconWhenRootIcoFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/favicon.ico":
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"text/plain"}},
+					Body:       io.NopCloser(strings.NewReader("not found")),
+					Request:    req,
+				}, nil
+			case "/":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+					Body: io.NopCloser(strings.NewReader(`<!doctype html>
+						<html><head>
+							<link rel="icon" href="/assets/favicon.svg">
+						</head><body></body></html>`)),
+					Request: req,
+				}, nil
+			case "/assets/favicon.svg":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+					Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+					Request:    req,
+				}, nil
+			default:
+				t.Fatalf("unexpected favicon discovery request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+
+	iconURL := "https://example.com/favicon.ico"
+	data, contentType, err := FetchPublicSiteFavicon(iconURL)
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon should discover html-declared favicon: %v", err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Fatalf("discovered favicon content type = %q", contentType)
+	}
+	if !strings.Contains(string(data), "<svg") {
+		t.Fatalf("discovered favicon body = %q", string(data))
+	}
+	if cached, cachedType, err := readCachedSiteFavicon(iconURL); err != nil || cachedType != "image/svg+xml" || !strings.Contains(string(cached), "<svg") {
+		t.Fatalf("discovered favicon should be cached under root favicon key, type=%q err=%v body=%q", cachedType, err, string(cached))
+	}
+}
+
+func TestWarmSiteFaviconURLLimitsGlobalConcurrentFetches(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	release := make(chan struct{})
+	var active int32
+	var maxActive int32
+	siteIconHTTPClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			current := atomic.AddInt32(&active, 1)
+			for {
+				seen := atomic.LoadInt32(&maxActive)
+				if current <= seen || atomic.CompareAndSwapInt32(&maxActive, seen, current) {
+					break
+				}
+			}
+			<-release
+			atomic.AddInt32(&active, -1)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	const maxAllowedConcurrentWarmups = siteIconWarmLimit
+	for i := 0; i < maxAllowedConcurrentWarmups*3; i++ {
+		WarmSiteFaviconURL(fmt.Sprintf("http://93.184.216.%d/favicon.ico", 34+i))
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&maxActive) > maxAllowedConcurrentWarmups {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+
+	if got := atomic.LoadInt32(&maxActive); got > maxAllowedConcurrentWarmups {
+		t.Fatalf("expected favicon warmup concurrency <= %d, got %d", maxAllowedConcurrentWarmups, got)
+	}
+
+	waitDeadline := time.Now().Add(time.Second)
+	for atomic.LoadInt32(&active) != 0 && time.Now().Before(waitDeadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&active); got != 0 {
+		t.Fatalf("expected favicon warmup requests to finish after release, active=%d", got)
+	}
+}
+
+func TestSafeSiteFaviconTransportUsesEnvironmentProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+
+	transport, ok := safeSiteFaviconTransport().(*http.Transport)
+	if !ok {
+		t.Fatalf("safeSiteFaviconTransport should return *http.Transport, got %T", safeSiteFaviconTransport())
+	}
+	if transport.Proxy == nil {
+		t.Fatal("safe site favicon transport should use environment proxy settings")
+	}
+}
+
+func TestFetchPublicSiteFaviconCanUseLocalEnvironmentProxy(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL == nil || r.URL.Host != "93.184.216.55" || r.URL.Path != "/favicon.ico" {
+			t.Fatalf("unexpected proxied favicon request URL: %v", r.URL)
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+	}))
+	defer proxy.Close()
+
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+
+	oldClient := siteIconHTTPClient
+	siteIconHTTPClient = &http.Client{
+		Timeout:       2 * time.Second,
+		Transport:     safeSiteFaviconTransport(),
+		CheckRedirect: validateSiteFaviconRedirect,
+	}
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	data, contentType, err := FetchPublicSiteFavicon("http://93.184.216.55/favicon.ico")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon with local environment proxy: %v", err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Fatalf("proxied favicon content type = %q", contentType)
+	}
+	if !strings.Contains(string(data), "<svg") {
+		t.Fatalf("proxied favicon body = %q", string(data))
 	}
 }
 

@@ -121,7 +121,7 @@ func TestGeneratedEditorTemplateMatchesSourceTemplate(t *testing.T) {
 }
 
 func TestGeneratedSettingsTemplateMatchesSourceTemplate(t *testing.T) {
-	for _, name := range []string{"settings.html", "settings-appearance.html", "settings-theme.html"} {
+	for _, name := range []string{"settings.html", "settings-appearance.html", "settings-theme.html", "settings-others.html"} {
 		src, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", name)))
 		if err != nil {
 			t.Fatalf("read source template %s: %v", name, err)
@@ -137,6 +137,30 @@ func TestGeneratedSettingsTemplateMatchesSourceTemplate(t *testing.T) {
 		if !bytes.Equal(bytes.ReplaceAll(minifiedSource, []byte("\r\n"), []byte("\n")), bytes.ReplaceAll(gen, []byte("\r\n"), []byte("\n"))) {
 			t.Fatalf("generated template %s is out of sync with embed/templates/%s", name, name)
 		}
+	}
+}
+
+func TestSettingsOthersDefaultCredentialWarningIsInLoginSection(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", "settings-others.html")))
+	if err != nil {
+		t.Fatalf("read source settings-others template: %v", err)
+	}
+	page := string(raw)
+
+	loggedInLoginForm := strings.Index(page, `<form method="POST" action="{{.LogoutURI}}">`)
+	warning := strings.Index(page, `default_login_credentials_warning`)
+	loginConfigForm := strings.Index(page, `<form method="POST" action="{{ .SettingPages.Others.Path }}">`)
+	if loggedInLoginForm == -1 {
+		t.Fatal("settings-others template missing logged-in login form")
+	}
+	if warning == -1 {
+		t.Fatal("settings-others template missing default credential warning")
+	}
+	if loginConfigForm == -1 {
+		t.Fatal("settings-others template missing login config form")
+	}
+	if warning < loggedInLoginForm || warning > loginConfigForm {
+		t.Fatalf("default credential warning should render in the Login section before Login Configuration; positions login=%d warning=%d loginConfig=%d", loggedInLoginForm, warning, loginConfigForm)
 	}
 }
 

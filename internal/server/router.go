@@ -68,11 +68,22 @@ func validateRouterFlags(flags model.Flags) error {
 	return nil
 }
 
+func materializeRuntimeSecrets(flags model.Flags) (model.Flags, bool) {
+	if flags.DisableLoginMode {
+		return flags, false
+	}
+	if strings.TrimSpace(flags.CookieSecret) != define.DEFAULT_COOKIE_SECRET {
+		return flags, false
+	}
+	flags.CookieSecret = data.GenerateRandomString(64)
+	return flags, true
+}
+
 // NewRouter builds the Echo app and returns an http.Handler for the server.
 // It returns an error if any required initialization (templates, mdi, guide, editor) fails.
-// The given appFlags are used as the single source of truth and synced to define.AppFlags.
+// The given appFlags are used as the single source of truth and stored as the runtime snapshot.
 func NewRouter(appFlags *model.Flags) (http.Handler, error) {
-	effectiveFlags := define.AppFlags
+	effectiveFlags := define.CurrentAppRuntimeFlags()
 	if appFlags != nil {
 		effectiveFlags = *appFlags
 	}
@@ -80,6 +91,8 @@ func NewRouter(appFlags *model.Flags) (http.Handler, error) {
 	if err := validateRouterFlags(effectiveFlags); err != nil {
 		return nil, fmt.Errorf("validate router flags: %w", err)
 	}
+	var replacedDefaultCookieSecret bool
+	effectiveFlags, replacedDefaultCookieSecret = materializeRuntimeSecrets(effectiveFlags)
 	if err := data.EnsureAppConfigExists(); err != nil {
 		return nil, fmt.Errorf("initialize app config: %w", err)
 	}
@@ -88,15 +101,24 @@ func NewRouter(appFlags *model.Flags) (http.Handler, error) {
 	}
 
 	if appFlags != nil {
-		define.AppSourceFlags = effectiveFlags
-		define.AppBaseFlags = effectiveFlags
-		define.AppFlags = effectiveFlags
+		define.StoreAppRuntimeFlags(effectiveFlags, effectiveFlags, effectiveFlags)
 		auth.StoreLoginRuntimeConfigFromFlags(effectiveFlags)
+	}
+	if replacedDefaultCookieSecret {
+		logger.GetLogger().Warn("登录已启用且 CookieSecret 仍为默认值，已生成仅当前进程有效的临时会话密钥；请设置 FLARE_COOKIE_SECRET 或 --cookie-secret 以保持重启后的登录会话稳定")
 	}
 
 	if err := define.InitE(); err != nil {
 		return nil, fmt.Errorf("initialize theme state: %w", err)
 	}
+
+	assets.SetRuntimeFlags(effectiveFlags)
+	templates.SetRuntimeFlags(effectiveFlags)
+	mdi.SetRuntimeFlags(effectiveFlags)
+	editor.SetRuntimeFlags(effectiveFlags)
+	home.StoreRuntimeFlags(effectiveFlags)
+	home.SetHelpRuntimeFlags(effectiveFlags)
+	guide.SetRuntimeFlags(effectiveFlags)
 
 	e := echo.New()
 	e.HTTPErrorHandler = statuspage.HTTPErrorHandler
@@ -107,13 +129,14 @@ func NewRouter(appFlags *model.Flags) (http.Handler, error) {
 		e.Use(logger.NewEchoWithConfig(log, logger.LoggerConfig{Skipper: logger.DefaultRequestLogSkipper}))
 	}
 
-	auth.RequestHandle(e)
+	auth.RequestHandleWithFlags(e, effectiveFlags)
 	if err := templates.RegisterRouting(e); err != nil {
 		return nil, fmt.Errorf("initialize templates: %w", err)
 	}
+	settings.SetRuntimeFlags(effectiveFlags)
 	assets.RegisterRouting(e)
 	health.RegisterRouting(e)
-	if !define.AppFlags.EnableEditor {
+	if !effectiveFlags.EnableEditor {
 		editor.RegisterAssetRouting(e)
 	}
 	home.RegisterRouting(e)
@@ -130,13 +153,13 @@ func NewRouter(appFlags *model.Flags) (http.Handler, error) {
 	mdi.RegisterRouting(e)
 	redir.RegisterRouting(e)
 
-	if define.AppFlags.EnableGuide {
+	if effectiveFlags.EnableGuide {
 		if err := guide.Init(); err != nil {
 			return nil, fmt.Errorf("initialize guide page: %w", err)
 		}
 		guide.RegisterRouting(e)
 	}
-	if define.AppFlags.EnableEditor {
+	if effectiveFlags.EnableEditor {
 		if err := editor.Init(); err != nil {
 			return nil, fmt.Errorf("initialize editor: %w", err)
 		}

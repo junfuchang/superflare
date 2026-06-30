@@ -7,14 +7,35 @@ import (
 	"testing"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 )
+
+func saveMDIRuntimeFlags() (mdiRuntimeSnapshot, bool) {
+	mdiRuntimeFlags.mu.RLock()
+	defer mdiRuntimeFlags.mu.RUnlock()
+	return mdiRuntimeFlags.cfg, mdiRuntimeFlags.set
+}
+
+func restoreMDIRuntimeFlags(cfg mdiRuntimeSnapshot, set bool) {
+	mdiRuntimeFlags.mu.Lock()
+	mdiRuntimeFlags.cfg = cfg
+	mdiRuntimeFlags.set = set
+	mdiRuntimeFlags.mu.Unlock()
+}
+
+func storeMDITestTheme(name string, primary string) {
+	define.StoreThemeRuntimeSnapshot(define.ThemeRuntimeSnapshot{
+		Name:      name,
+		Primary:   primary,
+		BodyStyle: "",
+	})
+}
 
 func TestGetIconByNameNormalizesMDIInput(t *testing.T) {
 	if err := Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	define.ThemeCurrent = "blackboard"
-	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
+	storeMDITestTheme("blackboard", "rgba(255, 253, 234, 1)")
 
 	for _, name := range []string{"home-circle", "homeCircle", "home_circle"} {
 		got := GetIconByName(name)
@@ -32,15 +53,14 @@ func TestGetIconByNameCustomThemeIncludesPrimaryColorInCacheKey(t *testing.T) {
 	if err := Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	define.ThemeCurrent = "custom"
-	define.ThemePrimaryColor = "rgba(255, 0, 0, 1)"
+	storeMDITestTheme("custom", "rgba(255, 0, 0, 1)")
 
 	first := GetIconByName("bookmark")
 	if !strings.Contains(first, "/assets/mdi/custom-") || !strings.Contains(first, "bookmark.svg") {
 		t.Fatalf("custom theme icon path should include custom namespace, got %s", first)
 	}
 
-	define.ThemePrimaryColor = "rgba(0, 128, 255, 1)"
+	storeMDITestTheme("custom", "rgba(0, 128, 255, 1)")
 	second := GetIconByName("bookmark")
 	if !strings.Contains(second, "/assets/mdi/custom-") || !strings.Contains(second, "bookmark.svg") {
 		t.Fatalf("custom theme icon path should include custom namespace, got %s", second)
@@ -66,8 +86,7 @@ func TestGetIconURLByNameUsesFallbackThemeColorWhenPrimaryMissing(t *testing.T) 
 	if err := Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	define.ThemeCurrent = "blackboard"
-	define.ThemePrimaryColor = ""
+	storeMDITestTheme("blackboard", "")
 
 	url := GetIconURLByName("bookmark")
 	if !strings.Contains(url, "/assets/mdi/blackboard-bookmark.svg") {
@@ -88,7 +107,7 @@ func TestGetIconSVGDataByNameWorksWithoutMemFs(t *testing.T) {
 	MemFs = nil
 	defer func() { MemFs = originalMemFs }()
 
-	define.ThemePrimaryColor = ""
+	storeMDITestTheme("blackboard", "")
 	raw, err := GetIconSVGDataByName("bookmark")
 	if err != nil {
 		t.Fatalf("GetIconSVGDataByName: %v", err)
@@ -98,5 +117,44 @@ func TestGetIconSVGDataByNameWorksWithoutMemFs(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), fallbackThemePrimaryColor) {
 		t.Fatalf("expected fallback theme color in svg payload, got %s", string(raw))
+	}
+}
+
+func TestGetIconByNameKeepsMinimumRequestModeAfterAppFlagsChange(t *testing.T) {
+	origFlags := define.AppFlags
+	origRuntime, origRuntimeSet := saveMDIRuntimeFlags()
+	defer func() {
+		define.AppFlags = origFlags
+		restoreMDIRuntimeFlags(origRuntime, origRuntimeSet)
+	}()
+
+	define.AppFlags = model.Flags{EnableMinimumRequest: true}
+	mdiRuntimeFlags.Store(mdiRuntimeSnapshotFromFlags(define.AppFlags))
+	define.AppFlags = model.Flags{EnableMinimumRequest: false}
+
+	got := GetIconByName("bookmark")
+	if !strings.Contains(got, "<svg") {
+		t.Fatalf("expected stored minimum-request mode to keep inline svg, got %s", got)
+	}
+}
+
+func TestGetIconURLByNameKeepsDebugSuffixAfterAppFlagsChange(t *testing.T) {
+	if err := Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	origFlags := define.AppFlags
+	origRuntime, origRuntimeSet := saveMDIRuntimeFlags()
+	defer func() {
+		define.AppFlags = origFlags
+		restoreMDIRuntimeFlags(origRuntime, origRuntimeSet)
+	}()
+
+	define.AppFlags = model.Flags{DebugMode: true}
+	mdiRuntimeFlags.Store(mdiRuntimeSnapshotFromFlags(define.AppFlags))
+	define.AppFlags = model.Flags{DebugMode: false}
+
+	got := GetIconURLByName("bookmark")
+	if !strings.HasSuffix(got, "?v=dev") {
+		t.Fatalf("expected stored debug mode to keep debug suffix, got %s", got)
 	}
 }

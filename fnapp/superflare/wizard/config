@@ -3,13 +3,20 @@
     "stepTitle": "登录设置",
     "items": [
       {
+        "type": "switch",
+        "field": "wizard_login_enabled",
+        "label": "启用登录保护",
+        "value": true,
+        "helpText": "开启后访问 SuperFlare 设置和编辑功能需要登录；关闭后会写入 FLARE_DISABLE_LOGIN=true，重启应用后无需登录。"
+      },
+      {
         "type": "text",
         "field": "wizard_login_user",
         "label": "登录用户名",
         "rules": [
           {
             "max": 64,
-            "message": "用户名长度需在 1-64 个字符之间"
+            "message": "用户名长度需要在 1-64 个字符之间"
           }
         ]
       },
@@ -25,7 +32,7 @@
       },
       {
         "type": "tips",
-        "helpText": "此处仅用于重置登录用户名和密码，当前值不会显示。用户名留空时保持当前值；密码两个输入框都留空时保持当前密码不变。保存后会同步写入应用 config.yml 与 .env，并自动重启 SuperFlare 使配置生效。"
+        "helpText": "用户名和密码用于重置 SuperFlare 登录凭据，当前值不会显示。用户名留空时保持当前值；两个密码框都留空时保持当前密码不变。保存后会同步写入应用 config.yml 与 .env，并自动重启 SuperFlare 使配置生效。"
       }
     ]
   }

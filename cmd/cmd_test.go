@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/junfuchang/superflare/cmd"
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/logger"
 	flags "github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 )
@@ -72,31 +74,34 @@ func captureOutput(f func()) string {
 
 func TestExecuteCLI_ShowHelp(t *testing.T) {
 	cliFlags := &model.Flags{ShowHelp: true}
-	options := &flags.FlagSet{}
+	options := flags.NewFlagSet("test", flags.ContinueOnError)
+	options.Int("port", define.DEFAULT_PORT, "listen port")
 
+	exit := false
 	output := captureOutput(func() {
-		_ = cmd.ExecuteCLI(cliFlags, options)
+		exit = cmd.ExecuteCLI(cliFlags, options)
 	})
 
-	assert.Contains(t, output, "支持命令")
-	assert.True(t, cmd.ExecuteCLI(cliFlags, options))
+	assert.Contains(t, output, "SuperFlare v")
+	assert.True(t, exit)
 }
 
 func TestExecuteCLI_ShowVersion(t *testing.T) {
 	cliFlags := &model.Flags{ShowVersion: true}
-	options := &flags.FlagSet{}
+	options := flags.NewFlagSet("test", flags.ContinueOnError)
 
+	exit := false
 	output := captureOutput(func() {
-		_ = cmd.ExecuteCLI(cliFlags, options)
+		exit = cmd.ExecuteCLI(cliFlags, options)
 	})
 
 	assert.Regexp(t, versionDatePattern, output)
-	assert.True(t, cmd.ExecuteCLI(cliFlags, options))
+	assert.True(t, exit)
 }
 
 func TestExecuteCLI_NoFlags(t *testing.T) {
 	cliFlags := &model.Flags{}
-	options := &flags.FlagSet{}
+	options := flags.NewFlagSet("test", flags.ContinueOnError)
 	assert.False(t, cmd.ExecuteCLI(cliFlags, options))
 }
 
@@ -270,6 +275,87 @@ func TestParseEFailsWhenConfigLoginCredentialsIncomplete(t *testing.T) {
 	}
 }
 
+func TestParseEGeneratedPasswordWarningDoesNotLogPlaintext(t *testing.T) {
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+
+	origArgs := os.Args
+	origLogger := logger.GetLogger()
+	origDefaults := define.DefaultEnvVars
+	origAppFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	defer func() {
+		os.Args = origArgs
+		logger.SetLogger(origLogger)
+		define.DefaultEnvVars = origDefaults
+		define.AppFlags = origAppFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+	}()
+
+	define.DefaultEnvVars.Pass = ""
+	os.Args = []string{"superflare"}
+
+	var out bytes.Buffer
+	logger.SetLogger(slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{})))
+
+	resolved, err := cmd.ParseE()
+	if err != nil {
+		t.Fatalf("ParseE: %v", err)
+	}
+	if !resolved.PassIsGenerated {
+		t.Fatal("expected generated password branch")
+	}
+	if resolved.Pass == "" {
+		t.Fatal("expected generated password to be non-empty")
+	}
+
+	logText := out.String()
+	if strings.Contains(logText, resolved.Pass) {
+		t.Fatalf("expected generated password to stay out of logs, got %s", logText)
+	}
+	if !strings.Contains(logText, "FLARE_PASS") || !strings.Contains(logText, "level=WARN") {
+		t.Fatalf("expected generated password warning, got %s", logText)
+	}
+}
+
+func TestParseEWarnsWhenDefaultAdminCredentialsRemainActive(t *testing.T) {
+	resetCmdEnv(t)
+	withTempCmdWorkDir(t)
+	origArgs := os.Args
+	origLogger := logger.GetLogger()
+	origAppFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	defer func() {
+		os.Args = origArgs
+		logger.SetLogger(origLogger)
+		define.AppFlags = origAppFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+	}()
+
+	if err := os.WriteFile("config.yml", []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: admin\nLoginPass: admin\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	os.Args = []string{"superflare"}
+
+	var out bytes.Buffer
+	logger.SetLogger(slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{})))
+
+	resolved, err := cmd.ParseE()
+	if err != nil {
+		t.Fatalf("ParseE: %v", err)
+	}
+	if resolved.User != "admin" || resolved.Pass != "admin" {
+		t.Fatalf("expected admin/admin defaults to remain active, got %q/%q", resolved.User, resolved.Pass)
+	}
+	if !strings.Contains(out.String(), "Default admin/admin login credentials are still active") {
+		t.Fatalf("expected default credential warning, got %s", out.String())
+	}
+}
+
 func TestParseEHelpBypassesDotEnvResolutionError(t *testing.T) {
 	if os.Getenv("SUPERFLARE_PARSE_HELP_HELPER") == "1" {
 		originalResolve := cmd.ResolveDotEnvPathForTest()
@@ -293,7 +379,7 @@ func TestParseEHelpBypassesDotEnvResolutionError(t *testing.T) {
 		t.Fatalf("helper process failed: %v\n%s", err, string(output))
 	}
 	text := string(output)
-	if !strings.Contains(text, "支持命令") {
+	if !strings.Contains(text, "SuperFlare v") {
 		t.Fatalf("expected help output, got %s", text)
 	}
 	if strings.Contains(text, "resolve .env path failed") {

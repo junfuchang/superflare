@@ -9,6 +9,7 @@ import (
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/pool"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
@@ -18,15 +19,12 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateSearchOptions(c *echo.Context) error {
-	if err := statuspage.BindCurrentOptions(c); err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
-	}
 	var body struct {
-		ShowSearchComponent     bool `form:"show-search-component"`
-		DisabledSearchAutoFocus bool `form:"disabled-search-auto-focus"`
-		SearchMode              string `form:"search-mode"`
-		SearchEngine            string `form:"search-engine"`
-		SearchEngineOpenMode    string `form:"search-engine-open-mode"`
+		ShowSearchComponent        bool   `form:"show-search-component"`
+		DisabledSearchAutoFocus    bool   `form:"disabled-search-auto-focus"`
+		SearchMode                 string `form:"search-mode"`
+		SearchEngine               string `form:"search-engine"`
+		SearchEngineOpenMode       string `form:"search-engine-open-mode"`
 		SearchEngineCustomTemplate string `form:"search-engine-custom-template"`
 	}
 	if err := c.Bind(&body); err != nil {
@@ -68,11 +66,12 @@ func pageSearch(c *echo.Context) error {
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = settingsroot.CurrentRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = "Search"
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
+	m["ShowSettingsSidebar"] = true
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo

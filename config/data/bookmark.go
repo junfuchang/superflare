@@ -92,7 +92,7 @@ func saveBookmarksToYamlFile(name string, data model.Bookmarks, isFavorite bool)
 	if err != nil {
 		return err
 	}
-	if err := saveFile(filePath, out); err != nil {
+	if err := saveFileLocked(filePath, out); err != nil {
 		log.Println("save bookmarks failed", name)
 		return fmt.Errorf("save bookmarks %s failed: %w", name, err)
 	}
@@ -198,11 +198,15 @@ func validateBookmarks(data model.Bookmarks, isFavorite bool) error {
 }
 
 func SaveFavoriteBookmarks(data model.Bookmarks) error {
-	return saveBookmarksToYamlFile("apps", data, true)
+	return withConfigWriteLock(func() error {
+		return saveBookmarksToYamlFile("apps", data, true)
+	})
 }
 
 func SaveNormalBookmarks(data model.Bookmarks) error {
-	return saveBookmarksToYamlFile("bookmarks", data, false)
+	return withConfigWriteLock(func() error {
+		return saveBookmarksToYamlFile("bookmarks", data, false)
+	})
 }
 
 func LoadFavoriteBookmarks() (model.Bookmarks, error) {

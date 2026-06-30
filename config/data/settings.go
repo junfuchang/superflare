@@ -2,11 +2,10 @@ package data
 
 import (
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/config/validation"
 	"github.com/junfuchang/superflare/internal/i18n"
 )
 
@@ -17,13 +16,13 @@ const (
 )
 
 const (
-	searchModeBookmarks = "bookmarks"
-	searchModeEngine    = "engine"
-	searchEngineBaidu   = "baidu"
-	searchEngineBing    = "bing"
-	searchEngineGoogle  = "google"
-	searchEngineDuck    = "duckduckgo"
-	searchEngineCustom  = "custom"
+	searchModeBookmarks     = "bookmarks"
+	searchModeEngine        = "engine"
+	searchEngineBaidu       = "baidu"
+	searchEngineBing        = "bing"
+	searchEngineGoogle      = "google"
+	searchEngineDuck        = "duckduckgo"
+	searchEngineCustom      = "custom"
 	searchEngineOpenSameTab = "same-tab"
 	searchEngineOpenNewTab  = "new-tab"
 )
@@ -47,9 +46,6 @@ var (
 		"onedark":    {},
 		"custom":     {},
 	}
-	hexColorPattern  = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
-	rgbColorPattern  = regexp.MustCompile(`^rgba?\((.*)\)$`)
-	cssNumberPattern = regexp.MustCompile(`^\d+(\.\d+)?$`)
 )
 
 func GetThemeNameErr() (string, error) {
@@ -68,81 +64,75 @@ func UpdateThemeSettings(theme string, themeBase string, background string, prim
 	if err := EnsureAppConfigExists(); err != nil {
 		return err
 	}
-	options, err := GetAllSettingsOptions()
-	if err != nil {
-		return err
-	}
-	options.Theme = theme
-	if theme != "custom" {
-		options.ThemeBase = theme
-	} else if strings.TrimSpace(themeBase) != "" {
-		options.ThemeBase = themeBase
-	}
-	if theme == "custom" || background != "" {
-		options.CustomThemeBackground = background
-	}
-	if theme == "custom" || primary != "" {
-		options.CustomThemePrimary = primary
-	}
-	if theme == "custom" || accent != "" {
-		options.CustomThemeAccent = accent
-	}
-	return saveAppConfigToYamlFile("config", options)
+	return updateLockedAppConfig("config", func(options model.Application) (model.Application, error) {
+		options.Theme = theme
+		if theme != "custom" {
+			options.ThemeBase = theme
+		} else if strings.TrimSpace(themeBase) != "" {
+			options.ThemeBase = themeBase
+		}
+		if theme == "custom" || background != "" {
+			options.CustomThemeBackground = background
+		}
+		if theme == "custom" || primary != "" {
+			options.CustomThemePrimary = primary
+		}
+		if theme == "custom" || accent != "" {
+			options.CustomThemeAccent = accent
+		}
+		return options, nil
+	})
 }
 
 func UpdateThemeAndBackgroundSettings(update model.Application) error {
 	if err := EnsureAppConfigExists(); err != nil {
 		return err
 	}
-	options, err := GetAllSettingsOptions()
-	if err != nil {
-		return err
-	}
-	options.Theme = update.Theme
-	if update.Theme != "custom" {
-		options.ThemeBase = update.Theme
-	} else if strings.TrimSpace(update.ThemeBase) != "" {
-		options.ThemeBase = update.ThemeBase
-	}
-	if update.Theme == "custom" || update.CustomThemeBackground != "" {
-		options.CustomThemeBackground = update.CustomThemeBackground
-	}
-	if update.Theme == "custom" || update.CustomThemePrimary != "" {
-		options.CustomThemePrimary = update.CustomThemePrimary
-	}
-	if update.Theme == "custom" || update.CustomThemeAccent != "" {
-		options.CustomThemeAccent = update.CustomThemeAccent
-	}
-	options.BackgroundImage = update.BackgroundImage
-	options.BackgroundImageMode = update.BackgroundImageMode
-	options.BackgroundBlur = update.BackgroundBlur
-	options.BackgroundOpacity = update.BackgroundOpacity
-	options.GlassEffect = update.GlassEffect
-	options.GlassIntensity = update.GlassIntensity
-	return saveAppConfigToYamlFile("config", options)
+	return updateLockedAppConfig("config", func(options model.Application) (model.Application, error) {
+		options.Theme = update.Theme
+		if update.Theme != "custom" {
+			options.ThemeBase = update.Theme
+		} else if strings.TrimSpace(update.ThemeBase) != "" {
+			options.ThemeBase = update.ThemeBase
+		}
+		if update.Theme == "custom" || update.CustomThemeBackground != "" {
+			options.CustomThemeBackground = update.CustomThemeBackground
+		}
+		if update.Theme == "custom" || update.CustomThemePrimary != "" {
+			options.CustomThemePrimary = update.CustomThemePrimary
+		}
+		if update.Theme == "custom" || update.CustomThemeAccent != "" {
+			options.CustomThemeAccent = update.CustomThemeAccent
+		}
+		options.BackgroundImage = update.BackgroundImage
+		options.BackgroundImageMode = update.BackgroundImageMode
+		options.BackgroundBlur = update.BackgroundBlur
+		options.BackgroundOpacity = update.BackgroundOpacity
+		options.GlassEffect = update.GlassEffect
+		options.GlassIntensity = update.GlassIntensity
+		return options, nil
+	})
 }
 
 func UpdateSearch(showSearchComponent bool, disabledSearchAutoFocus bool, searchMode string, searchEngine string, searchEngineOpenMode string, searchEngineCustomTemplate string) error {
 	if err := EnsureAppConfigExists(); err != nil {
 		return err
 	}
-	options, err := GetAllSettingsOptions()
-	if err != nil {
-		return err
-	}
-	options.ShowSearchComponent = showSearchComponent
-	options.DisabledSearchAutoFocus = disabledSearchAutoFocus
-	options.SearchMode = searchMode
-	options.SearchEngine = searchEngine
-	if strings.TrimSpace(searchEngineOpenMode) == "" {
-		searchEngineOpenMode = searchEngineOpenSameTab
-	}
-	options.SearchEngineOpenMode = searchEngineOpenMode
-	options.SearchEngineCustomTemplate = strings.TrimSpace(searchEngineCustomTemplate)
-	if err := validateSettingsOptions(options); err != nil {
-		return err
-	}
-	return saveAppConfigToYamlFile("config", options)
+	return updateLockedAppConfig("config", func(options model.Application) (model.Application, error) {
+		options.ShowSearchComponent = showSearchComponent
+		options.DisabledSearchAutoFocus = disabledSearchAutoFocus
+		options.SearchMode = searchMode
+		options.SearchEngine = searchEngine
+		if strings.TrimSpace(searchEngineOpenMode) == "" {
+			searchEngineOpenMode = searchEngineOpenSameTab
+		}
+		options.SearchEngineOpenMode = searchEngineOpenMode
+		options.SearchEngineCustomTemplate = strings.TrimSpace(searchEngineCustomTemplate)
+		if err := validateSettingsOptions(options); err != nil {
+			return model.Application{}, err
+		}
+		return options, nil
+	})
 }
 
 func GetAllSettingsOptions() (model.Application, error) {
@@ -283,26 +273,26 @@ func validateSettingsOptions(options model.Application) error {
 		return fmt.Errorf("glass intensity must be between 0 and 100")
 	}
 
-	if color := strings.TrimSpace(options.BookmarkCategoryColor); color != "" && safeCSSColor(color, "") == "" {
+	if color := strings.TrimSpace(options.BookmarkCategoryColor); color != "" && validation.SafeCSSColor(color, "") == "" {
 		return fmt.Errorf("invalid bookmark category color: %s", options.BookmarkCategoryColor)
 	}
-	if color := strings.TrimSpace(options.BookmarkItemColor); color != "" && safeCSSColor(color, "") == "" {
+	if color := strings.TrimSpace(options.BookmarkItemColor); color != "" && validation.SafeCSSColor(color, "") == "" {
 		return fmt.Errorf("invalid bookmark item color: %s", options.BookmarkItemColor)
 	}
 
 	if themeName == "custom" {
 		background := strings.TrimSpace(options.CustomThemeBackground)
-		if background != "" && safeCSSColor(background, "") == "" {
+		if background != "" && validation.SafeCSSColor(background, "") == "" {
 			return fmt.Errorf("invalid custom theme background color: %s", options.CustomThemeBackground)
 		}
 
 		primary := strings.TrimSpace(options.CustomThemePrimary)
-		if primary != "" && safeCSSColor(primary, "") == "" {
+		if primary != "" && validation.SafeCSSColor(primary, "") == "" {
 			return fmt.Errorf("invalid custom theme primary color: %s", options.CustomThemePrimary)
 		}
 
 		accent := strings.TrimSpace(options.CustomThemeAccent)
-		if accent != "" && safeCSSColor(accent, "") == "" {
+		if accent != "" && validation.SafeCSSColor(accent, "") == "" {
 			return fmt.Errorf("invalid custom theme accent color: %s", options.CustomThemeAccent)
 		}
 	}
@@ -317,91 +307,35 @@ func validateSettingsOptions(options model.Application) error {
 	return nil
 }
 
-func safeCSSColor(input string, fallback string) string {
-	input = strings.TrimSpace(input)
-	if hexColorPattern.MatchString(input) || safeRGBColor(input) {
-		return input
-	}
-	return fallback
-}
-
-func safeRGBColor(input string) bool {
-	match := rgbColorPattern.FindStringSubmatch(input)
-	if match == nil {
-		return false
-	}
-	parts := strings.Split(match[1], ",")
-	if len(parts) != 3 && len(parts) != 4 {
-		return false
-	}
-	for i := 0; i < 3; i++ {
-		value := strings.TrimSpace(parts[i])
-		if strings.HasSuffix(value, "%") {
-			num, err := strconv.ParseFloat(strings.TrimSuffix(value, "%"), 64)
-			if err != nil || num < 0 || num > 100 {
-				return false
-			}
-			continue
-		}
-		if !cssNumberPattern.MatchString(value) {
-			return false
-		}
-		num, err := strconv.Atoi(strings.Split(value, ".")[0])
-		if err != nil || num < 0 || num > 255 {
-			return false
-		}
-		if strings.Contains(value, ".") {
-			parsed, err := strconv.ParseFloat(value, 64)
-			if err != nil || parsed < 0 || parsed > 255 {
-				return false
-			}
-		}
-	}
-	if len(parts) == 4 {
-		alpha := strings.TrimSpace(parts[3])
-		if strings.HasSuffix(alpha, "%") {
-			num, err := strconv.ParseFloat(strings.TrimSuffix(alpha, "%"), 64)
-			return err == nil && num >= 0 && num <= 100
-		}
-		num, err := strconv.ParseFloat(alpha, 64)
-		return err == nil && num >= 0 && num <= 1
-	}
-	return true
-}
-
 func UpdateAppearance(update model.Application) error {
 	if err := EnsureAppConfigExists(); err != nil {
 		return err
 	}
-	options, err := GetAllSettingsOptions()
-	if err != nil {
-		return err
-	}
-
-	options.Title = update.Title
-	options.Footer = update.Footer
-	options.SiteIcon = update.SiteIcon
-	options.SiteIconMode = update.SiteIconMode
-	options.OpenAppNewTab = update.OpenAppNewTab
-	options.OpenBookmarkNewTab = update.OpenBookmarkNewTab
-	options.ShowTitle = update.ShowTitle
-	options.Greetings = update.Greetings
-	options.ShowDateTime = update.ShowDateTime
-	options.ShowApps = update.ShowApps
-	options.ShowBookmarks = update.ShowBookmarks
-	options.AppsTitle = update.AppsTitle
-	options.BookmarksTitle = update.BookmarksTitle
-	options.BookmarkCategoryColor = update.BookmarkCategoryColor
-	options.BookmarkItemColor = update.BookmarkItemColor
-	options.HideSettingsButton = update.HideSettingsButton
-	options.HideHelpButton = update.HideHelpButton
-	options.HideWarningsButton = update.HideWarningsButton
-	options.EnableEncryptedLink = update.EnableEncryptedLink
-	options.IconMode = update.IconMode
-	options.KeepLetterCase = update.KeepLetterCase
-	options.Locale = i18n.NormalizeLocale(update.Locale)
-	options.HomeMaxColumns = update.HomeMaxColumns
-	options.HomeMaxWidth = update.HomeMaxWidth
-
-	return saveAppConfigToYamlFile("config", options)
+	return updateLockedAppConfig("config", func(options model.Application) (model.Application, error) {
+		options.Title = update.Title
+		options.Footer = update.Footer
+		options.SiteIcon = update.SiteIcon
+		options.SiteIconMode = update.SiteIconMode
+		options.OpenAppNewTab = update.OpenAppNewTab
+		options.OpenBookmarkNewTab = update.OpenBookmarkNewTab
+		options.ShowTitle = update.ShowTitle
+		options.Greetings = update.Greetings
+		options.ShowDateTime = update.ShowDateTime
+		options.ShowApps = update.ShowApps
+		options.ShowBookmarks = update.ShowBookmarks
+		options.AppsTitle = update.AppsTitle
+		options.BookmarksTitle = update.BookmarksTitle
+		options.BookmarkCategoryColor = update.BookmarkCategoryColor
+		options.BookmarkItemColor = update.BookmarkItemColor
+		options.HideSettingsButton = update.HideSettingsButton
+		options.HideHelpButton = update.HideHelpButton
+		options.HideWarningsButton = update.HideWarningsButton
+		options.EnableEncryptedLink = update.EnableEncryptedLink
+		options.IconMode = update.IconMode
+		options.KeepLetterCase = update.KeepLetterCase
+		options.Locale = i18n.NormalizeLocale(update.Locale)
+		options.HomeMaxColumns = update.HomeMaxColumns
+		options.HomeMaxWidth = update.HomeMaxWidth
+		return options, nil
+	})
 }

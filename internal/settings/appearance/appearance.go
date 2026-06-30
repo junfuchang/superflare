@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v5"
@@ -16,6 +15,7 @@ import (
 	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/pool"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
@@ -25,9 +25,6 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateAppearanceOptions(c *echo.Context) error {
-	if err := statuspage.BindCurrentOptions(c); err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
-	}
 	var body struct {
 		OptionTitle              string `form:"title"`
 		OptionFooter             string `form:"footer"`
@@ -64,7 +61,7 @@ func updateAppearanceOptions(c *echo.Context) error {
 	if strings.TrimSpace(body.Locale) == "" {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, "missing locale value"))
 	}
-	categoryColor, err := optionalSafeColor(body.BookmarkCategoryColor)
+	categoryColor, err := settingsroot.ParseOptionalColor(body.BookmarkCategoryColor, "")
 	if err != nil {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
@@ -72,7 +69,7 @@ func updateAppearanceOptions(c *echo.Context) error {
 	if err != nil {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
-	itemColor, err := optionalSafeColor(body.BookmarkItemColor)
+	itemColor, err := settingsroot.ParseOptionalColor(body.BookmarkItemColor, "")
 	if err != nil {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
@@ -84,11 +81,11 @@ func updateAppearanceOptions(c *echo.Context) error {
 	if err != nil {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
-	homeMaxColumns, err := parseOptionalRangedInt(body.HomeMaxColumns, 0, 8, "home-max-columns")
+	homeMaxColumns, err := settingsroot.ParseOptionalRangedInt(body.HomeMaxColumns, 0, 8, "home-max-columns")
 	if err != nil {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
-	homeMaxWidth, err := parseOptionalRangedInt(body.HomeMaxWidth, 0, 2400, "home-max-width")
+	homeMaxWidth, err := settingsroot.ParseOptionalRangedInt(body.HomeMaxWidth, 0, 2400, "home-max-width")
 	if err != nil {
 		return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 	}
@@ -128,17 +125,6 @@ func updateAppearanceOptions(c *echo.Context) error {
 	return pageAppearance(c)
 }
 
-func optionalSafeColor(input string) (string, error) {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return "", nil
-	}
-	if define.SafeCSSColor(input, "") == "" {
-		return "", fmt.Errorf("invalid color value: %s", input)
-	}
-	return input, nil
-}
-
 func normalizeOptionalSiteIcon(input string) (string, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -176,21 +162,6 @@ func normalizeLocaleOption(input string) (string, error) {
 	}
 }
 
-func parseOptionalRangedInt(input string, min int, max int, field string) (int, error) {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return 0, nil
-	}
-	value, err := strconv.Atoi(input)
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s value: %s", field, input)
-	}
-	if value < min || value > max {
-		return 0, fmt.Errorf("%s must be between %d and %d", field, min, max)
-	}
-	return value, nil
-}
-
 func pageAppearance(c *echo.Context) error {
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
@@ -224,11 +195,12 @@ func pageAppearance(c *echo.Context) error {
 	}
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = settingsroot.CurrentRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = "Appearance"
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
+	m["ShowSettingsSidebar"] = true
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo

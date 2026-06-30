@@ -17,10 +17,12 @@ import (
 	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/pool"
 	portscollector "github.com/junfuchang/superflare/internal/ports"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
 var portscollectorCollectReportWithBindingsErr = portscollector.CollectReportWithBindingsErr
+
 func RegisterRouting(e *echo.Echo) {
 	e.GET(define.SettingPages.Ports.Path, pagePorts, auth.AuthRequired)
 	e.GET(portsDataPath(), pagePortsData, auth.AuthRequired)
@@ -52,9 +54,6 @@ func ensureSettingsConfigLoadable(c *echo.Context) error {
 }
 
 func updatePortRemarks(c *echo.Context) error {
-	if err := ensureSettingsConfigLoadable(c); err != nil {
-		return err
-	}
 	var body struct {
 		Ports         string `form:"ports"`
 		IncludeHidden string `form:"includeHidden"`
@@ -71,6 +70,9 @@ func updatePortRemarks(c *echo.Context) error {
 	bindings, err := parsePortBindings(body.Ports)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, portsFailurePayload("parse ports payload failed", err))
+	}
+	if err := ensureSettingsConfigLoadable(c); err != nil {
+		return err
 	}
 	if !parseBoolValue(body.IncludeHidden) {
 		bindings, err = keepExistingHiddenBindings(bindings)
@@ -257,11 +259,12 @@ func pagePorts(c *echo.Context) error {
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = settingsroot.CurrentRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = "Ports"
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
+	m["ShowSettingsSidebar"] = true
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo
@@ -282,7 +285,7 @@ func portsDataPath() string {
 }
 
 func getDebugAssetVersion() string {
-	if define.AppFlags.DebugMode {
+	if settingsroot.CurrentRuntime().DebugMode {
 		return "?v=dev"
 	}
 	return ""

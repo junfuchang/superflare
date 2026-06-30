@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCheckExists(t *testing.T) {
@@ -181,5 +182,47 @@ func TestSaveFilesAtomicallyRejectsDirectoryTarget(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatal("directory target should remain a directory")
+	}
+}
+
+func TestSaveFileWaitsForExternalConfigFileLock(t *testing.T) {
+	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	release, err := lockConfigFiles()
+	if err != nil {
+		t.Fatalf("lockConfigFiles: %v", err)
+	}
+
+	target := filepath.Join(dir, "config.yml")
+	done := make(chan error, 1)
+	go func() {
+		done <- saveFile(target, []byte("locked-save"))
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("saveFile completed while external lock was still held: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	if err := release(); err != nil {
+		t.Fatalf("release config lock: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("saveFile after release failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("saveFile did not complete after external lock was released")
 	}
 }

@@ -40,6 +40,7 @@ WORK_DIR="${ETC_DIR}"
 RUN_DIR="${VAR_DIR}/run"
 PID_FILE="${RUN_DIR}/superflare.pid"
 APP_LOG="${RUN_DIR}/superflare.log"
+CONFIG_LOCK_FILE="${ETC_DIR}/.superflare-config.lock"
 TMP_LOG_FILE="${TRIM_TEMP_LOGFILE:-}"
 if [ -z "${TMP_LOG_FILE}" ]; then
     if [ -n "${RUN_DIR}" ]; then
@@ -118,27 +119,49 @@ overwrite_default_file() {
     fi
 }
 
+with_config_lock() {
+    if [ "$#" -eq 0 ]; then
+        return 1
+    fi
+    ensure_dir "${ETC_DIR}" || return 1
+    : > "${CONFIG_LOCK_FILE}" || return 1
+    if command -v flock >/dev/null 2>&1; then
+        (
+            flock -x 9
+            "$@"
+        ) 9>"${CONFIG_LOCK_FILE}"
+        return $?
+    fi
+
+    "$@"
+}
+
 upsert_env_value() {
     local file="$1"
     local key="$2"
     local value="$3"
     local tmp
+    local formatted
+    local updated=0
+    local line
+    local normalized
 
+    ensure_dir "$(dirname "${file}")" || return 1
+    [ -f "${file}" ] || : > "${file}"
+    formatted="$(format_env_value "${value}")"
     tmp="$(mktemp)"
-    awk -v key="${key}" -v value="${value}" '
-        BEGIN { updated = 0 }
-        index($0, key "=") == 1 {
-            print key "=" value
-            updated = 1
-            next
-        }
-        { print }
-        END {
-            if (!updated) {
-                print key "=" value
-            }
-        }
-    ' "${file}" > "${tmp}"
+    while IFS= read -r line || [ -n "${line}" ]; do
+        normalized="${line#$'\xef\xbb\xbf'}"
+        if [[ "${normalized}" =~ ^([[:space:]]*)(export[[:space:]]+)?${key}[[:space:]]*= ]]; then
+            printf '%s%s%s=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${key}" "${formatted}" >> "${tmp}"
+            updated=1
+            continue
+        fi
+        printf '%s\n' "${line}" >> "${tmp}"
+    done < "${file}"
+    if [ "${updated}" -eq 0 ]; then
+        printf '%s=%s\n' "${key}" "${formatted}" >> "${tmp}"
+    fi
     cat "${tmp}" > "${file}"
     rm -f "${tmp}"
 }
@@ -148,50 +171,102 @@ ensure_env_key() {
     local key="$2"
     local value="$3"
 
-    if ! grep -Eq "^${key}=" "${file}"; then
-        printf '%s=%s\n' "${key}" "${value}" >> "${file}"
+    if [ -z "$(read_env_value "${file}" "${key}")" ]; then
+        upsert_env_value "${file}" "${key}" "${value}"
     fi
 }
 
 read_env_value() {
     local file="$1"
     local key="$2"
+    local line
+    local value
 
     if [ ! -r "${file}" ]; then
         return 0
     fi
 
-    awk -F= -v key="${key}" '
-        index($0, key "=") == 1 {
-            sub(/^[^=]*=/, "", $0)
-            print
-            exit
-        }
-    ' "${file}"
+    while IFS= read -r line || [ -n "${line}" ]; do
+        line="${line#$'\xef\xbb\xbf'}"
+        if [[ "${line}" =~ ^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*= ]]; then
+            value="${line#*=}"
+            parse_shell_value "${value}"
+            return 0
+        fi
+    done < "${file}"
 }
 
 yaml_escape() {
     printf '%s' "$1" | sed "s/'/''/g"
 }
 
+trim_value() {
+    printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+format_env_value() {
+    local value="$1"
+    local escaped
+
+    if [ -z "${value}" ]; then
+        printf ''
+        return 0
+    fi
+
+    case "${value}" in
+        *[[:space:]#\;\"\'\\]*)
+            escaped="${value//\\/\\\\}"
+            escaped="${escaped//\"/\\\"}"
+            printf '"%s"' "${escaped}"
+            ;;
+        *)
+            printf '%s' "${value}"
+            ;;
+    esac
+}
+
+parse_shell_value() {
+    local value
+    local quote
+    local rest
+
+    value="$(trim_value "$1")"
+    quote="${value:0:1}"
+    if [ "${quote}" = "'" ] || [ "${quote}" = '"' ]; then
+        rest="${value:1}"
+        value="${rest%%${quote}*}"
+        if [ "${quote}" = '"' ]; then
+            value="${value//\\\"/\"}"
+            value="${value//\\\\/\\}"
+        else
+            value="${value//\'\'/\'}"
+        fi
+        printf '%s\n' "${value}"
+        return 0
+    fi
+
+    value="$(printf '%s' "${value}" | sed 's/[[:space:]]#.*$//;s/[[:space:]]*$//')"
+    printf '%s\n' "${value}"
+}
+
 read_yaml_value() {
     local file="$1"
     local key="$2"
+    local line
+    local value
 
     if [ ! -r "${file}" ]; then
         return 0
     fi
 
-    awk -F': ' -v key="${key}" '
-        index($0, key ":") == 1 {
-            value = substr($0, length(key) + 3)
-            sub(/^'\''/, "", value)
-            sub(/'\''$/, "", value)
-            gsub(/'\'''\''/, "'\''", value)
-            print value
-            exit
-        }
-    ' "${file}"
+    while IFS= read -r line || [ -n "${line}" ]; do
+        line="${line#$'\xef\xbb\xbf'}"
+        if [[ "${line}" =~ ^[[:space:]]*${key}[[:space:]]*: ]]; then
+            value="${line#*:}"
+            parse_shell_value "${value}"
+            return 0
+        fi
+    done < "${file}"
 }
 
 upsert_yaml_value() {
@@ -278,7 +353,7 @@ ensure_login_config_defaults() {
     fi
 }
 
-sync_login_config() {
+sync_login_config_locked() {
     local user="$1"
     local pass="$2"
 
@@ -286,6 +361,33 @@ sync_login_config() {
     upsert_env_value "${ETC_DIR}/.env" "FLARE_PASS" "${pass}"
     upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "${user}"
     upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "${pass}"
+}
+
+sync_login_config() {
+    with_config_lock sync_login_config_locked "$@"
+}
+
+sync_login_enabled_config_locked() {
+    local enabled="$1"
+    local disable_login="false"
+
+    case "${enabled}" in
+        true|1|yes|on|enable|enabled)
+            disable_login="false"
+            ;;
+        false|0|no|off|disable|disabled)
+            disable_login="true"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    upsert_env_value "${ETC_DIR}/.env" "FLARE_DISABLE_LOGIN" "${disable_login}"
+}
+
+sync_login_enabled_config() {
+    with_config_lock sync_login_enabled_config_locked "$@"
 }
 
 migrate_legacy_runtime_file() {
@@ -336,50 +438,55 @@ relink_path() {
     ln -s "${target_path}" "${link_path}"
 }
 
+ensure_runtime_layout_locked() {
+    ensure_dir "${ETC_DIR}" &&
+    ensure_dir "${VAR_DIR}" &&
+    ensure_dir "${RUN_DIR}" &&
+    ensure_dir "${VAR_DIR}/cache" &&
+    ensure_dir "${VAR_DIR}/cache/backgrounds" &&
+    ensure_dir "${VAR_DIR}/cache/site-icons" &&
+    ensure_dir "${VAR_DIR}/uploads" &&
+    migrate_legacy_runtime_file ".env" &&
+    migrate_legacy_runtime_file "config.yml" &&
+    migrate_legacy_runtime_file "apps.yml" &&
+    migrate_legacy_runtime_file "bookmarks.yml" &&
+    migrate_legacy_runtime_file "ports.yaml" &&
+    copy_default_file "config.yml" &&
+    copy_default_file "apps.yml" &&
+    copy_default_file "bookmarks.yml" &&
+    copy_default_file "ports.yaml" &&
+    ensure_env_file &&
+    ensure_login_env_defaults &&
+    ensure_login_config_defaults &&
+    relink_path "${ETC_DIR}/var" "${VAR_DIR}" &&
+    cleanup_legacy_runtime_layout
+}
+
 ensure_runtime_layout() {
     require_path "${APPDEST_DIR}" "APPDEST_DIR" || return 1
     require_path "${DEFAULTS_DIR}" "DEFAULTS_DIR" || return 1
     require_path "${ETC_DIR}" "ETC_DIR" || return 1
     require_path "${VAR_DIR}" "VAR_DIR" || return 1
 
-    ensure_dir "${ETC_DIR}"
-    ensure_dir "${VAR_DIR}"
-    ensure_dir "${RUN_DIR}"
-    ensure_dir "${VAR_DIR}/cache"
-    ensure_dir "${VAR_DIR}/cache/backgrounds"
-    ensure_dir "${VAR_DIR}/cache/site-icons"
-    ensure_dir "${VAR_DIR}/uploads"
-
-    migrate_legacy_runtime_file ".env"
-    migrate_legacy_runtime_file "config.yml"
-    migrate_legacy_runtime_file "apps.yml"
-    migrate_legacy_runtime_file "bookmarks.yml"
-    migrate_legacy_runtime_file "ports.yaml"
-
-    copy_default_file "config.yml"
-    copy_default_file "apps.yml"
-    copy_default_file "bookmarks.yml"
-    copy_default_file "ports.yaml"
-    ensure_env_file
-    ensure_login_env_defaults
-    ensure_login_config_defaults
-
-    relink_path "${ETC_DIR}/var" "${VAR_DIR}"
-    cleanup_legacy_runtime_layout
+    with_config_lock ensure_runtime_layout_locked
 }
 
-reset_runtime_defaults_for_install() {
-    ensure_dir "${ETC_DIR}"
-    overwrite_default_file "config.yml"
-    overwrite_default_file "apps.yml"
-    overwrite_default_file "bookmarks.yml"
-    overwrite_default_file "ports.yaml"
+reset_runtime_defaults_for_install_locked() {
+    ensure_dir "${ETC_DIR}" &&
+    overwrite_default_file "config.yml" &&
+    overwrite_default_file "apps.yml" &&
+    overwrite_default_file "bookmarks.yml" &&
+    overwrite_default_file "ports.yaml" || return 1
 
     if [ -f "${ETC_DIR}/.env" ]; then
-        rm -f "${ETC_DIR}/.env"
+        rm -f "${ETC_DIR}/.env" || return 1
     fi
 
     ensure_env_file
+}
+
+reset_runtime_defaults_for_install() {
+    with_config_lock reset_runtime_defaults_for_install_locked
 }
 
 read_pid_file() {
@@ -392,23 +499,40 @@ read_pid_file() {
 process_matches_pid() {
     local pid="$1"
     local args=""
+    local exe=""
 
     if [ -z "${pid}" ]; then
         return 1
     fi
+    case "${pid}" in
+        *[!0-9]*)
+            return 1
+            ;;
+    esac
 
     if ! kill -0 "${pid}" 2>/dev/null; then
         return 1
     fi
 
-    args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
-    case "${args}" in
-        *"/server/superflare"*)
+    if [ -n "${APP_BIN}" ] && [ -r "/proc/${pid}/exe" ]; then
+        exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+        if [ "${exe}" = "${APP_BIN}" ]; then
             return 0
-            ;;
-    esac
+        fi
+    fi
 
-    return 0
+    args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+    if [ -z "${args}" ] && [ -r "/proc/${pid}/cmdline" ]; then
+        args="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+    fi
+    if [ -z "${args}" ]; then
+        return 1
+    fi
+    if [ -n "${APP_BIN}" ] && printf '%s\n' "${args}" | grep -F -- "${APP_BIN}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
 }
 
 discover_running_pid() {
@@ -421,12 +545,13 @@ discover_running_pid() {
     fi
 
     if command -v pgrep >/dev/null 2>&1; then
-        pid="$(pgrep -f "${APP_BIN}" | head -n 1 || true)"
-        if process_matches_pid "${pid}"; then
-            printf '%s' "${pid}" > "${PID_FILE}"
-            printf '%s' "${pid}"
-            return 0
-        fi
+        for pid in $(pgrep -f "${APP_BIN}" 2>/dev/null || true); do
+            if process_matches_pid "${pid}"; then
+                printf '%s' "${pid}" > "${PID_FILE}"
+                printf '%s' "${pid}"
+                return 0
+            fi
+        done
     fi
 
     rm -f "${PID_FILE}"

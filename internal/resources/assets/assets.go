@@ -11,11 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v5"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/background"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
@@ -31,7 +33,63 @@ const (
 	androidChrome512RoutePath = "/android-chrome-512x512.png"
 )
 
+type assetsRuntimeSnapshot struct {
+	DebugMode bool
+}
+
+type assetsRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg assetsRuntimeSnapshot
+}
+
+func (h *assetsRuntimeHolder) Load() assetsRuntimeSnapshot {
+	if h == nil {
+		return assetsRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return assetsRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *assetsRuntimeHolder) Store(cfg assetsRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var assetsRuntimeFlags = &assetsRuntimeHolder{}
+
+func assetsRuntimeSnapshotFromFlags(flags model.Flags) assetsRuntimeSnapshot {
+	return assetsRuntimeSnapshot{DebugMode: flags.DebugMode}
+}
+
+func currentAssetsRuntime() assetsRuntimeSnapshot {
+	assetsRuntimeFlags.mu.RLock()
+	hasValue := assetsRuntimeFlags.set
+	cfg := assetsRuntimeFlags.cfg
+	assetsRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = assetsRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	assetsRuntimeFlags.Store(cfg)
+	return cfg
+}
+
+func SetRuntimeFlags(flags model.Flags) {
+	assetsRuntimeFlags.Store(assetsRuntimeSnapshotFromFlags(flags))
+}
+
 func RegisterRouting(e *echo.Echo) {
+	runtime := currentAssetsRuntime()
 	e.Use(optimizeResourceCacheTime())
 
 	e.GET(faviconRoutePath, serveEmbeddedWebsiteIcon("favicon.ico", "image/x-icon"))
@@ -39,7 +97,7 @@ func RegisterRouting(e *echo.Echo) {
 	e.GET(androidChrome192RoutePath, serveEmbeddedWebsiteIcon("icons/favicon/android-chrome-192x192.png", "image/png"))
 	e.GET(androidChrome512RoutePath, serveEmbeddedWebsiteIcon("icons/favicon/android-chrome-512x512.png", "image/png"))
 
-	if define.AppFlags.DebugMode {
+	if runtime.DebugMode {
 		e.Static("/assets/css", "embed/assets/css")
 	}
 	e.GET(background.RemoteAssetPath, serveRemoteBackground)
@@ -87,12 +145,13 @@ func embeddedAssetVersion(assetPath string) string {
 }
 
 func serveEmbeddedWebsiteIcon(assetPath string, contentType string) echo.HandlerFunc {
+	runtime := currentAssetsRuntime()
 	return func(c *echo.Context) error {
 		data, err := fs.ReadFile(Favicon, assetPath)
 		if err != nil {
 			return err
 		}
-		if define.AppFlags.DebugMode {
+		if runtime.DebugMode {
 			c.Response().Header().Set("Cache-Control", "no-store")
 		} else {
 			c.Response().Header().Set("Cache-Control", "public, max-age=604800, immutable")
@@ -115,7 +174,7 @@ func serveUploadedBackgroundVariant(c *echo.Context, variant string) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "not found")
 	}
-	if define.AppFlags.DebugMode {
+	if currentAssetsRuntime().DebugMode {
 		c.Response().Header().Set("Cache-Control", "no-store")
 	} else {
 		c.Response().Header().Set("Cache-Control", "public, max-age=604800")
@@ -156,7 +215,7 @@ func serveSiteFavicon(c *echo.Context) error {
 	}
 
 	if data, contentType, err := fn.ReadCachedPublicSiteFavicon(iconURL); err == nil {
-		if define.AppFlags.DebugMode {
+		if currentAssetsRuntime().DebugMode {
 			c.Response().Header().Set("Cache-Control", "no-store")
 		} else {
 			c.Response().Header().Set("Cache-Control", "public, max-age=604800")
@@ -194,7 +253,7 @@ func serveRemoteBackground(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadGateway, "background fetch failed")
 	}
 
-	if define.AppFlags.DebugMode {
+	if currentAssetsRuntime().DebugMode {
 		c.Response().Header().Set("Cache-Control", "no-store")
 	} else {
 		c.Response().Header().Set("Cache-Control", "public, max-age=604800")
@@ -208,6 +267,7 @@ func optimizeResourceCacheTime() echo.MiddlewareFunc {
 	data := []byte(time.Now().String())
 	/* #nosec */
 	etag := fmt.Sprintf("W/%x", md5.Sum(data))
+	runtime := currentAssetsRuntime()
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			uri := c.Request().RequestURI
@@ -218,7 +278,7 @@ func optimizeResourceCacheTime() echo.MiddlewareFunc {
 				return next(c)
 			}
 			if strings.HasPrefix(uri, "/assets/") {
-				if define.AppFlags.DebugMode {
+				if runtime.DebugMode {
 					c.Response().Header().Set("Cache-Control", "no-store")
 				} else {
 					c.Response().Header().Set("Cache-Control", "public, max-age=31536000")

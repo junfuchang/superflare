@@ -30,6 +30,19 @@ func restoreAppFlags(f model.Flags) {
 	define.AppFlags = f
 }
 
+func saveHomeRuntimeFlags() (homeRuntimeSnapshot, bool) {
+	homeRuntimeFlags.mu.RLock()
+	defer homeRuntimeFlags.mu.RUnlock()
+	return homeRuntimeFlags.cfg, homeRuntimeFlags.set
+}
+
+func restoreHomeRuntimeFlags(cfg homeRuntimeSnapshot, set bool) {
+	homeRuntimeFlags.mu.Lock()
+	homeRuntimeFlags.cfg = cfg
+	homeRuntimeFlags.set = set
+	homeRuntimeFlags.mu.Unlock()
+}
+
 func writeEmptyBookmarkFixtures(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "apps.yml"), []byte("links: []\n"), 0644); err != nil {
@@ -42,8 +55,11 @@ func writeEmptyBookmarkFixtures(t *testing.T, dir string) {
 
 func TestSetCSPHeader_WhenDisableCSPFalse_SetsHeader(t *testing.T) {
 	orig := saveAppFlags()
+	origRuntime, origRuntimeSet := saveHomeRuntimeFlags()
 	defer restoreAppFlags(orig)
+	defer restoreHomeRuntimeFlags(origRuntime, origRuntimeSet)
 	define.AppFlags.DisableCSP = false
+	homeRuntimeFlags.Store(homeRuntimeSnapshotFromFlags(define.AppFlags))
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -57,8 +73,11 @@ func TestSetCSPHeader_WhenDisableCSPFalse_SetsHeader(t *testing.T) {
 
 func TestSetCSPHeader_WhenDisableCSPTrue_NoHeader(t *testing.T) {
 	orig := saveAppFlags()
+	origRuntime, origRuntimeSet := saveHomeRuntimeFlags()
 	defer restoreAppFlags(orig)
+	defer restoreHomeRuntimeFlags(origRuntime, origRuntimeSet)
 	define.AppFlags.DisableCSP = true
+	homeRuntimeFlags.Store(homeRuntimeSnapshotFromFlags(define.AppFlags))
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -68,6 +87,26 @@ func TestSetCSPHeader_WhenDisableCSPTrue_NoHeader(t *testing.T) {
 	setCSPHeader(c, "")
 
 	assert.Empty(t, rec.Header().Get("Content-Security-Policy"))
+}
+
+func TestSetCSPHeader_UsesStoredRuntimeDisableCSPAfterAppFlagsChange(t *testing.T) {
+	orig := saveAppFlags()
+	origRuntime, origRuntimeSet := saveHomeRuntimeFlags()
+	defer restoreAppFlags(orig)
+	defer restoreHomeRuntimeFlags(origRuntime, origRuntimeSet)
+
+	define.AppFlags.DisableCSP = false
+	homeRuntimeFlags.Store(homeRuntimeSnapshotFromFlags(define.AppFlags))
+	define.AppFlags.DisableCSP = true
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	setCSPHeader(c, "nonce-value")
+
+	assert.Equal(t, "script-src 'nonce-nonce-value'; "+_cspValue, rec.Header().Get("Content-Security-Policy"))
 }
 
 func TestGetCSPValueWithoutScriptNonce(t *testing.T) {

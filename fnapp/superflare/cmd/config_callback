@@ -14,11 +14,16 @@ log_and_fail() {
 
 ensure_runtime_layout || log_and_fail "Failed to prepare runtime layout before applying login settings."
 
+login_enabled="$(printf '%s' "${wizard_login_enabled:-true}" | tr -d '\r' | xargs | tr '[:upper:]' '[:lower:]')"
 user="$(printf '%s' "${wizard_login_user:-}" | tr -d '\r' | xargs)"
 pass="$(printf '%s' "${wizard_login_pass:-}" | tr -d '\r')"
 confirm="$(printf '%s' "${wizard_login_pass_confirm:-}" | tr -d '\r')"
 current_user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")"
 current_pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
+
+if [ -z "${login_enabled}" ]; then
+    login_enabled="true"
+fi
 
 if [ -z "${user}" ]; then
     user="${current_user}"
@@ -42,6 +47,9 @@ if [ -z "${pass}" ]; then
 fi
 
 sync_login_config "${user}" "${pass}"
+if ! sync_login_enabled_config "${login_enabled}"; then
+    log_and_fail "Invalid login enabled option: ${login_enabled}"
+fi
 
 if ! stop_app; then
     log_and_fail "SuperFlare stop failed after applying login settings."

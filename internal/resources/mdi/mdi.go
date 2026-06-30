@@ -17,6 +17,7 @@ import (
 	"github.com/soulteary/memfs"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 )
 
 var MemFs *memfs.FS
@@ -27,6 +28,65 @@ const _ASSETS_WEB_URI = "/" + _ASSETS_BASE_DIR
 var _CACHE_MDI_ICON_EXIST map[string]bool
 var _CACHE_MDI_ICON_DATA map[string]string
 var cacheMu sync.RWMutex
+
+type mdiRuntimeSnapshot struct {
+	DebugMode            bool
+	EnableMinimumRequest bool
+}
+
+type mdiRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg mdiRuntimeSnapshot
+}
+
+func (h *mdiRuntimeHolder) Load() mdiRuntimeSnapshot {
+	if h == nil {
+		return mdiRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return mdiRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *mdiRuntimeHolder) Store(cfg mdiRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var mdiRuntimeFlags = &mdiRuntimeHolder{}
+
+func mdiRuntimeSnapshotFromFlags(flags model.Flags) mdiRuntimeSnapshot {
+	return mdiRuntimeSnapshot{
+		DebugMode:            flags.DebugMode,
+		EnableMinimumRequest: flags.EnableMinimumRequest,
+	}
+}
+
+func currentMDIRuntime() mdiRuntimeSnapshot {
+	mdiRuntimeFlags.mu.RLock()
+	hasValue := mdiRuntimeFlags.set
+	cfg := mdiRuntimeFlags.cfg
+	mdiRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = mdiRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	mdiRuntimeFlags.Store(cfg)
+	return cfg
+}
+
+func SetRuntimeFlags(flags model.Flags) {
+	mdiRuntimeFlags.Store(mdiRuntimeSnapshotFromFlags(flags))
+}
 
 //go:embed mdi-cheat-sheets
 var MdiExampleAssets embed.FS
@@ -96,7 +156,7 @@ func iconSVGContent(icon string, fill string) string {
 }
 
 func themedIconFillColor() string {
-	fill := strings.TrimSpace(define.ThemePrimaryColor)
+	fill := strings.TrimSpace(define.GetThemeRuntimeSnapshot().Primary)
 	if fill == "" {
 		return fallbackThemePrimaryColor
 	}
@@ -120,14 +180,15 @@ func GetIconSVGDataByName(name string) ([]byte, error) {
 }
 
 func themeCacheNamespace() string {
-	themeName := strings.TrimSpace(define.ThemeCurrent)
+	snapshot := define.GetThemeRuntimeSnapshot()
+	themeName := strings.TrimSpace(snapshot.Name)
 	if themeName == "" {
 		return "default"
 	}
 	if themeName != "custom" {
 		return themeName
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(define.ThemePrimaryColor)))
+	sum := sha256.Sum256([]byte(strings.TrimSpace(snapshot.Primary)))
 	return themeName + "-" + fmt.Sprintf("%x", sum[:4])
 }
 
@@ -190,7 +251,7 @@ func GetIconURLByName(name string) string {
 		cacheMu.Unlock()
 	}
 	svgURL := "/" + svgFile
-	if define.AppFlags.DebugMode {
+	if currentMDIRuntime().DebugMode {
 		svgURL += "?v=dev"
 	}
 	return svgURL
@@ -214,7 +275,7 @@ func GetIconByName(name string) string {
 	if icon == "" {
 		return _EMPTY_ICON
 	}
-	if define.AppFlags.EnableMinimumRequest {
+	if currentMDIRuntime().EnableMinimumRequest {
 		cacheKey := "inline-" + iconName
 		if !iconCacheExists(cacheKey) {
 			setInlineCacheValue(cacheKey, inlineIconMarkup(icon))
@@ -248,7 +309,7 @@ func GetIconByName(name string) string {
 		cacheMu.Unlock()
 	}
 	svgURL := "/" + svgFile
-	if define.AppFlags.DebugMode {
+	if currentMDIRuntime().DebugMode {
 		svgURL += "?v=dev"
 	}
 	return `<img src="` + svgURL + `" width="68" height="68" alt="">`

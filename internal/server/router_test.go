@@ -310,6 +310,28 @@ func TestNewRouter_ReinitializesInlineStyleForDebugMode(t *testing.T) {
 	}
 }
 
+func TestNewRouter_BindsEditorAvailabilityToProvidedFlagsSnapshot(t *testing.T) {
+	withRouterTestWorkingDir(t)
+
+	origAppFlags := define.AppFlags
+	t.Cleanup(func() {
+		define.AppFlags = origAppFlags
+	})
+
+	flags := newTestFlags(true, "DEFAULT", false)
+	handler, err := NewRouter(&flags)
+	require.NoError(t, err)
+	require.NotNil(t, handler)
+
+	define.AppFlags.EnableEditor = true
+
+	req := httptest.NewRequest(http.MethodGet, "/editor", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, "router should keep initial editor-disabled route set")
+}
+
 func TestNewRouter_PrivateVisibility_AllowsAnonymousHelp(t *testing.T) {
 	withRouterTestWorkingDir(t)
 
@@ -452,6 +474,39 @@ func TestNewRouterReturnsErrorWhenCookieSecretEmptyWithLoginEnabled(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "validate router flags") || !strings.Contains(err.Error(), "cookie secret") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewRouterReplacesDefaultCookieSecretAtRuntime(t *testing.T) {
+	withRouterTestWorkingDir(t)
+
+	origAppFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	t.Cleanup(func() {
+		define.AppFlags = origAppFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+	})
+
+	flags := newTestFlags(false, "DEFAULT", false)
+	flags.CookieSecret = define.DEFAULT_COOKIE_SECRET
+
+	handler, err := NewRouter(&flags)
+	if err != nil {
+		t.Fatalf("expected NewRouter to accept default cookie secret by replacing it at runtime, got %v", err)
+	}
+	if handler == nil {
+		t.Fatal("expected router handler")
+	}
+	if define.AppFlags.CookieSecret == define.DEFAULT_COOKIE_SECRET || define.AppFlags.CookieSecret == "" {
+		t.Fatalf("expected runtime app flags to use a generated cookie secret, got %q", define.AppFlags.CookieSecret)
+	}
+	if define.AppBaseFlags.CookieSecret == define.DEFAULT_COOKIE_SECRET || define.AppBaseFlags.CookieSecret == "" {
+		t.Fatalf("expected runtime base flags to use a generated cookie secret, got %q", define.AppBaseFlags.CookieSecret)
+	}
+	if define.AppSourceFlags.CookieSecret == define.DEFAULT_COOKIE_SECRET || define.AppSourceFlags.CookieSecret == "" {
+		t.Fatalf("expected runtime source flags to use a generated cookie secret, got %q", define.AppSourceFlags.CookieSecret)
 	}
 }
 

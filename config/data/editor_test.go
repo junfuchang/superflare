@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/junfuchang/superflare/config/model"
@@ -282,6 +283,78 @@ func TestUpdateBookmarksFromEditorRollsBackWhenSecondFileRenameFails(t *testing.
 	}
 	if string(gotApps) != "items:\n- name: old-app\n" {
 		t.Fatalf("apps should remain original, got %q", string(gotApps))
+	}
+}
+
+func TestUpdateBookmarksFromEditorSerializesWithSettingsConfigWrites(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := EnsureAppConfigExists(); err != nil {
+		t.Fatalf("EnsureAppConfigExists: %v", err)
+	}
+	if err := EnsureRuntimeDataFiles(); err != nil {
+		t.Fatalf("EnsureRuntimeDataFiles: %v", err)
+	}
+
+	const categories = "1,Links"
+	const bookmarks = "1,Bookmark,https://bookmark.example.com,,Links,,link,Bookmark link"
+
+	startSettingsUpdate := make(chan struct{}, 1)
+	releaseEditorSave := make(chan struct{})
+	originalRename := editorDataRenamePath
+	defer func() { editorDataRenamePath = originalRename }()
+	var once sync.Once
+	editorDataRenamePath = func(oldPath string, newPath string) error {
+		cleanOld := filepath.Base(filepath.Clean(oldPath))
+		if cleanOld == "apps.yml" || cleanOld == "bookmarks.yml" {
+			once.Do(func() {
+				startSettingsUpdate <- struct{}{}
+				<-releaseEditorSave
+			})
+		}
+		return originalRename(oldPath, newPath)
+	}
+
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- UpdateBookmarksFromEditor(categories, bookmarks)
+	}()
+
+	<-startSettingsUpdate
+	go func() {
+		errCh <- UpdateAppearance(model.Application{Title: "Concurrent Title", Locale: "zh", IconMode: "FILLING"})
+	}()
+
+	close(releaseEditorSave)
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("concurrent update failed: %v", err)
+		}
+	}
+
+	options, err := GetAllSettingsOptions()
+	if err != nil {
+		t.Fatalf("GetAllSettingsOptions: %v", err)
+	}
+	if options.Title != "Concurrent Title" {
+		t.Fatalf("expected settings update to persist, got title %q", options.Title)
+	}
+
+	normal, err := LoadNormalBookmarks()
+	if err != nil {
+		t.Fatalf("LoadNormalBookmarks: %v", err)
+	}
+	if len(normal.Items) != 1 || normal.Items[0].Name != "Bookmark" {
+		t.Fatalf("expected editor bookmark update to persist, got %#v", normal.Items)
 	}
 }
 

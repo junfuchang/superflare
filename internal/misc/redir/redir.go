@@ -99,6 +99,9 @@ func RegisterRouting(e *echo.Echo) {
 
 func renderRedirectInvalidTarget(c *echo.Context) error {
 	if err := statuspage.BindCurrentOptions(c); err != nil {
+		if strings.Contains(err.Error(), "is missing") {
+			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))
+		}
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
 	return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildRedirectInvalidTargetPage(statuspage.CurrentLocale(c)))

@@ -13,8 +13,10 @@ import (
 	"testing"
 
 	"github.com/junfuchang/superflare/config/data"
+	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	portscollector "github.com/junfuchang/superflare/internal/ports"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/labstack/echo/v5"
 )
 
@@ -594,6 +596,54 @@ func TestPagePortsReturnsStyledErrorWhenBindingsBroken(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "status-panel") {
 		t.Fatalf("expected styled status page, got %s", rec.Body.String())
+	}
+}
+
+func TestPagePortsKeepsStoredRuntimeDebugModeAfterAppFlagsChange(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	if err := data.EnsureRuntimeDataFiles(); err != nil {
+		t.Fatalf("EnsureRuntimeDataFiles: %v", err)
+	}
+
+	origFlags := define.AppFlags
+	defer func() {
+		define.AppFlags = origFlags
+		settingsroot.SetRuntimeFlags(origFlags)
+	}()
+
+	define.AppFlags = model.Flags{DebugMode: true}
+	settingsroot.SetRuntimeFlags(define.AppFlags)
+	define.AppFlags = model.Flags{DebugMode: false}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/ports", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	e.Renderer = portsPageRenderer{
+		t: t,
+		assert: func(m map[string]any) {
+			if got, _ := m["DebugMode"].(bool); !got {
+				t.Fatalf("expected stored DebugMode=true, got %#v", m["DebugMode"])
+			}
+			if got, _ := m["DebugAssetVersion"].(string); got != "?v=dev" {
+				t.Fatalf("expected stored debug asset version, got %#v", m["DebugAssetVersion"])
+			}
+		},
+	}
+	c := e.NewContext(req, rec)
+
+	if err := pagePorts(c); err != nil {
+		t.Fatalf("pagePorts: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }
 

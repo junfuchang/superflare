@@ -45,6 +45,7 @@ tmp-superflare.*
 .tools/go/
 tmp-fn-*.html
 .env
+.superflare-config.lock
 *.fpk
 fnapp/superflare/app/server/superflare
 fnapp/superflare/app/server/defaults/apps.yml

@@ -18,6 +18,7 @@ import (
 	MinifySVG "github.com/tdewolff/minify/v2/svg"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/i18n"
 	"github.com/junfuchang/superflare/internal/resources/assets"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
@@ -28,6 +29,61 @@ var TPL embed.FS
 
 var bufPool = sync.Pool{
 	New: func() any { return &bytes.Buffer{} },
+}
+
+type templateRuntimeSnapshot struct {
+	DebugMode bool
+}
+
+type templateRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg templateRuntimeSnapshot
+}
+
+func (h *templateRuntimeHolder) Load() templateRuntimeSnapshot {
+	if h == nil {
+		return templateRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return templateRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *templateRuntimeHolder) Store(cfg templateRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var templateRuntimeFlags = &templateRuntimeHolder{}
+
+func templateRuntimeSnapshotFromFlags(flags model.Flags) templateRuntimeSnapshot {
+	return templateRuntimeSnapshot{DebugMode: flags.DebugMode}
+}
+
+func currentTemplateRuntime() templateRuntimeSnapshot {
+	templateRuntimeFlags.mu.RLock()
+	hasValue := templateRuntimeFlags.set
+	cfg := templateRuntimeFlags.cfg
+	templateRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = templateRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	templateRuntimeFlags.Store(cfg)
+	return cfg
+}
+
+func SetRuntimeFlags(flags model.Flags) {
+	templateRuntimeFlags.Store(templateRuntimeSnapshotFromFlags(flags))
 }
 
 // Renderer implements echo.Renderer for HTML templates.
@@ -68,7 +124,7 @@ var templateFuncMap = template.FuncMap{
 func RegisterRouting(e *echo.Echo) error {
 	var t *template.Template
 	var err error
-	if define.AppFlags.DebugMode {
+	if currentTemplateRuntime().DebugMode {
 		if err := ensureGeneratedTemplatesAreFresh(); err != nil {
 			return err
 		}

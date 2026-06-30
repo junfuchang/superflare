@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/labstack/echo/v5"
 )
 
@@ -126,4 +129,61 @@ func TestPageSearchReturnsStyledErrorWhenConfigBroken(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "status-panel") {
 		t.Fatalf("expected styled status page, got %s", rec.Body.String())
 	}
+}
+
+func TestPageSearchKeepsStoredRuntimeDebugModeAfterAppFlagsChange(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origFlags := define.AppFlags
+	defer func() {
+		define.AppFlags = origFlags
+		settingsroot.SetRuntimeFlags(origFlags)
+	}()
+
+	define.AppFlags = model.Flags{DebugMode: true}
+	settingsroot.SetRuntimeFlags(define.AppFlags)
+	define.AppFlags = model.Flags{DebugMode: false}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/search", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	e.Renderer = searchCaptureRenderer{t: t, expectDebug: true}
+	c := e.NewContext(req, rec)
+
+	if err := pageSearch(c); err != nil {
+		t.Fatalf("pageSearch: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+type searchCaptureRenderer struct {
+	t           *testing.T
+	expectDebug bool
+}
+
+func (r searchCaptureRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		if typed, ok := data.(map[string]interface{}); ok {
+			m = typed
+		} else {
+			r.t.Fatalf("unexpected renderer data type %T", data)
+		}
+	}
+	got, _ := m["DebugMode"].(bool)
+	if got != r.expectDebug {
+		r.t.Fatalf("expected DebugMode=%v, got %v", r.expectDebug, got)
+	}
+	return nil
 }

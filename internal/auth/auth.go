@@ -57,6 +57,17 @@ type loginRuntimeHolder struct {
 	cfg loginRuntimeConfig
 }
 
+type authRuntimeConfig struct {
+	Session sessionRuntimeConfig
+	Login   loginRuntimeConfig
+}
+
+type authRuntimeHolder struct {
+	mu  sync.RWMutex
+	cfg authRuntimeConfig
+	set bool
+}
+
 type LoginDisplayState struct {
 	ShowLoginInfo bool
 	UserName      string
@@ -90,7 +101,36 @@ func (h *loginRuntimeHolder) Store(cfg loginRuntimeConfig) {
 	h.mu.Unlock()
 }
 
+func newAuthRuntimeHolder(cfg authRuntimeConfig) *authRuntimeHolder {
+	return &authRuntimeHolder{cfg: cfg}
+}
+
+func (h *authRuntimeHolder) Load() authRuntimeConfig {
+	cfg, _ := h.LoadOK()
+	return cfg
+}
+
+func (h *authRuntimeHolder) LoadOK() (authRuntimeConfig, bool) {
+	if h == nil {
+		return authRuntimeConfig{}, false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.cfg, h.set
+}
+
+func (h *authRuntimeHolder) Store(cfg authRuntimeConfig) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.cfg = cfg
+	h.set = true
+	h.mu.Unlock()
+}
+
 var loginRuntimeValues sync.Map
+var runtimeAuthConfig = newAuthRuntimeHolder(authRuntimeConfig{})
 var sessionGet = session.Get
 var persistSession = func(sess *sessions.Session, req *http.Request, res http.ResponseWriter) error {
 	return sess.Save(req, res)
@@ -101,8 +141,48 @@ func RequestHandleSessionName(cookieName string, port int) string {
 	return fmt.Sprintf("%s_%d", cookieName, port)
 }
 
+func SnapshotAuthRuntimeConfig() authRuntimeConfig {
+	return runtimeAuthConfig.Load()
+}
+
+func snapshotAuthRuntimeConfigOK() (authRuntimeConfig, bool) {
+	return runtimeAuthConfig.LoadOK()
+}
+
+func sessionRuntimeConfigFromFlags(flags model.Flags) sessionRuntimeConfig {
+	return sessionRuntimeConfig{
+		Name:         RequestHandleSessionName(flags.CookieName, flags.Port),
+		CookieSecret: flags.CookieSecret,
+		DisableLogin: flags.DisableLoginMode,
+	}
+}
+
+func StoreAuthRuntimeConfig(cfg authRuntimeConfig) {
+	runtimeAuthConfig.Store(cfg)
+	if strings.TrimSpace(cfg.Session.Name) != "" {
+		StoreLoginRuntimeConfigForSessionName(cfg.Session.Name, cfg.Login)
+	}
+}
+
+func StoreAuthRuntimeConfigFromFlags(flags model.Flags) {
+	StoreAuthRuntimeConfig(authRuntimeConfig{
+		Session: sessionRuntimeConfigFromFlags(flags),
+		Login:   SnapshotLoginRuntimeConfigFromFlags(flags),
+	})
+}
+
 func SnapshotLoginRuntimeConfig() loginRuntimeConfig {
-	return SnapshotLoginRuntimeConfigForSessionName(RequestHandleSessionName(define.AppFlags.CookieName, define.AppFlags.Port))
+	cfg, ok := snapshotAuthRuntimeConfigOK()
+	if strings.TrimSpace(cfg.Session.Name) != "" {
+		if loginCfg := SnapshotLoginRuntimeConfigForSessionName(cfg.Session.Name); loginCfg != (loginRuntimeConfig{}) {
+			return loginCfg
+		}
+		if ok {
+			return cfg.Login
+		}
+	}
+	flags := define.CurrentAppRuntimeFlags()
+	return SnapshotLoginRuntimeConfigForSessionName(RequestHandleSessionName(flags.CookieName, flags.Port))
 }
 
 func SnapshotLoginRuntimeConfigForSessionName(sessionName string) loginRuntimeConfig {
@@ -115,7 +195,14 @@ func SnapshotLoginRuntimeConfigForSessionName(sessionName string) loginRuntimeCo
 }
 
 func StoreLoginRuntimeConfig(cfg loginRuntimeConfig) {
-	StoreLoginRuntimeConfigForSessionName(RequestHandleSessionName(define.AppFlags.CookieName, define.AppFlags.Port), cfg)
+	runtimeCfg, ok := snapshotAuthRuntimeConfigOK()
+	if ok && strings.TrimSpace(runtimeCfg.Session.Name) != "" {
+		runtimeCfg.Login = cfg
+		StoreAuthRuntimeConfig(runtimeCfg)
+		return
+	}
+	flags := define.CurrentAppRuntimeFlags()
+	StoreLoginRuntimeConfigForSessionName(RequestHandleSessionName(flags.CookieName, flags.Port), cfg)
 }
 
 func StoreLoginRuntimeConfigForSessionName(sessionName string, cfg loginRuntimeConfig) {
@@ -137,7 +224,12 @@ func SessionNameForRequest(c *echo.Context) string {
 	if strings.TrimSpace(cfg.Name) != "" {
 		return cfg.Name
 	}
-	return RequestHandleSessionName(define.AppFlags.CookieName, define.AppFlags.Port)
+	runtimeCfg, ok := snapshotAuthRuntimeConfigOK()
+	if ok && strings.TrimSpace(runtimeCfg.Session.Name) != "" {
+		return runtimeCfg.Session.Name
+	}
+	flags := define.CurrentAppRuntimeFlags()
+	return RequestHandleSessionName(flags.CookieName, flags.Port)
 }
 
 func SnapshotLoginRuntimeConfigForRequest(c *echo.Context) loginRuntimeConfig {
@@ -147,7 +239,11 @@ func SnapshotLoginRuntimeConfigForRequest(c *echo.Context) loginRuntimeConfig {
 	if cfg := SnapshotLoginRuntimeConfigForSessionName(SessionNameForRequest(c)); cfg != (loginRuntimeConfig{}) {
 		return cfg
 	}
-	return SnapshotLoginRuntimeConfigFromFlags(define.AppFlags)
+	runtimeCfg, ok := snapshotAuthRuntimeConfigOK()
+	if ok {
+		return runtimeCfg.Login
+	}
+	return SnapshotLoginRuntimeConfigFromFlags(define.CurrentAppRuntimeFlags())
 }
 
 func SnapshotLoginRuntimeConfigFromFlags(flags model.Flags) loginRuntimeConfig {
@@ -160,23 +256,23 @@ func SnapshotLoginRuntimeConfigFromFlags(flags model.Flags) loginRuntimeConfig {
 }
 
 func StoreLoginRuntimeConfigFromFlags(flags model.Flags) {
-	StoreLoginRuntimeConfigForSessionName(RequestHandleSessionName(flags.CookieName, flags.Port), SnapshotLoginRuntimeConfigFromFlags(flags))
+	StoreAuthRuntimeConfigFromFlags(flags)
 }
 
 func RequestHandle(e *echo.Echo) {
-	cfg := sessionRuntimeConfig{
-		Name:         RequestHandleSessionName(define.AppFlags.CookieName, define.AppFlags.Port),
-		CookieSecret: define.AppFlags.CookieSecret,
-		DisableLogin: define.AppFlags.DisableLoginMode,
-	}
-	loginCfg := SnapshotLoginRuntimeConfigFromFlags(define.AppFlags)
-	StoreLoginRuntimeConfigForSessionName(cfg.Name, loginCfg)
+	RequestHandleWithFlags(e, define.CurrentAppRuntimeFlags())
+}
+
+func RequestHandleWithFlags(e *echo.Echo, flags model.Flags) {
+	cfg := sessionRuntimeConfigFromFlags(flags)
+	loginCfg := SnapshotLoginRuntimeConfigFromFlags(flags)
+	StoreAuthRuntimeConfig(authRuntimeConfig{
+		Session: cfg,
+		Login:   loginCfg,
+	})
 	e.Use(bindSessionRuntimeConfig(cfg, newLoginRuntimeHolder(loginCfg)))
 	if !cfg.DisableLogin {
-		if define.AppFlags.CookieSecret == define.DEFAULT_COOKIE_SECRET {
-			log.Println("[auth] warning: login mode is enabled but CookieSecret is still the default value; set FLARE_COOKIE_SECRET or --cookie-secret before production use")
-		}
-		store := sessions.NewCookieStore([]byte(define.AppFlags.CookieSecret))
+		store := sessions.NewCookieStore([]byte(cfg.CookieSecret))
 		store.MaxAge(SESSION_MAX_AGE)
 		e.Use(session.Middleware(store))
 		e.POST(define.MiscPages.Login.Path, login)
@@ -226,16 +322,23 @@ func getLoginRuntimeHolder(c *echo.Context) *loginRuntimeHolder {
 func getSessionRuntimeConfig(c *echo.Context) sessionRuntimeConfig {
 	if c != nil {
 		if cfg, ok := c.Get(sessionConfigContextKey).(sessionRuntimeConfig); ok {
-			if strings.TrimSpace(cfg.Name) != "" && strings.TrimSpace(cfg.CookieSecret) != "" {
+			if isUsableSessionRuntimeConfig(cfg) {
 				return cfg
 			}
 		}
 	}
-	return sessionRuntimeConfig{
-		Name:         RequestHandleSessionName(define.AppFlags.CookieName, define.AppFlags.Port),
-		CookieSecret: define.AppFlags.CookieSecret,
-		DisableLogin: define.AppFlags.DisableLoginMode,
+	runtimeCfg, ok := snapshotAuthRuntimeConfigOK()
+	if ok && isUsableSessionRuntimeConfig(runtimeCfg.Session) {
+		return runtimeCfg.Session
 	}
+	return sessionRuntimeConfigFromFlags(define.CurrentAppRuntimeFlags())
+}
+
+func isUsableSessionRuntimeConfig(cfg sessionRuntimeConfig) bool {
+	if strings.TrimSpace(cfg.Name) == "" {
+		return false
+	}
+	return cfg.DisableLogin || strings.TrimSpace(cfg.CookieSecret) != ""
 }
 
 func hasBoundSessionRuntimeConfig(c *echo.Context) bool {

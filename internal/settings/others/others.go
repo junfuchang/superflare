@@ -14,6 +14,7 @@ import (
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/pool"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
@@ -23,9 +24,6 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateLoginOptions(c *echo.Context) error {
-	if err := statuspage.BindCurrentOptions(c); err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
-	}
 	var body struct {
 		LoginUser        string `form:"login-user"`
 		LoginPass        string `form:"login-pass"`
@@ -63,10 +61,7 @@ func updateLoginOptions(c *echo.Context) error {
 }
 
 func applyRuntimeLoginConfig(c *echo.Context, user string, pass string) {
-	next := define.AppBaseFlags
-	if next.Port == 0 {
-		next = define.AppFlags
-	}
+	next := define.BaseAppRuntimeFlags()
 	if user != "" {
 		next.User = user
 		next.UserIsGenerated = false
@@ -75,14 +70,7 @@ func applyRuntimeLoginConfig(c *echo.Context, user string, pass string) {
 		next.Pass = pass
 		next.PassIsGenerated = false
 	}
-	define.AppBaseFlags.User = next.User
-	define.AppBaseFlags.Pass = next.Pass
-	define.AppBaseFlags.UserIsGenerated = next.UserIsGenerated
-	define.AppBaseFlags.PassIsGenerated = next.PassIsGenerated
-	define.AppFlags.User = next.User
-	define.AppFlags.Pass = next.Pass
-	define.AppFlags.UserIsGenerated = next.UserIsGenerated
-	define.AppFlags.PassIsGenerated = next.PassIsGenerated
+	auth.StoreLoginRuntimeConfig(auth.SnapshotLoginRuntimeConfigFromFlags(next))
 	auth.StoreLoginRuntimeConfigForRequest(c, auth.SnapshotLoginRuntimeConfigFromFlags(next))
 }
 
@@ -117,6 +105,7 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	isLogined = loginDisplay.ShowLoginInfo
 	userName = loginDisplay.UserName
 	loginDate = loginDisplay.LoginDate
+	canManageSettings := disableLoginMode || isLogined
 	renderWarnings = auth.AppendSessionWarnings(c, locale, renderWarnings)
 	pageStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "settings")
 	if err != nil {
@@ -128,9 +117,9 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = settingsroot.CurrentRuntime().DebugMode
 	m["DisableLoginMode"] = disableLoginMode
-	m["UserIsLogin"] = isLogined
+	m["UserIsLogin"] = canManageSettings
 	m["ShowLoginInfo"] = isLogined
 	m["UserName"] = userName
 	m["LoginDate"] = loginDate
@@ -141,6 +130,12 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	m["LogoutURI"] = define.MiscPages.Logout.Path
 	m["PageName"] = "Others"
 	m["SettingPages"] = define.SettingPages
+	m["ShowSettingsSidebar"] = canManageSettings
+	if canManageSettings {
+		m["OthersPageMode"] = "settings"
+	} else {
+		m["OthersPageMode"] = "login"
+	}
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
 	currentLoginConfig, err := resolveCurrentLoginConfig(c, locale, options)
@@ -151,12 +146,17 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 		loginConfigError = currentLoginConfig.WarningKey
 	}
 	m["OptionLoginUser"] = currentLoginConfig.User
+	m["DefaultLoginCredentialsActive"] = isLogined && loginCredentialsAreDefault(currentLoginConfig.User, currentLoginConfig.Pass)
 	m["LoginConfigError"] = loginConfigError
 	m["LoginConfigErrorDetail"] = currentLoginConfig.WarningDetail
 	m["Version"] = appver.DisplayVersion()
 	footer.BindTemplateData(m, options.Footer)
 	m["RenderWarnings"] = renderWarnings
 	return c.Render(http.StatusOK, "settings.html", m)
+}
+
+func loginCredentialsAreDefault(user string, pass string) bool {
+	return strings.TrimSpace(user) == define.DEFAULT_LOGIN_USER && strings.TrimSpace(pass) == define.DEFAULT_LOGIN_PASS
 }
 
 func resolveCurrentLoginConfig(c *echo.Context, locale string, options model.Application) (resolvedLoginConfig, error) {
@@ -224,5 +224,5 @@ func formatLoginConfigFallbackDetail(locale string, err error) string {
 	if locale == "en" {
 		return "Current read error: " + detail
 	}
-	return "当前读取错误：" + detail
+	return "当前读取错误: " + detail
 }

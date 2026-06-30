@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v5"
@@ -16,6 +15,7 @@ import (
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/background"
 	"github.com/junfuchang/superflare/internal/pool"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
 
@@ -28,9 +28,6 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateThemes(c *echo.Context) error {
-	if err := statuspage.BindCurrentOptions(c); err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
-	}
 	var body struct {
 		Action                string `form:"action"`
 		Theme                 string `form:"theme"`
@@ -63,26 +60,26 @@ func updateThemes(c *echo.Context) error {
 		glassIntensity    int
 	)
 	if themeName == "custom" {
-		backgroundColor, err = optionalSafeColor(body.CustomThemeBackground, "custom-theme-background")
+		backgroundColor, err = settingsroot.ParseOptionalColor(body.CustomThemeBackground, "custom-theme-background")
 		if err != nil {
 			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 		}
-		primaryColor, err = optionalSafeColor(body.CustomThemePrimary, "custom-theme-primary")
+		primaryColor, err = settingsroot.ParseOptionalColor(body.CustomThemePrimary, "custom-theme-primary")
 		if err != nil {
 			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 		}
-		accentColor, err = optionalSafeColor(body.CustomThemeAccent, "custom-theme-accent")
+		accentColor, err = settingsroot.ParseOptionalColor(body.CustomThemeAccent, "custom-theme-accent")
 		if err != nil {
 			return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 		}
 		if body.BackgroundBlur != "" {
-			backgroundBlur, err = parseOptionalRangedInt(body.BackgroundBlur, 0, 80, "background-blur")
+			backgroundBlur, err = settingsroot.ParseOptionalRangedInt(body.BackgroundBlur, 0, 80, "background-blur")
 			if err != nil {
 				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 			}
 		}
 		if body.BackgroundOpacity != "" {
-			backgroundOpacity, err = parseOptionalRangedInt(body.BackgroundOpacity, 0, 100, "background-opacity")
+			backgroundOpacity, err = settingsroot.ParseOptionalRangedInt(body.BackgroundOpacity, 0, 100, "background-opacity")
 			if err != nil {
 				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 			}
@@ -94,7 +91,7 @@ func updateThemes(c *echo.Context) error {
 			}
 		}
 		if body.GlassIntensity != "" {
-			glassIntensity, err = parseOptionalRangedInt(body.GlassIntensity, 0, 100, "glass-intensity")
+			glassIntensity, err = settingsroot.ParseOptionalRangedInt(body.GlassIntensity, 0, 100, "glass-intensity")
 			if err != nil {
 				return statuspage.HTML(c, http.StatusBadRequest, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusBadRequest, err.Error()))
 			}
@@ -255,17 +252,6 @@ func normalizeGlassEffect(input string) (string, error) {
 	}
 }
 
-func optionalSafeColor(input string, field string) (string, error) {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return "", nil
-	}
-	if define.SafeCSSColor(input, "") == "" {
-		return "", fmt.Errorf("invalid %s value: %s", field, input)
-	}
-	return input, nil
-}
-
 func resolveThemeBase(options model.Application) string {
 	themeBase := strings.TrimSpace(options.ThemeBase)
 	if themeBase != "" && !strings.EqualFold(themeBase, "custom") {
@@ -276,21 +262,6 @@ func resolveThemeBase(options model.Application) string {
 		return themeName
 	}
 	return "blackboard"
-}
-
-func parseOptionalRangedInt(input string, min int, max int, field string) (int, error) {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return 0, nil
-	}
-	value, err := strconv.Atoi(input)
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s value: %s", field, input)
-	}
-	if value < min || value > max {
-		return 0, fmt.Errorf("%s must be between %d and %d", field, min, max)
-	}
-	return value, nil
 }
 
 func hasFormField(c *echo.Context, field string) bool {
@@ -341,12 +312,13 @@ func pageTheme(c *echo.Context) error {
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = settingsroot.CurrentRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageAppearance"] = pageStyle
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["PageName"] = "Theme"
 	m["SettingPages"] = define.SettingPages
+	m["ShowSettingsSidebar"] = true
 	m["Themes"] = themes
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon

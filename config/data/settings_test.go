@@ -2,6 +2,8 @@ package data
 
 import (
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/junfuchang/superflare/config/model"
@@ -259,6 +261,84 @@ func TestUpdateLoginConfig(t *testing.T) {
 
 	filePath := getConfigPath("config")
 	os.Remove(filePath)
+}
+
+func TestConcurrentSettingsUpdatesDoNotDropEarlierConfigChanges(t *testing.T) {
+	withTempWorkingDir(t)
+
+	startSecondRead := make(chan struct{}, 1)
+	releaseFirstSave := make(chan struct{})
+	origLoadHook := configUpdateBeforeLoadHook
+	origSaveHook := configUpdateBeforeSaveHook
+	configUpdateBeforeLoadHook = nil
+	configUpdateBeforeSaveHook = nil
+	t.Cleanup(func() {
+		configUpdateBeforeLoadHook = origLoadHook
+		configUpdateBeforeSaveHook = origSaveHook
+	})
+
+	var loadCount int
+	var loadMu sync.Mutex
+	configUpdateBeforeLoadHook = func(name string) {
+		if name != "config" {
+			return
+		}
+		loadMu.Lock()
+		loadCount++
+		current := loadCount
+		loadMu.Unlock()
+		if current == 1 {
+			startSecondRead <- struct{}{}
+			return
+		}
+	}
+	configUpdateBeforeSaveHook = func(name string, _ model.Application) {
+		if name != "config" {
+			return
+		}
+		select {
+		case <-releaseFirstSave:
+		default:
+			<-releaseFirstSave
+		}
+	}
+
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- UpdateSearch(true, false, "engine", "bing", "new-tab", "https://example.com/search?q=%s")
+	}()
+
+	<-startSecondRead
+
+	go func() {
+		errCh <- UpdateAppearance(model.Application{
+			Title:    "Concurrent Title",
+			Locale:   "zh",
+			IconMode: "FILLING",
+		})
+	}()
+
+	close(releaseFirstSave)
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("concurrent update failed: %v", err)
+		}
+	}
+
+	options, err := GetAllSettingsOptions()
+	if err != nil {
+		t.Fatalf("GetAllSettingsOptions: %v", err)
+	}
+	if options.Title != "Concurrent Title" {
+		t.Fatalf("expected title update to persist, got %q", options.Title)
+	}
+	if options.SearchMode != "engine" || options.SearchEngine != "bing" || options.SearchEngineOpenMode != "new-tab" {
+		t.Fatalf("expected search update to persist, got mode=%q engine=%q open=%q", options.SearchMode, options.SearchEngine, options.SearchEngineOpenMode)
+	}
+	if strings.TrimSpace(options.SearchEngineCustomTemplate) != "https://example.com/search?q=%s" {
+		t.Fatalf("expected custom template to persist, got %q", options.SearchEngineCustomTemplate)
+	}
 }
 
 func TestGetAllSettingsOptionsReturnsErrorWhenLocaleInvalid(t *testing.T) {

@@ -107,8 +107,79 @@ func TestApplyRuntimeLoginConfigUpdatesAuthSnapshotAtomically(t *testing.T) {
 	if loginSnapshot.User != "new-user" || loginSnapshot.Pass != "new-pass" {
 		t.Fatalf("expected runtime login snapshot to update atomically, got user=%q pass=%q", loginSnapshot.User, loginSnapshot.Pass)
 	}
-	if define.AppBaseFlags.User != "new-user" || define.AppBaseFlags.Pass != "new-pass" {
-		t.Fatalf("expected base flags to stay in sync, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	if define.AppBaseFlags.User != "old-user" || define.AppBaseFlags.Pass != "old-pass" {
+		t.Fatalf("expected base flags unchanged, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	}
+}
+
+func TestApplyRuntimeLoginConfigDoesNotMutateGlobalFlags(t *testing.T) {
+	origFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origLoginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	t.Cleanup(func() {
+		define.AppFlags = origFlags
+		define.AppBaseFlags = origBaseFlags
+		auth.StoreLoginRuntimeConfig(origLoginSnapshot)
+	})
+
+	define.AppFlags = model.Flags{User: "old-user", Pass: "old-pass", CookieName: "superflare", Port: 3636}
+	define.AppBaseFlags = model.Flags{User: "old-user", Pass: "old-pass", CookieName: "superflare", Port: 3636}
+	auth.StoreLoginRuntimeConfig(auth.SnapshotLoginRuntimeConfigFromFlags(define.AppFlags))
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/others", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	c := e.NewContext(req, rec)
+
+	applyRuntimeLoginConfig(c, "new-user", "new-pass")
+
+	if define.AppFlags.User != "old-user" || define.AppFlags.Pass != "old-pass" {
+		t.Fatalf("expected global app flags unchanged, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
+	}
+	if define.AppBaseFlags.User != "old-user" || define.AppBaseFlags.Pass != "old-pass" {
+		t.Fatalf("expected global base flags unchanged, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	}
+	loginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	if loginSnapshot.User != "new-user" || loginSnapshot.Pass != "new-pass" {
+		t.Fatalf("expected runtime login snapshot to update, got user=%q pass=%q", loginSnapshot.User, loginSnapshot.Pass)
+	}
+}
+
+func TestApplyRuntimeLoginConfigUsesStoredRuntimeBaseFlagsInsteadOfGlobalFlags(t *testing.T) {
+	origFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origRuntime, runtimeSet := define.SnapshotAppRuntimeFlags()
+	origLoginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	t.Cleanup(func() {
+		define.AppFlags = origFlags
+		define.AppBaseFlags = origBaseFlags
+		if runtimeSet {
+			define.StoreAppRuntimeFlags(origRuntime.Source, origRuntime.Base, origRuntime.Current)
+		} else {
+			define.ResetAppRuntimeFlags()
+		}
+		auth.StoreLoginRuntimeConfig(origLoginSnapshot)
+	})
+
+	define.StoreAppRuntimeFlags(
+		model.Flags{Port: 3636, CookieName: "runtime-cookie", User: "source-user", Pass: "source-pass"},
+		model.Flags{Port: 3636, CookieName: "runtime-cookie", User: "runtime-base-user", Pass: "runtime-base-pass"},
+		model.Flags{Port: 3636, CookieName: "runtime-cookie", User: "current-user", Pass: "current-pass"},
+	)
+	define.AppFlags = model.Flags{Port: 3737, CookieName: "stale-cookie", User: "stale-user", Pass: "stale-pass"}
+	define.AppBaseFlags = define.AppFlags
+	auth.StoreLoginRuntimeConfigFromFlags(model.Flags{Port: 3636, CookieName: "runtime-cookie", User: "old-user", Pass: "old-pass"})
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/others", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	c := e.NewContext(req, rec)
+
+	applyRuntimeLoginConfig(c, "new-user", "")
+
+	loginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	if loginSnapshot.User != "new-user" || loginSnapshot.Pass != "runtime-base-pass" {
+		t.Fatalf("expected runtime base flags to provide unchanged password, got user=%q pass=%q", loginSnapshot.User, loginSnapshot.Pass)
 	}
 }
 
@@ -276,6 +347,125 @@ func TestRenderOthersSurfacesSessionRecoveryWarningFromQuery(t *testing.T) {
 	}
 }
 
+func TestRenderOthersHidesSettingsSidebarWhenLoggedOut(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/others", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	e.Renderer = loggedOutLayoutRenderer{}
+	c := e.NewContext(req, rec)
+
+	if err := renderOthers(c, ""); err != nil {
+		t.Fatalf("renderOthers: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRenderOthersShowsSettingsModeWhenLoginDisabled(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origLoginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	t.Cleanup(func() {
+		define.AppFlags = origFlags
+		define.AppBaseFlags = origBaseFlags
+		auth.StoreLoginRuntimeConfig(origLoginSnapshot)
+	})
+	define.AppFlags = model.Flags{DisableLoginMode: true, CookieName: "superflare", Port: 3636, User: "admin", Pass: "admin"}
+	define.AppBaseFlags = define.AppFlags
+	auth.StoreLoginRuntimeConfigFromFlags(define.AppFlags)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/others", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	e.Renderer = loginDisabledLayoutRenderer{}
+	c := e.NewContext(req, rec)
+
+	if err := renderOthers(c, ""); err != nil {
+		t.Fatalf("renderOthers: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRenderOthersWarnsAfterLoginWhenDefaultCredentialsAreActive(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: admin\nLoginPass: admin\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origLoginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	t.Cleanup(func() {
+		define.AppFlags = origFlags
+		define.AppBaseFlags = origBaseFlags
+		auth.StoreLoginRuntimeConfig(origLoginSnapshot)
+	})
+	define.AppFlags = model.Flags{User: "admin", Pass: "admin", CookieName: "superflare", CookieSecret: "default-credentials-test-secret", Port: 3636}
+	define.AppBaseFlags = define.AppFlags
+	auth.StoreLoginRuntimeConfigFromFlags(define.AppFlags)
+
+	e := echo.New()
+	e.Renderer = defaultCredentialsWarningRenderer{}
+	auth.RequestHandleWithFlags(e, define.AppFlags)
+	RegisterRouting(e)
+
+	form := url.Values{}
+	form.Set("username", "admin")
+	form.Set("password", "admin")
+	loginReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	loginReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	loginRec := httptest.NewRecorder()
+	e.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusFound {
+		t.Fatalf("expected login redirect, got %d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	cookies := loginRec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected login to set a session cookie")
+	}
+
+	pageReq := httptest.NewRequest(http.MethodGet, define.SettingPages.Others.Path, nil)
+	for _, cookie := range cookies {
+		pageReq.AddCookie(cookie)
+	}
+	pageRec := httptest.NewRecorder()
+	e.ServeHTTP(pageRec, pageReq)
+	if pageRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", pageRec.Code, pageRec.Body.String())
+	}
+}
+
 type captureRenderer struct{}
 
 func (captureRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
@@ -350,4 +540,67 @@ func (sessionWarningRenderer) Render(c *echo.Context, w io.Writer, name string, 
 		}
 	}
 	return echo.NewHTTPError(http.StatusInternalServerError, "session recovery warning not found")
+}
+
+type loggedOutLayoutRenderer struct{}
+
+func (loggedOutLayoutRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		if typed, ok := data.(map[string]interface{}); ok {
+			m = typed
+		} else {
+			return nil
+		}
+	}
+	if show, _ := m["UserIsLogin"].(bool); show {
+		return echo.NewHTTPError(http.StatusInternalServerError, "expected logged out layout")
+	}
+	if showSidebar, exists := m["ShowSettingsSidebar"].(bool); !exists || showSidebar {
+		return echo.NewHTTPError(http.StatusInternalServerError, "expected settings sidebar hidden while logged out")
+	}
+	if pageMode, _ := m["OthersPageMode"].(string); pageMode != "login" {
+		return echo.NewHTTPError(http.StatusInternalServerError, "unexpected others page mode: "+pageMode)
+	}
+	return nil
+}
+
+type loginDisabledLayoutRenderer struct{}
+
+func (loginDisabledLayoutRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		if typed, ok := data.(map[string]interface{}); ok {
+			m = typed
+		} else {
+			return nil
+		}
+	}
+	if disabled, _ := m["DisableLoginMode"].(bool); !disabled {
+		return echo.NewHTTPError(http.StatusInternalServerError, "expected login disabled mode")
+	}
+	if showSidebar, exists := m["ShowSettingsSidebar"].(bool); !exists || !showSidebar {
+		return echo.NewHTTPError(http.StatusInternalServerError, "expected settings sidebar visible when login is disabled")
+	}
+	if pageMode, _ := m["OthersPageMode"].(string); pageMode != "settings" {
+		return echo.NewHTTPError(http.StatusInternalServerError, "unexpected others page mode: "+pageMode)
+	}
+	return nil
+}
+
+type defaultCredentialsWarningRenderer struct{}
+
+func (defaultCredentialsWarningRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		if typed, ok := data.(map[string]interface{}); ok {
+			m = typed
+		} else {
+			return nil
+		}
+	}
+	if show, _ := m["DefaultLoginCredentialsActive"].(bool); !show {
+		return echo.NewHTTPError(http.StatusInternalServerError, "expected default credentials warning to be active")
+	}
+	return nil
 }

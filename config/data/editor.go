@@ -243,33 +243,35 @@ func parseBookmarkCSVRecord(record []string, row int) (model.Bookmark, error) {
 	return bookmark, nil
 }
 func UpdateBookmarksFromEditor(categoriesCSV string, bookmarksCSV string) error {
-	categories, err := getCategoriesFromCSV(categoriesCSV)
-	if err != nil {
-		log.Println("editor categories CSV parse error:", err)
-		return fmt.Errorf("\u89e3\u6790\u5206\u7c7b\u6570\u636e\u5931\u8d25: %w", err)
-	}
+	return withConfigWriteLock(func() error {
+		categories, err := getCategoriesFromCSV(categoriesCSV)
+		if err != nil {
+			log.Println("editor categories CSV parse error:", err)
+			return fmt.Errorf("\u89e3\u6790\u5206\u7c7b\u6570\u636e\u5931\u8d25: %w", err)
+		}
 
-	favorite, normal, err := getBookmarksFromCSV(bookmarksCSV, categories)
-	if err != nil {
-		log.Println("editor bookmarks CSV parse error:", err)
-		return fmt.Errorf("\u89e3\u6790\u4e66\u7b7e\u6570\u636e\u5931\u8d25: %w", err)
-	}
+		favorite, normal, err := getBookmarksFromCSV(bookmarksCSV, categories)
+		if err != nil {
+			log.Println("editor bookmarks CSV parse error:", err)
+			return fmt.Errorf("\u89e3\u6790\u4e66\u7b7e\u6570\u636e\u5931\u8d25: %w", err)
+		}
 
-	var normalBookmarks model.Bookmarks
-	normalBookmarks.Items = normal
-	normalBookmarks.Categories = categories
+		var normalBookmarks model.Bookmarks
+		normalBookmarks.Items = normal
+		normalBookmarks.Categories = categories
 
-	var favoriteBookmarks model.Bookmarks
-	favoriteBookmarks.Items = favorite
+		var favoriteBookmarks model.Bookmarks
+		favoriteBookmarks.Items = favorite
 
-	if err := saveEditorBookmarkFilesAtomically(map[string]model.Bookmarks{
-		"apps":      favoriteBookmarks,
-		"bookmarks": normalBookmarks,
-	}); err != nil {
-		return fmt.Errorf("\u4fdd\u5b58\u7f16\u8f91\u6570\u636e\u5931\u8d25: %w", err)
-	}
+		if err := saveEditorBookmarkFilesAtomically(map[string]model.Bookmarks{
+			"apps":      favoriteBookmarks,
+			"bookmarks": normalBookmarks,
+		}); err != nil {
+			return fmt.Errorf("\u4fdd\u5b58\u7f16\u8f91\u6570\u636e\u5931\u8d25: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 type pendingEditorDataFile struct {

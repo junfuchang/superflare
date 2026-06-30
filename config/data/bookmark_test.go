@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/junfuchang/superflare/config/model"
 )
@@ -31,6 +32,41 @@ func TestFavoriteBookmarks(t *testing.T) {
 
 	os.Remove(filePath)
 
+}
+
+func TestSaveFavoriteBookmarksUsesConfigWriteLock(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	configWriteMu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		done <- SaveFavoriteBookmarks(model.Bookmarks{Items: []model.Bookmark{{Name: "App", URL: "https://example.com"}}})
+	}()
+
+	select {
+	case err := <-done:
+		configWriteMu.Unlock()
+		t.Fatalf("SaveFavoriteBookmarks bypassed config write lock, err=%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	configWriteMu.Unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SaveFavoriteBookmarks after lock release: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SaveFavoriteBookmarks did not finish after config write lock was released")
+	}
 }
 
 func TestNormalBookmarks(t *testing.T) {

@@ -852,6 +852,27 @@ func TestRegisterAssetRouting_ExposesRuntimeAsset(t *testing.T) {
 	}
 }
 
+func TestRegisterAssetRoutingKeepsStoredDebugModeAfterAppFlagsChange(t *testing.T) {
+	origFlags := define.AppFlags
+	origRuntime, origRuntimeSet := saveEditorRuntimeFlags()
+	defer func() {
+		define.AppFlags = origFlags
+		restoreEditorRuntimeFlags(origRuntime, origRuntimeSet)
+	}()
+
+	define.AppFlags = model.Flags{DebugMode: true}
+	editorRuntimeFlags.Store(editorRuntimeSnapshotFromFlags(define.AppFlags))
+
+	e := echo.New()
+	RegisterAssetRouting(e)
+
+	define.AppFlags = model.Flags{DebugMode: false}
+
+	if got := getDebugAssetVersion(); got != "?v=dev" {
+		t.Fatalf("expected debug asset version to stay bound, got %q", got)
+	}
+}
+
 func TestRenderReturnsStyledErrorPageWhenEditorDataBroken(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -1251,11 +1272,11 @@ func TestWriteRestoreFilesAtomicallyRefreshesRuntimeLoginConfig(t *testing.T) {
 	if snapshot.User != "restored-user" || snapshot.Pass != "restored-pass" {
 		t.Fatalf("expected runtime login snapshot to refresh after restore, got user=%q pass=%q", snapshot.User, snapshot.Pass)
 	}
-	if define.AppFlags.User != "restored-user" || define.AppFlags.Pass != "restored-pass" {
-		t.Fatalf("expected runtime flags to refresh after restore, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
+	if define.AppFlags.User != "old-user" || define.AppFlags.Pass != "old-pass" {
+		t.Fatalf("expected global app flags unchanged after restore refresh, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
 	}
-	if define.AppBaseFlags.User != "restored-user" || define.AppBaseFlags.Pass != "restored-pass" {
-		t.Fatalf("expected base flags to refresh after restore, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	if define.AppBaseFlags.User != "old-user" || define.AppBaseFlags.Pass != "old-pass" {
+		t.Fatalf("expected global base flags unchanged after restore refresh, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
 	}
 }
 
@@ -1426,11 +1447,90 @@ func TestWriteRestoreFilesAtomicallyFallsBackToSourceLoginFlagsWhenBackupClearsC
 	if snapshot.User != "source-user" || snapshot.Pass != "source-pass" {
 		t.Fatalf("expected runtime login snapshot to fall back to source flags, got user=%q pass=%q", snapshot.User, snapshot.Pass)
 	}
-	if define.AppFlags.User != "source-user" || define.AppFlags.Pass != "source-pass" {
-		t.Fatalf("expected runtime flags to fall back to source flags, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
+	if define.AppFlags.User != "old-user" || define.AppFlags.Pass != "old-pass" {
+		t.Fatalf("expected global app flags unchanged after fallback refresh, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
 	}
-	if define.AppBaseFlags.User != "source-user" || define.AppBaseFlags.Pass != "source-pass" {
-		t.Fatalf("expected base flags to fall back to source flags, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	if define.AppBaseFlags.User != "old-user" || define.AppBaseFlags.Pass != "old-pass" {
+		t.Fatalf("expected global base flags unchanged after fallback refresh, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	}
+}
+
+func TestWriteRestoreFilesAtomicallyUsesStoredRuntimeSourceFlagsInsteadOfGlobalFlags(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	origFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	origRuntime, runtimeSet := define.SnapshotAppRuntimeFlags()
+	origLoginSnapshot := auth.SnapshotLoginRuntimeConfig()
+	defer func() {
+		define.AppFlags = origFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+		if runtimeSet {
+			define.StoreAppRuntimeFlags(origRuntime.Source, origRuntime.Base, origRuntime.Current)
+		} else {
+			define.ResetAppRuntimeFlags()
+		}
+		auth.StoreLoginRuntimeConfig(origLoginSnapshot)
+	}()
+
+	define.StoreAppRuntimeFlags(
+		model.Flags{
+			Port:         3636,
+			CookieName:   "runtime-cookie",
+			CookieSecret: "runtime-secret",
+			User:         "runtime-source-user",
+			Pass:         "runtime-source-pass",
+		},
+		model.Flags{
+			Port:         3636,
+			CookieName:   "runtime-cookie",
+			CookieSecret: "runtime-secret",
+			User:         "runtime-base-user",
+			Pass:         "runtime-base-pass",
+		},
+		model.Flags{
+			Port:         3636,
+			CookieName:   "runtime-cookie",
+			CookieSecret: "runtime-secret",
+			User:         "runtime-current-user",
+			Pass:         "runtime-current-pass",
+		},
+	)
+	define.AppSourceFlags = model.Flags{
+		Port:         3737,
+		CookieName:   "stale-cookie",
+		CookieSecret: "stale-secret",
+		User:         "stale-source-user",
+		Pass:         "stale-source-pass",
+	}
+	define.AppBaseFlags = define.AppSourceFlags
+	define.AppFlags = define.AppSourceFlags
+	auth.StoreLoginRuntimeConfigFromFlags(model.Flags{
+		Port:         3636,
+		CookieName:   "runtime-cookie",
+		CookieSecret: "runtime-secret",
+		User:         "old-user",
+		Pass:         "old-pass",
+	})
+
+	rawConfig := []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: \"\"\nLoginPass: \"\"\n")
+	if err := writeRestoreFilesAtomically(map[string][]byte{"config": rawConfig}); err != nil {
+		t.Fatalf("writeRestoreFilesAtomically: %v", err)
+	}
+
+	snapshot := auth.SnapshotLoginRuntimeConfigForSessionName(auth.RequestHandleSessionName("runtime-cookie", 3636))
+	if snapshot.User != "runtime-source-user" || snapshot.Pass != "runtime-source-pass" {
+		t.Fatalf("expected stored runtime source flags to provide fallback login, got user=%q pass=%q", snapshot.User, snapshot.Pass)
 	}
 }
 
@@ -1805,4 +1905,17 @@ func TestRefreshRequestLoginRuntimeUpdatesCurrentRouterSnapshot(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", rec.Code)
 	}
+}
+
+func saveEditorRuntimeFlags() (editorRuntimeSnapshot, bool) {
+	editorRuntimeFlags.mu.RLock()
+	defer editorRuntimeFlags.mu.RUnlock()
+	return editorRuntimeFlags.cfg, editorRuntimeFlags.set
+}
+
+func restoreEditorRuntimeFlags(cfg editorRuntimeSnapshot, set bool) {
+	editorRuntimeFlags.mu.Lock()
+	editorRuntimeFlags.cfg = cfg
+	editorRuntimeFlags.set = set
+	editorRuntimeFlags.mu.Unlock()
 }

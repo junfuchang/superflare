@@ -2,6 +2,7 @@ package background
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -27,6 +30,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/netutil"
 )
 
 const (
@@ -62,11 +66,17 @@ type StagedUploadedBackgroundActivation struct {
 }
 
 var (
-	httpClient = &http.Client{Timeout: 15 * time.Second}
-	inflight   sync.Map
+	httpClient = &http.Client{
+		Timeout:       15 * time.Second,
+		Transport:     safeBackgroundTransport(),
+		CheckRedirect: validateBackgroundRedirect,
+	}
+	inflight sync.Map
 )
 
 const inlinePreviewMaxBytes = 64 << 10
+
+var ErrRemoteSourceNotAllowed = errors.New("remote background source is not allowed")
 
 func ResolveAssets(options model.Application) Assets {
 	source := strings.TrimSpace(options.BackgroundImage)
@@ -103,20 +113,10 @@ func ResolveAssets(options model.Application) Assets {
 	if isHTTPSource(source) {
 		WarmRemoteVariants(source)
 		escaped := url.QueryEscape(source)
-		variantLoader := func() func() ([]byte, string, error) {
-			var loaded bool
-			var cachedData []byte
-			var cachedType string
-			var cachedErr error
-			return func() ([]byte, string, error) {
-				if loaded {
-					return cachedData, cachedType, cachedErr
-				}
-				cachedData, cachedType, cachedErr = FetchRemoteVariant(source, "preview")
-				loaded = true
-				return cachedData, cachedType, cachedErr
-			}
-		}()
+		cachedData, cachedType, cachedErr := readCachedVariant(source, "preview")
+		variantLoader := func() ([]byte, string, error) {
+			return cachedData, cachedType, cachedErr
+		}
 		assets := Assets{
 			Enabled:    true,
 			PreviewURL: RemoteAssetPath + "?variant=preview&src=" + escaped,
@@ -568,6 +568,9 @@ func isHTTPSource(source string) bool {
 }
 
 func downloadSource(source string) ([]byte, string, error) {
+	if err := validateRemoteSource(source); err != nil {
+		return nil, "", err
+	}
 	req, err := http.NewRequest(http.MethodGet, source, nil)
 	if err != nil {
 		return nil, "", err
@@ -604,6 +607,119 @@ func downloadSource(source string) ([]byte, string, error) {
 		contentType = http.DetectContentType(data)
 	}
 	return data, contentType, nil
+}
+
+func validateBackgroundRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return fmt.Errorf("stopped after too many background redirects")
+	}
+	return validateRemoteSource(req.URL.String())
+}
+
+func safeBackgroundTransport() http.RoundTripper {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	allowedProxyDials := &netutil.ProxyDialAllowList{}
+	return &http.Transport{
+		Proxy: func(req *http.Request) (*url.URL, error) {
+			proxyURL, err := netutil.ProxyFromCurrentEnvironment(req)
+			if err == nil && proxyURL != nil {
+				allowedProxyDials.Remember(proxyURL)
+			}
+			return proxyURL, err
+		},
+		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+			if allowedProxyDials.Contains(address) {
+				return dialer.DialContext(ctx, network, address)
+			}
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				host = address
+			}
+			target, err := resolveSafeDialAddress(ctx, host, port)
+			if err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, target)
+		},
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+	}
+}
+
+func validateRemoteSource(source string) error {
+	u, err := url.Parse(strings.TrimSpace(source))
+	if err != nil || u == nil || u.Hostname() == "" {
+		return fmt.Errorf("%w: invalid URL", ErrRemoteSourceNotAllowed)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%w: unsupported scheme", ErrRemoteSourceNotAllowed)
+	}
+	if u.User != nil {
+		return fmt.Errorf("%w: userinfo is not supported", ErrRemoteSourceNotAllowed)
+	}
+	return validateRemoteHost(u.Hostname())
+}
+
+func validateRemoteHost(host string) error {
+	_, err := resolveSafeRemoteIPs(context.Background(), host)
+	return err
+}
+
+func resolveSafeDialAddress(ctx context.Context, host string, port string) (string, error) {
+	if port == "" {
+		port = "80"
+	}
+	ips, err := resolveSafeRemoteIPs(ctx, host)
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(ips[0].String(), port), nil
+}
+
+func resolveSafeRemoteIPs(ctx context.Context, host string) ([]netip.Addr, error) {
+	host = strings.TrimSpace(strings.TrimSuffix(host, "."))
+	if host == "" {
+		return nil, fmt.Errorf("%w: empty host", ErrRemoteSourceNotAllowed)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil, fmt.Errorf("%w: localhost is blocked", ErrRemoteSourceNotAllowed)
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if !isPublicRemoteIP(ip) {
+			return nil, fmt.Errorf("%w: private or local IP is blocked", ErrRemoteSourceNotAllowed)
+		}
+		return []netip.Addr{ip}, nil
+	}
+
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve remote background host failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("resolve remote background host failed: no IP addresses")
+	}
+	for _, ip := range ips {
+		if !isPublicRemoteIP(ip) {
+			return nil, fmt.Errorf("%w: host resolves to private or local IP", ErrRemoteSourceNotAllowed)
+		}
+	}
+	return ips, nil
+}
+
+func isPublicRemoteIP(ip netip.Addr) bool {
+	if !ip.IsValid() {
+		return false
+	}
+	if ip.Is4In6() {
+		ip = ip.Unmap()
+	}
+	return ip.IsGlobalUnicast() &&
+		!ip.IsPrivate() &&
+		!ip.IsLoopback() &&
+		!ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast() &&
+		!ip.IsMulticast() &&
+		!ip.IsUnspecified()
 }
 
 func makeVariants(sourceData []byte, sourceType string) ([]byte, string, []byte, string, error) {

@@ -56,6 +56,7 @@ FLARE_PASS=123456
 
     $lines = @($output | ForEach-Object { $_.ToString().TrimEnd("`r","`n") })
     $expected = @(
+        "wizard_login_enabled=true",
         "wizard_login_user=",
         "wizard_login_pass=",
         "wizard_login_pass_confirm="

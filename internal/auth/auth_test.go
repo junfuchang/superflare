@@ -72,6 +72,227 @@ func TestRequestHandle_DisableLoginMode(t *testing.T) {
 	assert.NotNil(t, e)
 }
 
+func TestSnapshotLoginRuntimeConfigUsesStoredRuntimeWhenAppFlagsLaterChange(t *testing.T) {
+	orig := saveAppFlags()
+	defer restoreAppFlags(orig)
+
+	define.AppFlags = model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "runtime-a",
+		CookieSecret:     "runtime-a-secret",
+		Port:             3636,
+		User:             "runtime-a-user",
+		Pass:             "runtime-a-pass",
+	}
+	syncLoginRuntimeFromAppFlags()
+
+	define.AppFlags = model.Flags{
+		DisableLoginMode: true,
+		CookieName:       "runtime-b",
+		CookieSecret:     "runtime-b-secret",
+		Port:             3737,
+		User:             "runtime-b-user",
+		Pass:             "runtime-b-pass",
+	}
+
+	got := SnapshotLoginRuntimeConfig()
+	if got.User != "runtime-a-user" || got.Pass != "runtime-a-pass" {
+		t.Fatalf("expected stored runtime login config from router A, got user=%q pass=%q", got.User, got.Pass)
+	}
+}
+
+func TestIsLoginDisabledUsesStoredRuntimeWhenAppFlagsLaterChange(t *testing.T) {
+	orig := saveAppFlags()
+	defer restoreAppFlags(orig)
+
+	define.AppFlags = model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "runtime-a",
+		CookieSecret:     "runtime-a-secret",
+		Port:             3636,
+		User:             "runtime-a-user",
+		Pass:             "runtime-a-pass",
+	}
+	syncLoginRuntimeFromAppFlags()
+
+	define.AppFlags = model.Flags{
+		DisableLoginMode: true,
+		CookieName:       "runtime-b",
+		CookieSecret:     "runtime-b-secret",
+		Port:             3737,
+		User:             "runtime-b-user",
+		Pass:             "runtime-b-pass",
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if IsLoginDisabled(c) {
+		t.Fatal("expected unbound auth runtime to keep router A login mode after AppFlags changed")
+	}
+}
+
+func TestIsLoginDisabledUsesStoredRuntimeWhenCookieSecretIsEmpty(t *testing.T) {
+	orig := saveAppFlags()
+	defer restoreAppFlags(orig)
+
+	StoreAuthRuntimeConfig(authRuntimeConfig{
+		Session: sessionRuntimeConfig{
+			Name:         RequestHandleSessionName("runtime-disabled", 3636),
+			CookieSecret: "",
+			DisableLogin: true,
+		},
+		Login: loginRuntimeConfig{},
+	})
+	define.AppFlags = model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "later-global",
+		CookieSecret:     "later-global-secret",
+		Port:             3737,
+		User:             "later-user",
+		Pass:             "later-pass",
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if !IsLoginDisabled(c) {
+		t.Fatal("expected stored disabled-login runtime to win even without a cookie secret")
+	}
+}
+
+func TestSnapshotLoginRuntimeConfigForNilRequestUsesStoredRuntimeEvenWhenEmpty(t *testing.T) {
+	orig := saveAppFlags()
+	defer restoreAppFlags(orig)
+
+	StoreAuthRuntimeConfig(authRuntimeConfig{
+		Session: sessionRuntimeConfig{
+			Name:         RequestHandleSessionName("runtime-disabled-empty-login", 3636),
+			CookieSecret: "",
+			DisableLogin: true,
+		},
+		Login: loginRuntimeConfig{},
+	})
+	define.AppFlags = model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "later-global",
+		CookieSecret:     "later-global-secret",
+		Port:             3737,
+		User:             "later-user",
+		Pass:             "later-pass",
+	}
+
+	got := SnapshotLoginRuntimeConfigForRequest(nil)
+	if got != (loginRuntimeConfig{}) {
+		t.Fatalf("expected explicit empty stored runtime to win over later AppFlags, got %#v", got)
+	}
+}
+
+func TestSessionNameForNilRequestUsesStoredDisabledRuntimeEvenWithoutCookieSecret(t *testing.T) {
+	orig := saveAppFlags()
+	defer restoreAppFlags(orig)
+
+	expected := RequestHandleSessionName("runtime-disabled-session", 3636)
+	StoreAuthRuntimeConfig(authRuntimeConfig{
+		Session: sessionRuntimeConfig{
+			Name:         expected,
+			CookieSecret: "",
+			DisableLogin: true,
+		},
+		Login: loginRuntimeConfig{},
+	})
+	define.AppFlags = model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "later-global",
+		CookieSecret:     "later-global-secret",
+		Port:             3737,
+	}
+
+	if got := SessionNameForRequest(nil); got != expected {
+		t.Fatalf("expected stored session name %q, got %q", expected, got)
+	}
+}
+
+func TestRequestHandleWithFlagsUsesExplicitFlagsWithoutReadingAppFlags(t *testing.T) {
+	orig := saveAppFlags()
+	defer restoreAppFlags(orig)
+
+	define.AppFlags = model.Flags{
+		DisableLoginMode: true,
+		CookieName:       "wrong-global",
+		CookieSecret:     "wrong-global-secret",
+		Port:             3737,
+		User:             "wrong-user",
+		Pass:             "wrong-pass",
+	}
+
+	e := echo.New()
+	RequestHandleWithFlags(e, model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "explicit-cookie",
+		CookieSecret:     "explicit-secret",
+		Port:             3636,
+		User:             "explicit-user",
+		Pass:             "explicit-pass",
+	})
+
+	body := strings.NewReader("username=explicit-user&password=explicit-pass")
+	req := httptest.NewRequest(http.MethodPost, define.MiscPages.Login.Path, body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusFound, rec.Code)
+	assert.Equal(t, define.SettingPages.Others.Path, rec.Header().Get("Location"))
+	assert.Contains(t, rec.Header().Get("Set-Cookie"), RequestHandleSessionName("explicit-cookie", 3636)+"=")
+}
+
+func TestRequestHandleUsesStoredRuntimeFlagsBeforeGlobalAppFlags(t *testing.T) {
+	orig := saveAppFlags()
+	origRuntime, runtimeSet := define.SnapshotAppRuntimeFlags()
+	defer func() {
+		restoreAppFlags(orig)
+		if runtimeSet {
+			define.StoreAppRuntimeFlags(origRuntime.Source, origRuntime.Base, origRuntime.Current)
+		} else {
+			define.ResetAppRuntimeFlags()
+		}
+	}()
+
+	define.StoreAppRuntimeCurrentFlags(model.Flags{
+		DisableLoginMode: false,
+		CookieName:       "stored-cookie",
+		CookieSecret:     "stored-secret",
+		Port:             3636,
+		User:             "stored-user",
+		Pass:             "stored-pass",
+	})
+	define.AppFlags = model.Flags{
+		DisableLoginMode: true,
+		CookieName:       "global-cookie",
+		CookieSecret:     "global-secret",
+		Port:             3737,
+		User:             "global-user",
+		Pass:             "global-pass",
+	}
+
+	e := echo.New()
+	RequestHandle(e)
+
+	body := strings.NewReader("username=stored-user&password=stored-pass")
+	req := httptest.NewRequest(http.MethodPost, define.MiscPages.Login.Path, body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusFound, rec.Code)
+	assert.Contains(t, rec.Header().Get("Set-Cookie"), RequestHandleSessionName("stored-cookie", 3636)+"=")
+}
+
 func TestAuthRequired_LoginRequired_RedirectsWhenNoSession(t *testing.T) {
 	orig := saveAppFlags()
 	defer restoreAppFlags(orig)

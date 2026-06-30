@@ -9,14 +9,75 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/labstack/echo/v5"
 	"github.com/soulteary/memfs"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
+
+type guideRuntimeSnapshot struct {
+	DebugMode bool
+	Port      int
+}
+
+type guideRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg guideRuntimeSnapshot
+}
+
+func (h *guideRuntimeHolder) Load() guideRuntimeSnapshot {
+	if h == nil {
+		return guideRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return guideRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *guideRuntimeHolder) Store(cfg guideRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var guideRuntimeFlags = &guideRuntimeHolder{}
+
+func guideRuntimeSnapshotFromFlags(flags model.Flags) guideRuntimeSnapshot {
+	return guideRuntimeSnapshot{
+		DebugMode: flags.DebugMode,
+		Port:      flags.Port,
+	}
+}
+
+func SetRuntimeFlags(flags model.Flags) {
+	guideRuntimeFlags.Store(guideRuntimeSnapshotFromFlags(flags))
+}
+
+func currentGuideRuntime() guideRuntimeSnapshot {
+	guideRuntimeFlags.mu.RLock()
+	hasValue := guideRuntimeFlags.set
+	cfg := guideRuntimeFlags.cfg
+	guideRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = guideRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	guideRuntimeFlags.Store(cfg)
+	return cfg
+}
 
 var MemFs *memfs.FS
 var getGuideHTML = fn.GetHTML
@@ -37,7 +98,7 @@ func Init() error {
 }
 
 func RegisterRouting(e *echo.Echo) {
-	if define.AppFlags.DebugMode && registerLocalVendorAssets(e) {
+	if currentGuideRuntime().DebugMode && registerLocalVendorAssets(e) {
 		// Local development can run without copying generated assets first.
 	} else if introAssets, err := fs.Sub(IntroAssets, "guide-assets"); err == nil {
 		e.StaticFS(_ASSETS_WEB_URI, introAssets)
@@ -66,7 +127,7 @@ func render(c *echo.Context) error {
 }
 
 func getUserHomePage() (string, error) {
-	port := strconv.Itoa(define.AppFlags.Port)
+	port := strconv.Itoa(currentGuideRuntime().Port)
 	body, err := getGuideHTML("http://localhost:" + port + "/")
 	if err != nil {
 		return "", err

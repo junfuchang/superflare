@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
+	settingsroot "github.com/junfuchang/superflare/internal/settings"
 	"github.com/labstack/echo/v5"
 )
 
@@ -333,6 +336,41 @@ func TestUpdateAppearanceOptionsPersistsHideWarningsButton(t *testing.T) {
 	}
 }
 
+func TestPageAppearanceKeepsStoredRuntimeDebugModeAfterAppFlagsChange(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	origFlags := define.AppFlags
+	defer func() {
+		define.AppFlags = origFlags
+		settingsroot.SetRuntimeFlags(origFlags)
+	}()
+
+	define.AppFlags = model.Flags{DebugMode: true}
+	settingsroot.SetRuntimeFlags(define.AppFlags)
+	define.AppFlags = model.Flags{DebugMode: false}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/appearance", nil)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	e.Renderer = appearanceDebugRenderer{t: t}
+	c := e.NewContext(req, rec)
+
+	if err := pageAppearance(c); err != nil {
+		t.Fatalf("pageAppearance: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
 type appearanceSuccessRenderer struct{}
 
 func (appearanceSuccessRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
@@ -373,6 +411,27 @@ func (r appearanceCaptureRenderer) Render(c *echo.Context, w io.Writer, name str
 type appearanceFooterRenderer struct {
 	t         *testing.T
 	rawFooter string
+}
+
+type appearanceDebugRenderer struct {
+	t *testing.T
+}
+
+func (r appearanceDebugRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		if typed, ok := data.(map[string]interface{}); ok {
+			m = typed
+		} else {
+			r.t.Fatalf("unexpected renderer data type %T", data)
+		}
+	}
+	if got, _ := m["DebugMode"].(bool); !got {
+		r.t.Fatalf("expected stored DebugMode=true, got %#v", m["DebugMode"])
+	}
+	_, err := io.WriteString(w, "ok")
+	return err
 }
 
 func (r appearanceFooterRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {

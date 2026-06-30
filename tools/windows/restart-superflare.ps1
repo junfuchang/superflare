@@ -93,7 +93,14 @@ function Get-EnableLogin {
 
 function New-CookieSecret {
     $bytes = [byte[]]::new(32)
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        if ($rng -is [System.IDisposable]) {
+            $rng.Dispose()
+        }
+    }
     return ([System.BitConverter]::ToString($bytes) -replace "-", "").ToLowerInvariant()
 }
 

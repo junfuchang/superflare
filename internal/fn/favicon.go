@@ -3,9 +3,11 @@ package fn
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,18 +15,30 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/junfuchang/superflare/internal/netutil"
+	xhtml "golang.org/x/net/html"
 )
 
 const (
 	siteIconProxyPath = "/assets/site-icons"
 	siteIconCacheDir  = "var/cache/site-icons"
 	siteIconMaxBytes  = 256 * 1024
+	siteIconHTMLBytes = 512 * 1024
+	siteIconWarmLimit = 8
 )
 
 var (
-	siteIconHTTPClient = &http.Client{Timeout: 4 * time.Second}
-	siteIconInflight   sync.Map
+	siteIconHTTPClient = &http.Client{
+		Timeout:       4 * time.Second,
+		Transport:     safeSiteFaviconTransport(),
+		CheckRedirect: validateSiteFaviconRedirect,
+	}
+	siteIconInflight    sync.Map
+	siteIconWarmLimiter = make(chan struct{}, siteIconWarmLimit)
 )
+
+var errSiteFaviconSourceNotAllowed = errors.New("site favicon source is not allowed")
 
 func GetSiteFaviconURL(bookmarkLink string) string {
 	bookmarkLink = strings.TrimSpace(bookmarkLink)
@@ -35,7 +49,7 @@ func GetSiteFaviconURL(bookmarkLink string) string {
 	if err != nil || u.Hostname() == "" {
 		return ""
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if strings.TrimSpace(u.Scheme) == "" {
 		return ""
 	}
 	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/favicon.ico"}).String()
@@ -46,13 +60,13 @@ func isProxyableSiteFaviconURL(iconURL string) bool {
 	if err != nil || u.Hostname() == "" {
 		return false
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if strings.TrimSpace(u.Scheme) == "" {
 		return false
 	}
-	if HostLooksLocalNetwork(u.Host) {
+	if u.User != nil {
 		return false
 	}
-	return u.Path == "/favicon.ico"
+	return true
 }
 
 func GetSiteFaviconAssetURL(bookmarkLink string) string {
@@ -70,9 +84,6 @@ func GetSiteFaviconAssetURL(bookmarkLink string) string {
 func GetSiteFaviconAssetURLFast(bookmarkLink string) string {
 	iconURL := GetSiteFaviconURL(bookmarkLink)
 	if iconURL == "" {
-		return ""
-	}
-	if parsed, err := url.Parse(iconURL); err == nil && HostLooksLocalNetwork(parsed.Host) {
 		return ""
 	}
 	if isProxyableSiteFaviconURL(iconURL) {
@@ -184,7 +195,13 @@ func WarmSiteFaviconURL(iconURL string) {
 	if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
 		return
 	}
+	select {
+	case siteIconWarmLimiter <- struct{}{}:
+	default:
+		return
+	}
 	go func() {
+		defer func() { <-siteIconWarmLimiter }()
 		_, _, _ = fetchAndCacheSiteFavicon(iconURL)
 	}()
 }
@@ -233,11 +250,30 @@ func fetchAndCacheSiteFavicon(iconURL string) ([]byte, string, error) {
 }
 
 func downloadSiteFavicon(iconURL string) ([]byte, string, error) {
+	data, contentType, err := downloadSiteFaviconDirect(iconURL)
+	if err == nil {
+		return data, contentType, nil
+	}
+	if !isRootHTTPFaviconURL(iconURL) {
+		return nil, "", err
+	}
+	discoveredURL, discoverErr := discoverSiteFaviconFromHTML(iconURL)
+	if discoverErr != nil || discoveredURL == "" || discoveredURL == iconURL {
+		return nil, "", err
+	}
+	return downloadSiteFaviconDirect(discoveredURL)
+}
+
+func downloadSiteFaviconDirect(iconURL string) ([]byte, string, error) {
+	if err := validateSiteFaviconSource(iconURL); err != nil {
+		return nil, "", err
+	}
 	req, err := http.NewRequest(http.MethodGet, iconURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("User-Agent", "SuperFlare favicon fetcher")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SuperFlare favicon fetcher)")
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
 
 	resp, err := siteIconHTTPClient.Do(req)
 	if err != nil {
@@ -267,6 +303,159 @@ func downloadSiteFavicon(iconURL string) ([]byte, string, error) {
 	}
 
 	return data, contentType, nil
+}
+
+func isRootHTTPFaviconURL(iconURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(iconURL))
+	if err != nil || u == nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.Path == "/favicon.ico"
+}
+
+func discoverSiteFaviconFromHTML(rootIconURL string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(rootIconURL))
+	if err != nil || base == nil || base.Hostname() == "" {
+		return "", fmt.Errorf("invalid favicon URL")
+	}
+	if base.Scheme != "http" && base.Scheme != "https" {
+		return "", fmt.Errorf("unsupported page URL scheme")
+	}
+	base.Path = "/"
+	base.RawQuery = ""
+	base.Fragment = ""
+
+	req, err := http.NewRequest(http.MethodGet, base.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SuperFlare favicon fetcher)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := siteIconHTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("unexpected page status: %d", resp.StatusCode)
+	}
+
+	reader := io.LimitReader(resp.Body, siteIconHTMLBytes+1)
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", err
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("empty page response")
+	}
+	if len(data) > siteIconHTMLBytes {
+		return "", fmt.Errorf("page response too large")
+	}
+
+	doc, err := xhtml.Parse(bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	for _, href := range collectFaviconHrefs(doc) {
+		ref, err := url.Parse(strings.TrimSpace(href))
+		if err != nil || ref == nil {
+			continue
+		}
+		resolved := base.ResolveReference(ref)
+		if isProxyableSiteFaviconURL(resolved.String()) {
+			return resolved.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no html favicon found")
+}
+
+func collectFaviconHrefs(node *xhtml.Node) []string {
+	if node == nil {
+		return nil
+	}
+	var out []string
+	var walk func(*xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if n == nil {
+			return
+		}
+		if n.Type == xhtml.ElementNode && strings.EqualFold(n.Data, "link") {
+			if href, ok := faviconHrefFromLinkNode(n); ok {
+				out = append(out, href)
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(node)
+	return out
+}
+
+func faviconHrefFromLinkNode(node *xhtml.Node) (string, bool) {
+	var rel string
+	var href string
+	for _, attr := range node.Attr {
+		switch strings.ToLower(strings.TrimSpace(attr.Key)) {
+		case "rel":
+			rel = attr.Val
+		case "href":
+			href = strings.TrimSpace(attr.Val)
+		}
+	}
+	if href == "" || !relLooksLikeFavicon(rel) {
+		return "", false
+	}
+	return href, true
+}
+
+func relLooksLikeFavicon(rel string) bool {
+	rel = strings.ToLower(strings.TrimSpace(rel))
+	if rel == "" {
+		return false
+	}
+	for _, token := range strings.Fields(strings.ReplaceAll(rel, ",", " ")) {
+		if token == "icon" || strings.Contains(token, "-icon") {
+			return true
+		}
+	}
+	return false
+}
+
+func validateSiteFaviconRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return fmt.Errorf("stopped after too many site favicon redirects")
+	}
+	if req == nil || req.URL == nil {
+		return fmt.Errorf("%w: invalid redirect URL", errSiteFaviconSourceNotAllowed)
+	}
+	return validateSiteFaviconSource(req.URL.String())
+}
+
+func safeSiteFaviconTransport() http.RoundTripper {
+	dialer := &net.Dialer{Timeout: 4 * time.Second}
+	return &http.Transport{
+		Proxy:                 netutil.ProxyFromCurrentEnvironment,
+		DialContext:           dialer.DialContext,
+		TLSHandshakeTimeout:   4 * time.Second,
+		ResponseHeaderTimeout: 4 * time.Second,
+	}
+}
+
+func validateSiteFaviconSource(iconURL string) error {
+	u, err := url.Parse(strings.TrimSpace(iconURL))
+	if err != nil || u == nil || u.Hostname() == "" {
+		return fmt.Errorf("%w: invalid URL", errSiteFaviconSourceNotAllowed)
+	}
+	if strings.TrimSpace(u.Scheme) == "" {
+		return fmt.Errorf("%w: missing scheme", errSiteFaviconSourceNotAllowed)
+	}
+	if u.User != nil {
+		return fmt.Errorf("%w: userinfo is not supported", errSiteFaviconSourceNotAllowed)
+	}
+	return nil
 }
 
 func readCachedSiteFavicon(iconURL string) ([]byte, string, error) {

@@ -3,17 +3,51 @@ package define
 import (
 	"fmt"
 	"html/template"
-	"regexp"
-	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/config/validation"
 )
 
 var ThemePalettes = getDefaultThemePalettes()
 var ThemeCurrent = ""
 var ThemePrimaryColor = ""
+var themeCompatMu sync.RWMutex
+
+type ThemeRuntimeSnapshot struct {
+	Name      string
+	Primary   string
+	BodyStyle template.CSS
+}
+
+type themeRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg ThemeRuntimeSnapshot
+}
+
+func (h *themeRuntimeHolder) Load() (ThemeRuntimeSnapshot, bool) {
+	if h == nil {
+		return ThemeRuntimeSnapshot{}, false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.cfg, h.set
+}
+
+func (h *themeRuntimeHolder) Store(cfg ThemeRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var themeRuntime = &themeRuntimeHolder{}
 
 func Init() {
 	if err := InitE(); err != nil {
@@ -32,35 +66,80 @@ var CACHE_APP_CURRENT_THEME_PRIMARY_COLOR string
 var _CACHE_PREV_THEME_NAME string
 
 func GetPageInlineStyle() template.CSS {
+	themeCompatMu.RLock()
+	defer themeCompatMu.RUnlock()
 	return _CACHE_PAGE_INLINE_STYLE
 }
 
 func initPageInlineStyle() {
-	if AppFlags.DebugMode {
-		_CACHE_PAGE_INLINE_STYLE = ""
-		return
+	var style template.CSS
+	if CurrentAppRuntimeFlags().DebugMode {
+		style = ""
+	} else {
+		style = template.CSS(PAGE_INLINE_STYLE)
 	}
 
-	_CACHE_PAGE_INLINE_STYLE = template.CSS(PAGE_INLINE_STYLE)
+	themeCompatMu.Lock()
+	_CACHE_PAGE_INLINE_STYLE = style
+	themeCompatMu.Unlock()
 }
 
 var _CACHE_PAGE_BODY_THEME_NAME template.CSS
 
 func GetAppBodyStyle() template.CSS {
+	if snapshot, ok := themeRuntime.Load(); ok {
+		return snapshot.BodyStyle
+	}
+	themeCompatMu.RLock()
+	defer themeCompatMu.RUnlock()
 	return _CACHE_PAGE_BODY_THEME_NAME
 }
 
+func GetThemeRuntimeSnapshot() ThemeRuntimeSnapshot {
+	if snapshot, ok := themeRuntime.Load(); ok {
+		return snapshot
+	}
+	themeCompatMu.RLock()
+	defer themeCompatMu.RUnlock()
+	return ThemeRuntimeSnapshot{
+		Name:      ThemeCurrent,
+		Primary:   ThemePrimaryColor,
+		BodyStyle: _CACHE_PAGE_BODY_THEME_NAME,
+	}
+}
+
+func StoreThemeRuntimeSnapshot(snapshot ThemeRuntimeSnapshot) {
+	themeRuntime.Store(snapshot)
+	themeCompatMu.Lock()
+	ThemeCurrent = snapshot.Name
+	ThemePrimaryColor = snapshot.Primary
+	_CACHE_PAGE_BODY_THEME_NAME = snapshot.BodyStyle
+	if strings.TrimSpace(snapshot.Name) != "" && strings.TrimSpace(snapshot.Primary) != "" {
+		CACHE_APP_CURRENT_THEME_PRIMARY_COLOR = snapshot.Primary
+		_CACHE_PREV_THEME_NAME = snapshot.Name
+	}
+	themeCompatMu.Unlock()
+}
+
 func GetThemePrimaryColor(theme string) string {
+	themeCompatMu.RLock()
 	if _CACHE_PREV_THEME_NAME == theme {
+		defer themeCompatMu.RUnlock()
 		return CACHE_APP_CURRENT_THEME_PRIMARY_COLOR
 	}
+	themeCompatMu.RUnlock()
 	for _, themePresent := range ThemePalettes {
 		if themePresent.Name == theme {
+			themeCompatMu.Lock()
 			CACHE_APP_CURRENT_THEME_PRIMARY_COLOR = themePresent.Colors.Primary
 			_CACHE_PREV_THEME_NAME = theme
-			return CACHE_APP_CURRENT_THEME_PRIMARY_COLOR
+			color := CACHE_APP_CURRENT_THEME_PRIMARY_COLOR
+			themeCompatMu.Unlock()
+			return color
 		}
 	}
+	themeCompatMu.RLock()
+	defer themeCompatMu.RUnlock()
 	return CACHE_APP_CURRENT_THEME_PRIMARY_COLOR
 }
 
@@ -97,11 +176,11 @@ func UpdatePagePalettes() error {
 	if palette.Background == "" || palette.Primary == "" || palette.Accent == "" {
 		return fmt.Errorf("theme palette is incomplete for theme: %s", themeName)
 	}
-	ThemeCurrent = themeName
-	ThemePrimaryColor = palette.Primary
-	CACHE_APP_CURRENT_THEME_PRIMARY_COLOR = palette.Primary
-	_CACHE_PREV_THEME_NAME = themeName
-	_CACHE_PAGE_BODY_THEME_NAME = template.CSS(`--color-background:` + palette.Background + `;--color-primary:` + palette.Primary + `;--color-accent:` + palette.Accent + `;`)
+	StoreThemeRuntimeSnapshot(ThemeRuntimeSnapshot{
+		Name:      themeName,
+		Primary:   palette.Primary,
+		BodyStyle: template.CSS(`--color-background:` + palette.Background + `;--color-primary:` + palette.Primary + `;--color-accent:` + palette.Accent + `;`),
+	})
 	return nil
 }
 
@@ -114,21 +193,21 @@ func getCustomPalette(options model.Application) (model.Palette, error) {
 	background := strings.TrimSpace(options.CustomThemeBackground)
 	if background == "" {
 		background = basePalette.Background
-	} else if safeCSSColor(background, "") == "" {
+	} else if validation.SafeCSSColor(background, "") == "" {
 		return model.Palette{}, fmt.Errorf("invalid custom theme background color: %s", options.CustomThemeBackground)
 	}
 
 	primary := strings.TrimSpace(options.CustomThemePrimary)
 	if primary == "" {
 		primary = basePalette.Primary
-	} else if safeCSSColor(primary, "") == "" {
+	} else if validation.SafeCSSColor(primary, "") == "" {
 		return model.Palette{}, fmt.Errorf("invalid custom theme primary color: %s", options.CustomThemePrimary)
 	}
 
 	accent := strings.TrimSpace(options.CustomThemeAccent)
 	if accent == "" {
 		accent = basePalette.Accent
-	} else if safeCSSColor(accent, "") == "" {
+	} else if validation.SafeCSSColor(accent, "") == "" {
 		return model.Palette{}, fmt.Errorf("invalid custom theme accent color: %s", options.CustomThemeAccent)
 	}
 
@@ -159,66 +238,8 @@ func getThemePaletteByName(themeName string) (model.Palette, error) {
 	return model.Palette{}, fmt.Errorf("invalid theme base value: %s", themeName)
 }
 
-var (
-	hexColorPattern  = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
-	rgbColorPattern  = regexp.MustCompile(`^rgba?\((.*)\)$`)
-	cssNumberPattern = regexp.MustCompile(`^\d+(\.\d+)?$`)
-)
-
 func SafeCSSColor(input string, fallback string) string {
-	return safeCSSColor(input, fallback)
-}
-
-func safeCSSColor(input string, fallback string) string {
-	input = strings.TrimSpace(input)
-	if hexColorPattern.MatchString(input) || safeRGBColor(input) {
-		return input
-	}
-	return fallback
-}
-
-func safeRGBColor(input string) bool {
-	match := rgbColorPattern.FindStringSubmatch(input)
-	if match == nil {
-		return false
-	}
-	parts := strings.Split(match[1], ",")
-	if len(parts) != 3 && len(parts) != 4 {
-		return false
-	}
-	for i := 0; i < 3; i++ {
-		value := strings.TrimSpace(parts[i])
-		if strings.HasSuffix(value, "%") {
-			num, err := strconv.ParseFloat(strings.TrimSuffix(value, "%"), 64)
-			if err != nil || num < 0 || num > 100 {
-				return false
-			}
-			continue
-		}
-		if !cssNumberPattern.MatchString(value) {
-			return false
-		}
-		num, err := strconv.Atoi(strings.Split(value, ".")[0])
-		if err != nil || num < 0 || num > 255 {
-			return false
-		}
-		if strings.Contains(value, ".") {
-			parsed, err := strconv.ParseFloat(value, 64)
-			if err != nil || parsed < 0 || parsed > 255 {
-				return false
-			}
-		}
-	}
-	if len(parts) == 4 {
-		alpha := strings.TrimSpace(parts[3])
-		if strings.HasSuffix(alpha, "%") {
-			num, err := strconv.ParseFloat(strings.TrimSuffix(alpha, "%"), 64)
-			return err == nil && num >= 0 && num <= 100
-		}
-		num, err := strconv.ParseFloat(alpha, 64)
-		return err == nil && num >= 0 && num <= 1
-	}
-	return true
+	return validation.SafeCSSColor(input, fallback)
 }
 
 func getDefaultThemePalettes() []model.Theme {

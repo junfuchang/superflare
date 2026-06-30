@@ -9,6 +9,8 @@ import (
 
 	"gopkg.in/ini.v1"
 	"gopkg.in/yaml.v2"
+
+	"github.com/junfuchang/superflare/config/model"
 )
 
 var envAssignmentPattern = regexp.MustCompile(`^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=`)
@@ -228,45 +230,48 @@ func UpdateLoginConfig(user string, pass string) error {
 	if err := EnsureAppConfigExists(); err != nil {
 		return err
 	}
-	options, err := GetAllSettingsOptions()
-	if err != nil {
-		return err
-	}
-	options.LoginUser = user
-	options.LoginPass = pass
-	configRaw, err := yaml.Marshal(options)
-	if err != nil {
-		return fmt.Errorf("marshal login config failed: %w", err)
-	}
-
-	configPath, err := configPath("config")
-	if err != nil {
-		return err
-	}
-	files := map[string][]byte{
-		configPath: configRaw,
-	}
-	envPath, err := envFilePath()
-	if err != nil {
-		return fmt.Errorf("stat .env failed: %w", err)
-	}
-	envExists, envErr := pathExists(envPath)
-	if envErr != nil {
-		return fmt.Errorf("stat .env failed: %w", envErr)
-	}
-	if envExists {
-		content, err := os.ReadFile(filepath.Clean(envPath))
+	_, err := withLockedConfigUpdate("config", func() (model.Application, error) {
+		options, err := GetAllSettingsOptions()
 		if err != nil {
-			return fmt.Errorf("read .env failed: %w", err)
+			return model.Application{}, err
 		}
-		next := upsertEnvValueInContent(content, "FLARE_USER", user)
-		next = upsertEnvValueInContent(next, "FLARE_PASS", pass)
-		files[envPath] = next
-	}
+		options.LoginUser = user
+		options.LoginPass = pass
+		configRaw, err := yaml.Marshal(options)
+		if err != nil {
+			return model.Application{}, fmt.Errorf("marshal login config failed: %w", err)
+		}
 
-	if err := saveFilesAtomically(files); err != nil {
-		return fmt.Errorf("save login config failed: %w", err)
-	}
-	invalidateFileCachePath(configPath)
-	return nil
+		configPath, err := configPath("config")
+		if err != nil {
+			return model.Application{}, err
+		}
+		files := map[string][]byte{
+			configPath: configRaw,
+		}
+		envPath, err := envFilePath()
+		if err != nil {
+			return model.Application{}, fmt.Errorf("stat .env failed: %w", err)
+		}
+		envExists, envErr := pathExists(envPath)
+		if envErr != nil {
+			return model.Application{}, fmt.Errorf("stat .env failed: %w", envErr)
+		}
+		if envExists {
+			content, err := os.ReadFile(filepath.Clean(envPath))
+			if err != nil {
+				return model.Application{}, fmt.Errorf("read .env failed: %w", err)
+			}
+			next := upsertEnvValueInContent(content, "FLARE_USER", user)
+			next = upsertEnvValueInContent(next, "FLARE_PASS", pass)
+			files[envPath] = next
+		}
+
+		if err := saveFilesAtomicallyLocked(files); err != nil {
+			return model.Application{}, fmt.Errorf("save login config failed: %w", err)
+		}
+		invalidateFileCachePath(configPath)
+		return options, nil
+	})
+	return err
 }

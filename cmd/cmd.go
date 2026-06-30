@@ -47,12 +47,13 @@ func ParseE() (model.Flags, error) {
 	if err != nil {
 		return model.Flags{}, err
 	}
-	define.AppSourceFlags = resolved
+	sourceFlags := resolved
 	resolved, err = applyAccountConfig(resolved)
 	if err != nil {
 		return model.Flags{}, err
 	}
-	define.AppBaseFlags = resolved
+	baseFlags := resolved
+	define.StoreAppRuntimeFlags(sourceFlags, baseFlags, resolved)
 
 	log := logger.GetLogger()
 	log.Info("程序服务端口", slog.Int(_KEY_PORT, resolved.Port))
@@ -60,7 +61,7 @@ func ParseE() (model.Flags, error) {
 	if resolved.DisableLoginMode {
 		log.Info("已禁用登录模式，用户可直接调整应用设置。")
 	} else {
-		log.Info("启用登录模式，调整应用设置需要先进行登录。")
+		log.Info("已启用登录模式，调整应用设置需要先登录。")
 		log.Info("当前内容整体可见性为", slog.String(_KEY_VISIBILITY, resolved.Visibility))
 
 		if resolved.UserIsGenerated {
@@ -70,13 +71,15 @@ func ParseE() (model.Flags, error) {
 		}
 
 		if resolved.PassIsGenerated {
-			log.Info("用户未指定 `FLARE_PASS`，自动生成应用密码", slog.String("password", resolved.Pass))
+			log.Warn("用户未指定 `FLARE_PASS`，已生成临时应用密码；请尽快通过设置页或配置文件改为你自己的密码")
 		} else {
 			log.Info("应用登录密码已设置为", slog.String("password", data.MaskTextWithStars(resolved.Pass)))
 		}
+		if resolved.User == define.DEFAULT_LOGIN_USER && resolved.Pass == define.DEFAULT_LOGIN_PASS {
+			log.Warn("Default admin/admin login credentials are still active. Change them before exposing SuperFlare to other devices or the public internet.")
+		}
 	}
 
-	define.AppFlags = resolved
 	auth.StoreLoginRuntimeConfigFromFlags(resolved)
 	return resolved, nil
 }

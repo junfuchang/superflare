@@ -11,6 +11,9 @@
                 <div class="form-group">
                     <p>{{ T .Locale "current_user" }} {{.UserName}}</p>
                     <p>{{ T .Locale "login_time" }} {{.LoginDate}}</p>
+                    {{ if .DefaultLoginCredentialsActive }}
+                    <p class="help-text settings-login-warning">{{ T .Locale "default_login_credentials_warning" }}</p>
+                    {{ end }}
                 </div>
                 <div class="form-group">
                     <input class="btn-submit" type="submit" value='{{ T .Locale "logout" }}' />

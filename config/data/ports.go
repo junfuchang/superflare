@@ -53,22 +53,24 @@ func LoadPortBindingsFromRaw(raw []byte) (model.Ports, error) {
 }
 
 func SavePortBindings(data model.Ports) error {
-	data.Items = normalizePortBindings(data.Items)
-	out, err := yaml.Marshal(data)
-	if err != nil {
-		log.Println("marshal ports failed")
-		return fmt.Errorf("marshal ports failed: %w", err)
-	}
-	filePath, err := portsConfigPath()
-	if err != nil {
-		return err
-	}
-	if err := saveFile(filePath, out); err != nil {
-		log.Println("save ports failed")
-		return fmt.Errorf("save ports failed: %w", err)
-	}
-	invalidateFileCachePath(filePath)
-	return nil
+	return withConfigWriteLock(func() error {
+		data.Items = normalizePortBindings(data.Items)
+		out, err := yaml.Marshal(data)
+		if err != nil {
+			log.Println("marshal ports failed")
+			return fmt.Errorf("marshal ports failed: %w", err)
+		}
+		filePath, err := portsConfigPath()
+		if err != nil {
+			return err
+		}
+		if err := saveFileLocked(filePath, out); err != nil {
+			log.Println("save ports failed")
+			return fmt.Errorf("save ports failed: %w", err)
+		}
+		invalidateFileCachePath(filePath)
+		return nil
+	})
 }
 
 func UpdatePortRemarks(items []model.PortBinding) error {

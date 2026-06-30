@@ -111,7 +111,12 @@ func saveFilesAtomically(files map[string][]byte) error {
 	if len(files) == 0 {
 		return nil
 	}
+	return withConfigWriteLock(func() error {
+		return saveFilesAtomicallyLocked(files)
+	})
+}
 
+func saveFilesAtomicallyLocked(files map[string][]byte) error {
 	type commitEntry struct {
 		path string
 		data []byte
@@ -189,6 +194,10 @@ func saveFilesAtomically(files map[string][]byte) error {
 		}
 	}
 	return nil
+}
+
+func saveFileLocked(filePath string, data []byte) error {
+	return saveFilesAtomicallyLocked(map[string][]byte{filePath: data})
 }
 
 func cleanupPendingFileCommits(items []pendingFileCommit) {

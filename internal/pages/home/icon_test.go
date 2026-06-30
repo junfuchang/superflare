@@ -13,8 +13,10 @@ func prepareIconTest(t *testing.T) {
 	if err := mdi.Init(); err != nil {
 		t.Fatalf("mdi.Init: %v", err)
 	}
-	define.ThemeCurrent = "blackboard"
-	define.ThemePrimaryColor = "rgba(255, 253, 234, 1)"
+	define.StoreThemeRuntimeSnapshot(define.ThemeRuntimeSnapshot{
+		Name:    "blackboard",
+		Primary: "rgba(255, 253, 234, 1)",
+	})
 }
 
 func TestRenderBookmarkIcon_EmptyIconUsesSiteFaviconInFillingMode(t *testing.T) {

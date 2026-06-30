@@ -7,10 +7,11 @@ import (
 	"html/template"
 	mathrand "math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
-	"net/url"
 
 	"github.com/labstack/echo/v5"
 
@@ -19,12 +20,73 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/background"
-	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/fn"
+	"github.com/junfuchang/superflare/internal/footer"
 	"github.com/junfuchang/superflare/internal/i18n"
 	"github.com/junfuchang/superflare/internal/pool"
 	"github.com/junfuchang/superflare/internal/statuspage"
 )
+
+type homeRuntimeSnapshot struct {
+	DebugMode  bool
+	DisableCSP bool
+	Visibility string
+}
+
+type homeRuntimeHolder struct {
+	mu  sync.RWMutex
+	set bool
+	cfg homeRuntimeSnapshot
+}
+
+func (h *homeRuntimeHolder) Load() homeRuntimeSnapshot {
+	if h == nil {
+		return homeRuntimeSnapshot{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.set {
+		return homeRuntimeSnapshot{}
+	}
+	return h.cfg
+}
+
+func (h *homeRuntimeHolder) Store(cfg homeRuntimeSnapshot) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.set = true
+	h.cfg = cfg
+	h.mu.Unlock()
+}
+
+var homeRuntimeFlags = &homeRuntimeHolder{}
+
+func homeRuntimeSnapshotFromFlags(flags model.Flags) homeRuntimeSnapshot {
+	return homeRuntimeSnapshot{
+		DebugMode:  flags.DebugMode,
+		DisableCSP: flags.DisableCSP,
+		Visibility: strings.TrimSpace(flags.Visibility),
+	}
+}
+
+func StoreRuntimeFlags(flags model.Flags) {
+	homeRuntimeFlags.Store(homeRuntimeSnapshotFromFlags(flags))
+}
+
+func currentHomeRuntime() homeRuntimeSnapshot {
+	homeRuntimeFlags.mu.RLock()
+	hasValue := homeRuntimeFlags.set
+	cfg := homeRuntimeFlags.cfg
+	homeRuntimeFlags.mu.RUnlock()
+	if hasValue {
+		return cfg
+	}
+	cfg = homeRuntimeSnapshotFromFlags(define.CurrentAppRuntimeFlags())
+	homeRuntimeFlags.Store(cfg)
+	return cfg
+}
 
 const _cspValue = "object-src 'none'; base-uri 'none'; require-trusted-types-for 'script';"
 const _cspScriptNone = "script-src 'none'; "
@@ -34,7 +96,7 @@ const _inlineBackgroundLoaderScript = background.InlineLoaderScript
 var cryptoRandRead = rand.Read
 
 func setCSPHeader(c *echo.Context, scriptNonce string) {
-	if !define.AppFlags.DisableCSP {
+	if !currentHomeRuntime().DisableCSP {
 		c.Response().Header().Set("Content-Security-Policy", getCSPValue(scriptNonce))
 	}
 }
@@ -293,7 +355,7 @@ func RegisterRouting(e *echo.Echo) {
 	e.GET(define.RegularPages.Home.Path, pageHome)
 	e.POST(define.RegularPages.Home.Path, pageSearch)
 	e.GET(define.RegularPages.Help.Path, renderHelp)
-	if define.AppFlags.Visibility != "PRIVATE" {
+	if currentHomeRuntime().Visibility != "PRIVATE" {
 		e.GET(define.RegularPages.Applications.Path, pageApplication)
 		e.GET(define.RegularPages.Bookmarks.Path, pageBookmark)
 	} else {
@@ -352,7 +414,7 @@ func renderHelp(c *echo.Context) error {
 	m["PageName"] = "Home"
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = currentHomeRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["HeroDate"] = now.Format(i18n.DateFormat(locale))
 	m["HeroTime"] = now.Format("15:04:05")
@@ -493,7 +555,7 @@ func pageBookmark(c *echo.Context) error {
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = currentHomeRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["PageName"] = i18n.T(locale, "page_bookmarks")
 	m["SubPage"] = true
@@ -560,7 +622,7 @@ func pageApplication(c *echo.Context) error {
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
 	m["Locale"] = locale
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = currentHomeRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["BookmarksURI"] = define.RegularPages.Bookmarks.Path
 	m["ApplicationsURI"] = define.RegularPages.Applications.Path
@@ -637,7 +699,7 @@ func render(c *echo.Context, filter string) error {
 	m["PageName"] = "Home"
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
-	m["DebugMode"] = define.AppFlags.DebugMode
+	m["DebugMode"] = currentHomeRuntime().DebugMode
 	m["PageInlineStyle"] = define.GetPageInlineStyle()
 	m["HeroDate"] = now.Format(i18n.DateFormat(locale))
 	m["HeroTime"] = now.Format("15:04:05")

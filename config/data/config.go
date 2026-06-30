@@ -82,6 +82,14 @@ HomeMaxWidth: 0
 }
 
 func saveAppConfigToYamlFile(name string, result model.Application) error {
+	return saveAppConfigToYamlFileWith(name, result, saveFile)
+}
+
+func saveAppConfigToYamlFileLocked(name string, result model.Application) error {
+	return saveAppConfigToYamlFileWith(name, result, saveFileLocked)
+}
+
+func saveAppConfigToYamlFileWith(name string, result model.Application, save func(string, []byte) error) error {
 	out, err := yaml.Marshal(result)
 	if err != nil {
 		log.Println("marshal app config failed")
@@ -92,7 +100,7 @@ func saveAppConfigToYamlFile(name string, result model.Application) error {
 	if err != nil {
 		return err
 	}
-	if err := saveFile(filePath, out); err != nil {
+	if err := save(filePath, out); err != nil {
 		log.Println("save app config failed")
 		return fmt.Errorf("save app config failed: %w", err)
 	}
