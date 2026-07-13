@@ -15,6 +15,11 @@ import (
 
 var envAssignmentPattern = regexp.MustCompile(`^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=`)
 
+const (
+	defaultLoginUser = "admin"
+	defaultLoginPass = "admin"
+)
+
 func normalizeEnvContentForINI(content []byte) []byte {
 	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
 	for index, line := range lines {
@@ -158,28 +163,27 @@ func ValidateLoginCredentialPair(user string, pass string, source string) error 
 	if source == "" {
 		source = "login config"
 	}
-	if user == "" && pass == "" {
-		return nil
-	}
 	if user == "" || pass == "" {
-		return fmt.Errorf("%s login credentials are incomplete: username and password must both be set or both be empty", source)
+		return fmt.Errorf("%s login credentials are incomplete: username and password must both be set", source)
 	}
 	return nil
 }
 
 func GetLoginConfig() (user string, pass string, err error) {
+	return getLoginConfig(resetPersistentLoginCredentialsToDefault)
+}
+
+func GetLoginConfigLocked() (user string, pass string, err error) {
+	return getLoginConfig(resetPersistentLoginCredentialsToDefaultLocked)
+}
+
+func getLoginConfig(repair func(envPath string, envExists bool) error) (user string, pass string, err error) {
 	options, err := GetAllSettingsOptions()
 	if err != nil {
 		return "", "", fmt.Errorf("read login config failed: %w", err)
 	}
 	user = strings.TrimSpace(options.LoginUser)
 	pass = strings.TrimSpace(options.LoginPass)
-	if err := ValidateLoginCredentialPair(user, pass, "config.yml"); err != nil {
-		return user, pass, fmt.Errorf("read login config failed: %w", err)
-	}
-	if user != "" && pass != "" {
-		return user, pass, nil
-	}
 
 	envPath, err := envFilePath()
 	if err != nil {
@@ -191,36 +195,93 @@ func GetLoginConfig() (user string, pass string, err error) {
 	}
 	envUser := ""
 	envPass := ""
-	if user == "" && envExists {
+	if envExists {
 		var userErr error
 		envUser, userErr = readEnvValueFromFile(envPath, "FLARE_USER")
 		if userErr != nil {
 			return user, pass, fmt.Errorf("read login config failed: %w", userErr)
 		}
-	}
-	if pass == "" && envExists {
 		var passErr error
 		envPass, passErr = readEnvValueFromFile(envPath, "FLARE_PASS")
 		if passErr != nil {
 			return user, pass, fmt.Errorf("read login config failed: %w", passErr)
 		}
 	}
+
+	if loginCredentialPairNeedsDefault(user, pass) || (envExists && loginCredentialPairNeedsDefault(envUser, envPass)) {
+		if err := repair(envPath, envExists); err != nil {
+			return user, pass, fmt.Errorf("repair login config failed: %w", err)
+		}
+		return defaultLoginUser, defaultLoginPass, nil
+	}
+
+	if err := ValidateLoginCredentialPair(user, pass, "config.yml"); err != nil {
+		return user, pass, fmt.Errorf("read login config failed: %w", err)
+	}
 	if envExists {
 		if err := ValidateLoginCredentialPair(envUser, envPass, ".env"); err != nil {
 			return user, pass, fmt.Errorf("read login config failed: %w", err)
 		}
 	}
-	if user == "" {
-		user = strings.TrimSpace(envUser)
-	}
-	if pass == "" {
-		pass = strings.TrimSpace(envPass)
-	}
-	if user != "" && pass != "" {
-		return user, pass, nil
-	}
 
 	return user, pass, nil
+}
+
+func loginCredentialPairNeedsDefault(user string, pass string) bool {
+	return strings.TrimSpace(user) == "" || strings.TrimSpace(pass) == ""
+}
+
+func resetPersistentLoginCredentialsToDefault(envPath string, envExists bool) error {
+	return withConfigWriteLock(func() error {
+		return resetPersistentLoginCredentialsToDefaultLocked(envPath, envExists)
+	})
+}
+
+func resetPersistentLoginCredentialsToDefaultLocked(envPath string, envExists bool) error {
+	options, err := loadAppConfigFromYaml("config")
+	if err != nil {
+		return err
+	}
+	options.LoginUser = defaultLoginUser
+	options.LoginPass = defaultLoginPass
+	configRaw, err := yaml.Marshal(options)
+	if err != nil {
+		return fmt.Errorf("marshal repaired login config failed: %w", err)
+	}
+	configPath, err := configPath("config")
+	if err != nil {
+		return err
+	}
+	files := map[string][]byte{
+		configPath: configRaw,
+	}
+	if envExists {
+		content, err := os.ReadFile(filepath.Clean(envPath))
+		if err != nil {
+			return fmt.Errorf("read .env failed: %w", err)
+		}
+		next := upsertEnvValueInContent(content, "FLARE_USER", defaultLoginUser)
+		next = upsertEnvValueInContent(next, "FLARE_PASS", defaultLoginPass)
+		files[envPath] = next
+	}
+	if err := saveFilesAtomicallyLocked(files); err != nil {
+		return err
+	}
+	invalidateFileCachePath(configPath)
+	return nil
+}
+
+func ResetEnvLoginCredentialsToDefault(filePath string) error {
+	content, err := os.ReadFile(filepath.Clean(filePath))
+	if err != nil {
+		return fmt.Errorf("read .env failed: %w", err)
+	}
+	next := upsertEnvValueInContent(content, "FLARE_USER", defaultLoginUser)
+	next = upsertEnvValueInContent(next, "FLARE_PASS", defaultLoginPass)
+	if err := saveFile(filePath, next); err != nil {
+		return fmt.Errorf("save .env login defaults failed: %w", err)
+	}
+	return nil
 }
 
 func UpdateLoginConfig(user string, pass string) error {

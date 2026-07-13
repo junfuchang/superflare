@@ -21,7 +21,7 @@ func TestAppConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load App Config: %v", err)
 	}
-	if data.Title != "superflare" {
+	if data.Title != "SuperFlare" {
 		t.Fatal("Load App Config Failed")
 	}
 	if err := saveAppConfigToYamlFile("config", data); err != nil {
@@ -41,13 +41,14 @@ func TestLoadAppConfigFromYamlDefaultValues(t *testing.T) {
 	require.NoError(t, EnsureAppConfigExists())
 	data, err := loadAppConfigFromYaml("config")
 	require.NoError(t, err)
-	assert.Equal(t, "superflare", data.Title, "default Title")
-	assert.Equal(t, "blackboard", data.Theme, "default Theme")
-	assert.Equal(t, "blackboard", data.ThemeBase, "default ThemeBase")
+	assert.Equal(t, "SuperFlare", data.Title, "default Title")
+	assert.Equal(t, "onedark", data.Theme, "default Theme")
+	assert.Equal(t, "onedark", data.ThemeBase, "default ThemeBase")
 	assert.Equal(t, "zh", data.Locale, "default Locale")
-	assert.Equal(t, "", data.CustomThemeBackground, "default custom background")
-	assert.Equal(t, "", data.CustomThemePrimary, "default custom primary")
-	assert.Equal(t, "", data.CustomThemeAccent, "default custom accent")
+	assert.Equal(t, "bing", data.SearchEngine, "default search engine")
+	assert.Equal(t, "new-tab", data.SearchEngineOpenMode, "default search engine open mode")
+	assert.Equal(t, 5, data.HomeMaxColumns, "default home max columns")
+	assert.Equal(t, 1600, data.HomeMaxWidth, "default home max width")
 }
 
 func TestLoadAppConfigFromYamlInvalidYAML(t *testing.T) {

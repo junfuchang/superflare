@@ -27,6 +27,38 @@ func TestRenderBookmarkIcon_EmptyIconUsesSiteFaviconInFillingMode(t *testing.T) 
 	}
 }
 
+func TestRenderBookmarkIcon_CacheMissMarksFallbackForAsyncSiteFavicon(t *testing.T) {
+	prepareIconTest(t)
+	origFast := getSiteFaviconFast
+	origAssetURL := getSiteFaviconAssetURL
+	var fastFallback string
+	getSiteFaviconFast = func(_ string, fallback string) string {
+		fastFallback = fallback
+		return fallback
+	}
+	getSiteFaviconAssetURL = func(link string) string {
+		if link != "https://example.com/path" {
+			t.Fatalf("unexpected favicon link: %s", link)
+		}
+		return "/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"
+	}
+	defer func() {
+		getSiteFaviconFast = origFast
+		getSiteFaviconAssetURL = origAssetURL
+	}()
+
+	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
+	if fastFallback != "" {
+		t.Fatalf("fast favicon lookup should not consume the visible fallback, got fallback %q", fastFallback)
+	}
+	if !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("cache miss should still render builtin bookmark fallback, got %q", out)
+	}
+	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
+		t.Fatalf("cache miss fallback should be marked for async favicon refresh, got %q", out)
+	}
+}
+
 func TestRenderBookmarkIcon_ExplicitImageWins(t *testing.T) {
 	prepareIconTest(t)
 	const icon = "https://cdn.example.com/icon.png"

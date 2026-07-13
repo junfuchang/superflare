@@ -75,6 +75,10 @@ func RegisterRouting(e *echo.Echo) {
 		if !requestLooksLocalNetwork(c.Request()) {
 			return c.Redirect(http.StatusFound, sourceURL)
 		}
+		requestURL := fn.ParseRequestURLTo(c.Request())
+		if !fn.LocalURLMayShareNetworkWithRequest(&requestURL, localURL) {
+			return c.Redirect(http.StatusFound, sourceURL)
+		}
 		options, err := data.GetAllSettingsOptions()
 		if err != nil {
 			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))

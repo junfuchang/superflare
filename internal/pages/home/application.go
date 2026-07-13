@@ -66,7 +66,7 @@ func GenerateApplicationsTemplateWithLocalAndURLErr(filter string, options *mode
 		if desc == "" {
 			desc = app.URL
 		}
-		templateURL := renderBookmarkHref(app.URL, app.LocalURL, preferLocal, options.EnableEncryptedLink)
+		templateURL := renderBookmarkHref(app.URL, app.LocalURL, preferLocal, options.EnableEncryptedLink, requestURL)
 		templateIcon := renderBookmarkIcon(app.Icon, app.URL, options.IconMode)
 		hasIcon := strings.TrimSpace(templateIcon) != ""
 		escapedID := template.HTMLEscapeString(app.Icon)

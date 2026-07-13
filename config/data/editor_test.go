@@ -451,3 +451,61 @@ func TestGetBookmarksFromCSVStillAllowsBlankSpacerRows(t *testing.T) {
 		t.Fatalf("expected 2 normal bookmarks, got %#v", normal)
 	}
 }
+
+func TestGetBookmarksFromCSVSkipsDeletedTableRowsWithOnlyAuxiliaryFields(t *testing.T) {
+	const categories = "1,Links"
+	const bookmarks = "1,Bookmark A,https://bookmark.example.com,,Links,,link,Bookmark link\n2,,,,Links,,,\n3,Bookmark B,https://bookmark-b.example.com,,Links,,link,Bookmark link"
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatal("getCategoriesFromCSV Failed")
+	}
+	favorite, normal, err := getBookmarksFromCSV(bookmarks, bookmarkCategories)
+	if err != nil {
+		t.Fatalf("getBookmarksFromCSV Failed: %v", err)
+	}
+	if len(favorite) != 0 {
+		t.Fatalf("expected no favorites, got %#v", favorite)
+	}
+	if len(normal) != 2 {
+		t.Fatalf("expected 2 normal bookmarks, got %#v", normal)
+	}
+}
+
+func TestUpdateBookmarksFromEditorSkipsDeletedTableRowsWithOnlyAuxiliaryFields(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	const categories = "1,Links"
+	const bookmarks = "1,Bookmark A,https://bookmark.example.com,,Links,,link,Bookmark link\n2,,,,Links,Old subdir,oldIcon,deleted row shell\n3,Bookmark B,https://bookmark-b.example.com,,Links,,link,Bookmark link"
+
+	if err := UpdateBookmarksFromEditor(categories, bookmarks); err != nil {
+		t.Fatalf("UpdateBookmarksFromEditor: %v", err)
+	}
+
+	normal, err := LoadNormalBookmarks()
+	if err != nil {
+		t.Fatalf("LoadNormalBookmarks: %v", err)
+	}
+	if len(normal.Items) != 2 {
+		t.Fatalf("expected 2 normal bookmarks after save, got %#v", normal.Items)
+	}
+	if normal.Items[0].Name != "Bookmark A" || normal.Items[1].Name != "Bookmark B" {
+		t.Fatalf("unexpected saved bookmarks: %#v", normal.Items)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmpDir, "bookmarks.yml"))
+	if err != nil {
+		t.Fatalf("read bookmarks.yml: %v", err)
+	}
+	if strings.Contains(string(raw), "deleted row shell") || strings.Contains(string(raw), "oldIcon") {
+		t.Fatalf("deleted row shell should not be saved, got %s", string(raw))
+	}
+}

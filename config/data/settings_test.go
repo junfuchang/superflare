@@ -263,6 +263,49 @@ func TestUpdateLoginConfig(t *testing.T) {
 	os.Remove(filePath)
 }
 
+func TestUpdateLoginConfigRejectsBlankCredentials(t *testing.T) {
+	withTempWorkingDir(t)
+	if err := UpdateLoginConfig("", "new-pass"); err == nil {
+		t.Fatal("expected blank login username to be rejected")
+	}
+	if err := UpdateLoginConfig("new-user", ""); err == nil {
+		t.Fatal("expected blank login password to be rejected")
+	}
+}
+
+func TestGetLoginConfigRepairsBlankPersistentCredentialsToDefaultPair(t *testing.T) {
+	withTempWorkingDir(t)
+	if err := os.WriteFile("config.yml", []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: ''\nLoginPass: old-pass\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	if err := os.WriteFile(".env", []byte("FLARE_USER=env-user\nFLARE_PASS=\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	user, pass, err := GetLoginConfig()
+	if err != nil {
+		t.Fatalf("GetLoginConfig: %v", err)
+	}
+	if user != "admin" || pass != "admin" {
+		t.Fatalf("expected default credentials after repair, got user=%q pass=%q", user, pass)
+	}
+
+	configText, err := os.ReadFile("config.yml")
+	if err != nil {
+		t.Fatalf("read config.yml: %v", err)
+	}
+	if !strings.Contains(string(configText), "LoginUser: admin") || !strings.Contains(string(configText), "LoginPass: admin") {
+		t.Fatalf("expected config.yml credentials to be reset to admin/admin, got:\n%s", string(configText))
+	}
+	envText, err := os.ReadFile(".env")
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if !strings.Contains(string(envText), "FLARE_USER=admin") || !strings.Contains(string(envText), "FLARE_PASS=admin") {
+		t.Fatalf("expected .env credentials to be reset to admin/admin, got:\n%s", string(envText))
+	}
+}
+
 func TestConcurrentSettingsUpdatesDoNotDropEarlierConfigChanges(t *testing.T) {
 	withTempWorkingDir(t)
 

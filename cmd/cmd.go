@@ -111,14 +111,14 @@ func applyAccountConfig(flags model.Flags) (model.Flags, error) {
 	if err := data.EnsureAppConfigExists(); err != nil {
 		return flags, fmt.Errorf("read account config failed: %w", err)
 	}
-	options, err := data.GetAllSettingsOptions()
+	user, pass, err := data.GetLoginConfig()
 	if err != nil {
 		return flags, fmt.Errorf("read account config failed: %w", err)
 	}
-	flags, err = ApplyAccountConfigToFlagsE(flags, options)
-	if err != nil {
-		return flags, fmt.Errorf("read account config failed: %w", err)
-	}
+	flags.User = user
+	flags.UserIsGenerated = false
+	flags.Pass = pass
+	flags.PassIsGenerated = false
 	return flags, nil
 }
 

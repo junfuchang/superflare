@@ -33,7 +33,9 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 		`\u5185\u7f51\u5730\u5740`,
 		`\u5b50\u76ee\u5f55`,
 		`type: 'autocomplete'`,
+		`remove_row`,
 		`local-url-empty`,
+		`editor-validation-error`,
 		`--editor-table-surface`,
 		`superflare-editor-theme`,
 		`body{--editor-page-background:#14181d;`,
@@ -41,6 +43,13 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 		`function parseEditorJSONFailure(response, fallbackMessage)`,
 		`function summarizeEditorErrorMessage(message, fallbackMessage)`,
 		`function showEditorOperationNotice(type, message, autoHide)`,
+		`function clearEditorValidationState(renderTables)`,
+		`function isDeletedBookmarkRow(item)`,
+		`function getExportableBookmarkRows()`,
+		`function focusEditorValidationCell(target)`,
+		`fetch(form.action || '/editor'`,
+		`行分类缺少名称`,
+		`行书签缺少`,
 		`function stripEditorNoticeQuery()`,
 		`function parseDownloadFilename(disposition)`,
 		`function replaceEditorDocumentWithHTML(html)`,
@@ -66,6 +75,7 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 		`style="{{.PageAppearance}}"`,
 		`Handsontable.renderers.TextRenderer.apply(this, arguments);return;if`,
 		`setButtonState(btn, 'editor-button-state-error', detail);`,
+		`document.getElementById('form-categories').submit()`,
 		`window.alert(`,
 	} {
 		if strings.Contains(page, broken) {
@@ -121,7 +131,7 @@ func TestGeneratedEditorTemplateMatchesSourceTemplate(t *testing.T) {
 }
 
 func TestGeneratedSettingsTemplateMatchesSourceTemplate(t *testing.T) {
-	for _, name := range []string{"settings.html", "settings-appearance.html", "settings-theme.html", "settings-others.html"} {
+	for _, name := range []string{"settings.html", "settings-appearance.html", "settings-theme.html", "settings-others.html", "settings-sidebar.html"} {
 		src, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", name)))
 		if err != nil {
 			t.Fatalf("read source template %s: %v", name, err)

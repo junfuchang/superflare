@@ -10,6 +10,7 @@ import (
 )
 
 var getSiteFaviconFast = fn.GetSiteFaviconFast
+var getSiteFaviconAssetURL = fn.GetSiteFaviconAssetURL
 
 func renderBookmarkIcon(icon string, link string, iconMode string) string {
 	iconMode = strings.ToUpper(strings.TrimSpace(iconMode))
@@ -37,8 +38,26 @@ func renderBookmarkIcon(icon string, link string, iconMode string) string {
 }
 
 func iconFallbackForLink(link string, fallback string) string {
-	if favicon := getSiteFaviconFast(link, fallback); favicon != "" {
+	if favicon := getSiteFaviconFast(link, ""); favicon != "" {
 		return favicon
+	}
+	iconURL := strings.TrimSpace(getSiteFaviconAssetURL(link))
+	if iconURL == "" {
+		return fallback
+	}
+	return markFallbackIconForAsyncSiteFavicon(fallback, iconURL)
+}
+
+func markFallbackIconForAsyncSiteFavicon(fallback string, iconURL string) string {
+	if fallback == "" || iconURL == "" {
+		return fallback
+	}
+	escaped := template.HTMLEscapeString(iconURL)
+	if strings.Contains(fallback, `data-site-icon-src=`) {
+		return fallback
+	}
+	if strings.HasPrefix(fallback, "<img ") {
+		return strings.Replace(fallback, "<img ", `<img data-site-icon-src="`+escaped+`" `, 1)
 	}
 	return fallback
 }

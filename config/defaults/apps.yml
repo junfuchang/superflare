@@ -1,0 +1,8 @@
+links:
+- name: 内网访问内容
+  link: https://baidu.com
+  local_link: http://192.168.10.1:3636
+- name: 百度
+  link: https://baidu.com
+  icon: cardSearch
+  desc: 可自定义图标

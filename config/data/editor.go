@@ -162,6 +162,9 @@ func getBookmarksFromCSV(input string, categories []model.Category) (favoriteBoo
 		if parseErr != nil {
 			return favoriteBookmarks, normalBookmarks, parseErr
 		}
+		if bookmark.Name == "" && bookmark.URL == "" {
+			continue
+		}
 		if bookmark.Name == "" || bookmark.URL == "" {
 			return favoriteBookmarks, normalBookmarks, fmt.Errorf("bookmark row %d is incomplete: both Name and URL are required", row)
 		}

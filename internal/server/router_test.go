@@ -184,6 +184,57 @@ func TestNewRouter_SettingsThemeRequiresLoginAndLoadsAfterLogin(t *testing.T) {
 	assert.Contains(t, recTheme.Body.String(), "data-color-picker")
 }
 
+func TestNewRouter_LoginDisabledHidesLoginConfigAndPortsEntry(t *testing.T) {
+	withRouterTestWorkingDir(t)
+
+	flags := newTestFlags(true, "DEFAULT", true)
+	handler, err := NewRouter(&flags)
+	require.NoError(t, err)
+	require.NotNil(t, handler)
+
+	req := httptest.NewRequest(http.MethodGet, define.SettingPages.Others.Path, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, `id="settings-login-user"`)
+	assert.NotContains(t, body, `name="login-user"`)
+	assert.NotContains(t, body, `href="`+define.SettingPages.Ports.Path+`"`)
+}
+
+func TestNewRouter_LoginDisabledBlocksSensitiveSettingsRoutes(t *testing.T) {
+	withRouterTestWorkingDir(t)
+
+	flags := newTestFlags(true, "DEFAULT", true)
+	handler, err := NewRouter(&flags)
+	require.NoError(t, err)
+	require.NotNil(t, handler)
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "login config save", method: http.MethodPost, path: define.SettingPages.Others.Path, body: "login-user=new&login-pass=new&login-pass-confirm=new"},
+		{name: "page", method: http.MethodGet, path: define.SettingPages.Ports.Path},
+		{name: "data", method: http.MethodGet, path: define.SettingPages.Ports.Path + "/data"},
+		{name: "save", method: http.MethodPost, path: define.SettingPages.Ports.Path, body: "ports=[]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.method == http.MethodPost {
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		})
+	}
+}
+
 func TestNewRouter_SettingsThemeHidesStoredCustomColorsWhenActiveThemeIsPreset(t *testing.T) {
 	withRouterTestWorkingDir(t)
 

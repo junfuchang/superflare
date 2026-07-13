@@ -151,3 +151,17 @@ func TestHomeTemplateUsesSearchHintFields(t *testing.T) {
 		t.Fatalf("expected home template search label to use dynamic hint field, got %s", page)
 	}
 }
+
+func TestHomeTemplateLoadsSiteIconRefreshScriptWithNonce(t *testing.T) {
+	raw, err := TPL.ReadFile("html/home.html")
+	if err != nil {
+		t.Fatalf("read home template: %v", err)
+	}
+	page := string(raw)
+	if !strings.Contains(page, `<script nonce="{{.ScriptNonce}}">{{.InlineSiteIconRefreshScript}}</script>`) {
+		t.Fatalf("expected site icon refresh script to use page nonce, got %s", page)
+	}
+	if strings.Contains(page, `{{.CustomHomeStyle}}<script`) {
+		t.Fatalf("expected site icon refresh script to stay outside custom style block, got %s", page)
+	}
+}

@@ -227,7 +227,7 @@ func TestParseEFailsWhenDotEnvContainsInvalidConfiguredValues(t *testing.T) {
 	}
 }
 
-func TestParseEFailsWhenDotEnvLoginCredentialsIncomplete(t *testing.T) {
+func TestParseERepairsDotEnvLoginCredentialsWhenIncomplete(t *testing.T) {
 	resetCmdEnv(t)
 	tmpDir := withTempCmdWorkDir(t)
 
@@ -239,19 +239,16 @@ func TestParseEFailsWhenDotEnvLoginCredentialsIncomplete(t *testing.T) {
 	defer func() { os.Args = origArgs }()
 	os.Args = []string{"superflare"}
 
-	_, err := cmd.ParseE()
-	if err == nil {
-		t.Fatal("expected ParseE to fail")
+	resolved, err := cmd.ParseE()
+	if err != nil {
+		t.Fatalf("ParseE: %v", err)
 	}
-	if !strings.Contains(err.Error(), "parse .env login config failed") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "login credentials are incomplete") {
-		t.Fatalf("unexpected error: %v", err)
+	if resolved.User != define.DEFAULT_LOGIN_USER || resolved.Pass != define.DEFAULT_LOGIN_PASS {
+		t.Fatalf("expected repaired default credentials, got %q/%q", resolved.User, resolved.Pass)
 	}
 }
 
-func TestParseEFailsWhenConfigLoginCredentialsIncomplete(t *testing.T) {
+func TestParseERepairsConfigLoginCredentialsWhenIncomplete(t *testing.T) {
 	resetCmdEnv(t)
 	tmpDir := withTempCmdWorkDir(t)
 
@@ -263,21 +260,18 @@ func TestParseEFailsWhenConfigLoginCredentialsIncomplete(t *testing.T) {
 	defer func() { os.Args = origArgs }()
 	os.Args = []string{"superflare"}
 
-	_, err := cmd.ParseE()
-	if err == nil {
-		t.Fatal("expected ParseE to fail")
+	resolved, err := cmd.ParseE()
+	if err != nil {
+		t.Fatalf("ParseE: %v", err)
 	}
-	if !strings.Contains(err.Error(), "read account config failed") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "login credentials are incomplete") {
-		t.Fatalf("unexpected error: %v", err)
+	if resolved.User != define.DEFAULT_LOGIN_USER || resolved.Pass != define.DEFAULT_LOGIN_PASS {
+		t.Fatalf("expected repaired default credentials, got %q/%q", resolved.User, resolved.Pass)
 	}
 }
 
-func TestParseEGeneratedPasswordWarningDoesNotLogPlaintext(t *testing.T) {
+func TestParseEEmptyConfigCredentialsUseDefaultPair(t *testing.T) {
 	resetCmdEnv(t)
-	withTempCmdWorkDir(t)
+	tmpDir := withTempCmdWorkDir(t)
 
 	origArgs := os.Args
 	origLogger := logger.GetLogger()
@@ -294,6 +288,10 @@ func TestParseEGeneratedPasswordWarningDoesNotLogPlaintext(t *testing.T) {
 		define.AppSourceFlags = origSourceFlags
 	}()
 
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nLoginUser: \"\"\nLoginPass: \"\"\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
 	define.DefaultEnvVars.Pass = ""
 	os.Args = []string{"superflare"}
 
@@ -304,19 +302,14 @@ func TestParseEGeneratedPasswordWarningDoesNotLogPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseE: %v", err)
 	}
-	if !resolved.PassIsGenerated {
-		t.Fatal("expected generated password branch")
+	if resolved.User != define.DEFAULT_LOGIN_USER || resolved.Pass != define.DEFAULT_LOGIN_PASS {
+		t.Fatalf("expected default credentials after repair, got %q/%q", resolved.User, resolved.Pass)
 	}
-	if resolved.Pass == "" {
-		t.Fatal("expected generated password to be non-empty")
+	if resolved.UserIsGenerated || resolved.PassIsGenerated {
+		t.Fatalf("expected repaired credentials to be explicit defaults, got generated user=%v pass=%v", resolved.UserIsGenerated, resolved.PassIsGenerated)
 	}
-
-	logText := out.String()
-	if strings.Contains(logText, resolved.Pass) {
-		t.Fatalf("expected generated password to stay out of logs, got %s", logText)
-	}
-	if !strings.Contains(logText, "FLARE_PASS") || !strings.Contains(logText, "level=WARN") {
-		t.Fatalf("expected generated password warning, got %s", logText)
+	if !strings.Contains(out.String(), "Default admin/admin login credentials are still active") {
+		t.Fatalf("expected default credential warning, got %s", out.String())
 	}
 }
 

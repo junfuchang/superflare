@@ -132,6 +132,9 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIcon(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
 		t.Fatalf("site icon proxy fallback content-type = %q", got)
 	}
+	if got := rec.Header().Get(siteIconStateHeader); got != "fallback" {
+		t.Fatalf("site icon proxy fallback state header = %q", got)
+	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "<svg") {
 		t.Fatalf("site icon proxy fallback should return builtin svg icon, got %q", body)
@@ -166,6 +169,9 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIconWithoutMDICache(t *testing.T
 	}
 	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
 		t.Fatalf("site icon proxy fallback without mdi cache content-type = %q", got)
+	}
+	if got := rec.Header().Get(siteIconStateHeader); got != "fallback" {
+		t.Fatalf("site icon proxy fallback without mdi cache state header = %q", got)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "<svg") {
@@ -226,6 +232,9 @@ func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
 		t.Fatalf("site icon proxy cache-hit content-type = %q", got)
+	}
+	if got := rec.Header().Get(siteIconStateHeader); got != "cached" {
+		t.Fatalf("site icon proxy cache-hit state header = %q", got)
 	}
 }
 

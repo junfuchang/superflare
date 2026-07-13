@@ -289,7 +289,7 @@ func TestAppendAdaptiveColumnStyleUsesDesktopWrapAndMobileWaterfall(t *testing.T
 	assert.Contains(t, style, "#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-gap:18px;row-gap:0;align-items:start;}")
 	assert.Contains(t, style, "#container-bookmakrs .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-count:auto;column-gap:18px;gap:18px;align-items:start;}")
 	assert.Contains(t, style, "#container-bookmakrs .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;")
-	assert.Contains(t, style, "@media (max-width:767px){#container-bookmakrs .bookmark-groups{display:block;column-count:2;column-gap:18px;}")
+	assert.Contains(t, style, "@media (max-width:560px){#container-bookmakrs .bookmark-groups{display:block;column-count:2;column-gap:18px;}")
 	assert.NotContains(t, style, ";};}")
 }
 
@@ -1691,7 +1691,7 @@ func TestRenderBookmarkItemUsesDedicatedLabelSpan(t *testing.T) {
 		Name: "Example",
 		URL:  "https://example.com",
 		Icon: "bookmark",
-	}, false, false, "", false)
+	}, false, false, "", false, nil)
 
 	html := b.String()
 	if !strings.Contains(html, `class="bookmark-label"`) {

@@ -10,72 +10,14 @@ import (
 )
 
 func initAppConfig(filePath string) (result model.Application, err error) {
-	out := []byte(`
-# Application title
-Title: "superflare"
-# Application footer HTML/text
-Footer: ""
-# MDI site icon name. Leave empty to use /favicon.ico.
-SiteIcon: ""
-SiteIconMode: "mdi"
-# Open links in a new tab
-OpenAppNewTab: true
-OpenBookmarkNewTab: true
-# Home modules
-ShowTitle: true
-Greetings: "hello"
-ShowSearchComponent: true
-DisabledSearchAutoFocus: false
-SearchMode: "bookmarks"
-SearchEngine: "bing"
-SearchEngineOpenMode: "same-tab"
-SearchEngineCustomTemplate: ""
-ShowDateTime: true
-ShowApps: true
-ShowBookmarks: true
-AppsTitle: ""
-BookmarksTitle: ""
-BookmarkCategoryColor: ""
-BookmarkItemColor: ""
-# Home toolbar buttons
-HideSettingButton: false
-HideHelpButton: false
-HideWarningsButton: false
-# Link display
-EnableEncryptedLink: false
-IconMode: "FILLING"
-KeepLetterCase: false
-# Theme
-Theme: "blackboard"
-ThemeBase: "blackboard"
-CustomThemeBackground: ""
-CustomThemePrimary: ""
-CustomThemeAccent: ""
-# UI language (zh / en)
-Locale: "zh"
-# Login config. Leave empty to use environment variables, CLI flags, or generated defaults.
-LoginUser: ""
-LoginPass: ""
-# Home background image
-BackgroundImage: ""
-BackgroundImageMode: "url"
-BackgroundBlur: 0
-BackgroundOpacity: 100
-GlassEffect: "none"
-GlassIntensity: 0
-# Home layout
-HomeMaxColumns: 0
-HomeMaxWidth: 0
-`)
+	result, out, err := loadDefaultAppConfig()
+	if err != nil {
+		return result, err
+	}
 
 	if err := saveFile(filePath, out); err != nil {
 		log.Println("init default app config failed")
 		return result, fmt.Errorf("init default app config failed: %w", err)
-	}
-
-	parseErr := yaml.Unmarshal(out, &result)
-	if parseErr != nil {
-		return result, fmt.Errorf("parse default app config failed: %w", parseErr)
 	}
 
 	return result, nil

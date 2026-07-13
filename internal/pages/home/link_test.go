@@ -6,10 +6,12 @@ import (
 
 	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/internal/fn"
 )
 
 func TestRenderBookmarkHrefPrefersLocalURL(t *testing.T) {
-	href := renderBookmarkHref("https://public.example.com/app", "http://192.168.1.10/app", true, false)
+	requestURL := &fn.DynamicURL{Hostname: "192.168.1.20"}
+	href := renderBookmarkHref("https://public.example.com/app", "http://192.168.1.10/app", true, false, requestURL)
 	parsed, err := url.Parse(href)
 	if err != nil {
 		t.Fatalf("parse href: %v", err)
@@ -31,14 +33,30 @@ func TestRenderBookmarkHrefPrefersLocalURL(t *testing.T) {
 }
 
 func TestRenderBookmarkHrefFallsBackWhenNotLocalNetwork(t *testing.T) {
-	href := renderBookmarkHref("https://public.example.com/app", "http://192.168.1.10/app", false, false)
+	href := renderBookmarkHref("https://public.example.com/app", "http://192.168.1.10/app", false, false, nil)
 	if href != "https://public.example.com/app" {
 		t.Fatalf("expected source URL, got %q", href)
 	}
 }
 
+func TestRenderBookmarkHrefFallsBackWhenLocalURLCannotShareNetwork(t *testing.T) {
+	requestURL := &fn.DynamicURL{Hostname: "192.168.0.10"}
+	href := renderBookmarkHref("https://public.example.com/app", "http://192.168.10.1/app", true, false, requestURL)
+	if href != "https://public.example.com/app" {
+		t.Fatalf("expected source URL for different local network, got %q", href)
+	}
+}
+
+func TestRenderBookmarkHrefFallsBackWhenForwardedClientCannotShareNetwork(t *testing.T) {
+	requestURL := &fn.DynamicURL{Hostname: "superflare.example.com", RemoteHost: "192.168.0.88"}
+	href := renderBookmarkHref("https://public.example.com/app", "http://192.168.10.1/app", true, false, requestURL)
+	if href != "https://public.example.com/app" {
+		t.Fatalf("expected source URL for different forwarded client network, got %q", href)
+	}
+}
+
 func TestRenderBookmarkHrefKeepsEncryptedSourceWhenNoLocalURL(t *testing.T) {
-	href := renderBookmarkHref("https://public.example.com/app", "", true, true)
+	href := renderBookmarkHref("https://public.example.com/app", "", true, true, nil)
 	parsed, err := url.Parse(href)
 	if err != nil {
 		t.Fatalf("parse href: %v", err)
@@ -49,7 +67,7 @@ func TestRenderBookmarkHrefKeepsEncryptedSourceWhenNoLocalURL(t *testing.T) {
 }
 
 func TestRenderBookmarkHrefDoesNotUseLocalRedirWhenSourceURLIsNonHTTP(t *testing.T) {
-	href := renderBookmarkHref("chrome-extension://abc/index.html", "http://192.168.1.10/app", true, false)
+	href := renderBookmarkHref("chrome-extension://abc/index.html", "http://192.168.1.10/app", true, false, nil)
 	parsed, err := url.Parse(href)
 	if err != nil {
 		t.Fatalf("parse href: %v", err)

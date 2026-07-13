@@ -134,7 +134,7 @@ func GenerateHelpTemplate(locale string) template.HTML {
 			<div class="app-container" data-id="` + escapedID + `">
 			<a href="` + escapedURL + `" class="app-item" title="` + escapedName + `">
 			  <div class="app-icon">` + renderHelpIcon(app.Icon) + `</div>
-			  <div class="app-text">
+			  <div class="app-text has-icon">
 				<p class="app-title">` + escapedName + `</p>
 				<p class="app-desc">` + escapedDesc + `</p>
 			  </div>

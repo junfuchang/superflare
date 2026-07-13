@@ -544,6 +544,16 @@
             color: var(--editor-table-restricted-text) !important;
         }
 
+        #container-category .handsontable td.editor-validation-error,
+        #container-category .handsontable .htCore td.editor-validation-error,
+        #container-bookmarks .handsontable td.editor-validation-error,
+        #container-bookmarks .handsontable .htCore td.editor-validation-error {
+            background: var(--editor-table-invalid-bg) !important;
+            color: var(--editor-table-invalid-text) !important;
+            font-weight: 700 !important;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--editor-table-invalid-text) 70%, transparent);
+        }
+
         #container-bookmarks .handsontable td.editor-search-match,
         #container-bookmarks .handsontable .htCore td.editor-search-match {
             background: var(--editor-table-accent-soft) !important;
@@ -797,6 +807,26 @@
                 width: 100%;
             }
 
+            .editor-operation-notice {
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .editor-operation-notice-text {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow-wrap: anywhere;
+                word-break: normal;
+            }
+
+            .editor-operation-notice .editor-operation-notice-close {
+                flex: 0 0 34px;
+                width: 34px;
+                min-width: 34px;
+                min-height: 34px;
+                padding: 0;
+            }
+
             .editor-restore-form {
                 width: 100%;
             }
@@ -938,6 +968,7 @@
         let categories = JSON.parse(document.getElementById("data-categories").innerHTML) || [];
         const dataBookmarks = JSON.parse(document.getElementById("data-bookmarks").innerHTML) || [];
         const dataPorts = JSON.parse(document.getElementById("data-ports").textContent || "[]") || [];
+        const enableLocalPortPicker = {{ if .ShowEditorPortPicker }}true{{ else }}false{{ end }};
         const localLANHost = '{{.LocalLANHost}}';
         const localPortDisplayMap = {};
         const localPortValueMap = {};
@@ -972,21 +1003,26 @@
     </script>
 
     <script>
+        let editorValidationState = {
+            categories: [],
+            bookmarks: []
+        };
         const instanceCategories = new Handsontable(document.getElementById('container-category'), {
             language: tableLocale,
             data: categories,
             colHeaders: ['\u5206\u7c7b\u540d\u79f0'],
             rowHeaders: true,
             manualRowMove: true,
-            contextMenu: ["row_above", "row_below", "---------", "undo", "redo", "---------", "cut", "copy"],
+            contextMenu: ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"],
             columns: [
-                { data: 'Name' },
+                { data: 'Name', renderer: categoryValidationRenderer },
             ],
             height: tableHeightForRows(categories.length),
             renderAllRows: false,
             manualColumnResize: true,
             afterChange: (changes, source) => {
                 if (!changes || source === 'loadData' || source === 'category-duplicate-revert') { return }
+                clearEditorValidationState(false);
                 if (!changes) { return }
                 changes.forEach(function ([row, prop, oldValue, newValue]) {
                     if (prop !== 'Name') { return; }
@@ -1018,14 +1054,17 @@
                 updateDataTable()
             },
             afterCreateRow: function () {
+                clearEditorValidationState(false);
                 syncCategoriesStateFromTable();
                 updateDataTable();
             },
             afterRemoveRow: function () {
+                clearEditorValidationState(false);
                 syncCategoriesStateFromTable();
                 updateDataTable();
             },
             afterRowMove: function () {
+                clearEditorValidationState(false);
                 syncCategoriesStateFromTable();
                 updateDataTable();
             },
@@ -1067,16 +1106,18 @@
             colHeaders: ['\u4e66\u7b7e\u540d\u79f0', '\u4e66\u7b7e\u5730\u5740', '\u5185\u7f51\u5730\u5740', '\u7c7b\u578b', '\u5b50\u76ee\u5f55', '\u56fe\u6807', '\u63cf\u8ff0', '\u68c0\u67e5\u7ed3\u679c'],
             rowHeaders: true,
             manualRowMove: true,
-            contextMenu: ["row_above", "row_below", "---------", "undo", "redo", "---------", "cut", "copy"],
+            contextMenu: ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"],
             columns: dataTableColumns,
             height: tableHeightForRows(bookmarks.length),
             stretchH: 'all',
             renderAllRows: false,
             manualColumnResize: true,
             afterCreateRow: function () {
+                clearEditorValidationState(false);
                 scheduleTableLayoutSync();
             },
             afterRemoveRow: function () {
+                clearEditorValidationState(false);
                 scheduleTableLayoutSync();
             },
             licenseKey: 'non-commercial-and-evaluation'
@@ -1230,8 +1271,14 @@
             return text;
         }
 
+        function getExportableBookmarkRows() {
+            return getVisualBookmarkRows().filter(function (item) {
+                return !isDeletedBookmarkRow(item);
+            });
+        }
+
         function exportBookmarksCSV() {
-            return getVisualBookmarkRows().map(function (item, idx) {
+            return getExportableBookmarkRows().map(function (item, idx) {
                 return [
                     idx + 1,
                     item.Name,
@@ -1373,6 +1420,63 @@
             }, 2500);
         }
 
+        function normalizeEditorText(value) {
+            return (value == null ? '' : String(value)).trim();
+        }
+
+        function isDeletedBookmarkRow(item) {
+            if (!item) { return true; }
+            return normalizeEditorText(item.Name) === '' && normalizeEditorText(item.URL) === '';
+        }
+
+        function clearEditorValidationState(renderTables) {
+            editorValidationState = {
+                categories: [],
+                bookmarks: []
+            };
+            if (renderTables === false) { return; }
+            if (instanceCategories && instanceCategories.render) {
+                instanceCategories.render();
+            }
+            if (instanceBookmarks && instanceBookmarks.render) {
+                instanceBookmarks.render();
+            }
+        }
+
+        function addEditorValidationTarget(scope, row, prop) {
+            if (!editorValidationState[scope]) { return; }
+            editorValidationState[scope].push({ row: row, prop: prop });
+        }
+
+        function cellHasEditorValidationError(scope, row, prop) {
+            const targets = editorValidationState[scope] || [];
+            return targets.some(function (target) {
+                return target.row === row && target.prop === prop;
+            });
+        }
+
+        function applyEditorValidationCellState(td, scope, row, prop) {
+            td.classList.remove('editor-validation-error');
+            if (cellHasEditorValidationError(scope, row, prop)) {
+                td.classList.add('editor-validation-error');
+            }
+        }
+
+        function focusEditorValidationCell(target) {
+            if (!target) { return; }
+            const table = target.scope === 'categories' ? instanceCategories : instanceBookmarks;
+            if (!table || typeof table.propToCol !== 'function') { return; }
+            const columnIndex = table.propToCol(target.prop);
+            if (typeof columnIndex !== 'number' || columnIndex < 0) { return; }
+            table.scrollViewportTo(target.row, columnIndex, true, true);
+            table.selectCell(target.row, columnIndex);
+        }
+
+        function categoryValidationRenderer(instance, td, row, col, prop, value, cellProperties) {
+            Handsontable.renderers.TextRenderer.apply(this, arguments);
+            applyEditorValidationCellState(td, 'categories', row, prop);
+        }
+
         function parseEditorJSONFailure(response, fallbackMessage) {
             return response.text().then(function (raw) {
                 if (!raw) {
@@ -1415,17 +1519,32 @@
         }
 
         function validateEditorDataBeforeSubmit() {
-            const visualCategories = getVisualCategoryRows()
-                .map(function (item) { return (item.Name || '').trim(); })
-                .filter(function (name) { return name !== ''; });
+            clearEditorValidationState(false);
+            const visualCategories = getVisualCategoryRows();
             const seenCategories = new Set();
+
             for (let index = 0; index < visualCategories.length; index += 1) {
-                const name = visualCategories[index];
+                const name = normalizeEditorText(visualCategories[index].Name);
+                if (!name) {
+                    addEditorValidationTarget('categories', index, 'Name');
+                    return {
+                        message: '第 ' + (index + 1) + ' 行分类缺少名称，请补全后再保存；如果要删除请使用右键菜单的删除行。',
+                        target: { scope: 'categories', row: index, prop: 'Name' }
+                    };
+                }
                 if (name === FLARE_FIX_CATEGORY[0]) {
-                    return '分类名称“' + name + '”为保留名称，请使用其他名称。';
+                    addEditorValidationTarget('categories', index, 'Name');
+                    return {
+                        message: '分类名称“' + name + '”为保留名称，请使用其他名称。',
+                        target: { scope: 'categories', row: index, prop: 'Name' }
+                    };
                 }
                 if (seenCategories.has(name)) {
-                    return '分类名称“' + name + '”重复，请保持唯一。';
+                    addEditorValidationTarget('categories', index, 'Name');
+                    return {
+                        message: '分类名称“' + name + '”重复，请保持唯一。',
+                        target: { scope: 'categories', row: index, prop: 'Name' }
+                    };
                 }
                 seenCategories.add(name);
             }
@@ -1433,15 +1552,34 @@
             const visualBookmarks = getVisualBookmarkRows();
             for (let rowIndex = 0; rowIndex < visualBookmarks.length; rowIndex += 1) {
                 const bookmark = visualBookmarks[rowIndex];
-                const categoryName = (bookmark.Category || '').trim();
+                if (isDeletedBookmarkRow(bookmark)) {
+                    continue;
+                }
+                const name = normalizeEditorText(bookmark.Name);
+                const url = normalizeEditorText(bookmark.URL);
+                if (!name || !url) {
+                    const missingProp = !name ? 'Name' : 'URL';
+                    addEditorValidationTarget('bookmarks', rowIndex, missingProp);
+                    return {
+                        message: '第 ' + (rowIndex + 1) + ' 行书签缺少' + (!name ? '名称' : '地址') + '，请补全后再保存；如果要删除请使用右键菜单的删除行。',
+                        target: { scope: 'bookmarks', row: rowIndex, prop: missingProp }
+                    };
+                }
+
+                const categoryName = normalizeEditorText(bookmark.Category);
                 if (!categoryName || categoryName === FLARE_FIX_CATEGORY[0]) {
                     continue;
                 }
                 if (!seenCategories.has(categoryName)) {
-                    return '书签“' + (bookmark.Name || ('第' + (rowIndex + 1) + ' 行')) + '”引用了不存在的分类“' + categoryName + '”。';
+                    addEditorValidationTarget('bookmarks', rowIndex, 'Category');
+                    return {
+                        message: '书签“' + name + '”引用了不存在的分类“' + categoryName + '”。',
+                        target: { scope: 'bookmarks', row: rowIndex, prop: 'Category' }
+                    };
                 }
             }
-            return '';
+
+            return null;
         }
 
         getEditorButtonDefaultLabel(backupDownloadButton);
@@ -1453,13 +1591,48 @@
                 event.preventDefault();
                 const validationError = validateEditorDataBeforeSubmit();
                 if (validationError) {
-                    showEditorValidationError(btn, validationError);
+                    const message = validationError.message || editorMessages.validationFailed;
+                    if (instanceCategories && instanceCategories.render) { instanceCategories.render(); }
+                    if (instanceBookmarks && instanceBookmarks.render) { instanceBookmarks.render(); }
+                    focusEditorValidationCell(validationError.target);
+                    showEditorValidationError(btn, message);
                     return;
                 }
                 bindData();
                 btn.disabled = true;
                 setButtonState(btn, 'editor-button-state-neutral', editorMessages.saveRunning);
-                document.getElementById('form-categories').submit();
+                const form = document.getElementById('form-categories');
+                fetch(form.action || '/editor', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                        'Accept': 'application/json,text/html;q=0.8,*/*;q=0.5'
+                    },
+                    body: new URLSearchParams(new FormData(form)).toString()
+                }).then(function (response) {
+                    if (!response.ok) {
+                        return parseEditorJSONFailure(response, editorMessages.operationFailed);
+                    }
+                    return response.json().catch(function () {
+                        return {};
+                    });
+                }).then(function () {
+                    showEditorOperationNotice('success', editorMessages.saveSuccess, true);
+                    setButtonState(btn, 'editor-button-state-success', getEditorButtonDefaultLabel(btn));
+                    window.setTimeout(function () {
+                        resetEditorButton(btn);
+                        btn.disabled = false;
+                    }, 1800);
+                }).catch(function (error) {
+                    const detail = error && error.message ? error.message : editorMessages.operationFailed;
+                    showEditorOperationNotice('error', formatEditorFailureMessage(editorMessages.operationFailed, detail), false);
+                    setButtonState(btn, 'editor-button-state-error', editorMessages.validationFixData);
+                    btn.title = detail;
+                    window.setTimeout(function () {
+                        resetEditorButton(btn);
+                        btn.disabled = false;
+                    }, 2800);
+                });
             });
         });
 
@@ -1544,10 +1717,13 @@
         });
 
         function buildDataTableColumns() {
+            const localURLColumn = enableLocalPortPicker
+                ? { data: 'LocalURL', type: 'autocomplete', source: localPortOptions, strict: false, filter: false, allowInvalid: true, renderer: localURLRenderer }
+                : { data: 'LocalURL', renderer: localURLRenderer };
             return [
                 { data: 'Name', renderer: textSearchRenderer },
                 { data: 'URL', renderer: textSearchRenderer },
-                { data: 'LocalURL', type: 'autocomplete', source: localPortOptions, strict: false, filter: false, allowInvalid: true, renderer: localURLRenderer },
+                localURLColumn,
                 { data: 'Category', editor: 'select', selectOptions: FLARE_FIX_CATEGORY.concat(categories.map(item => item.Name)), allowInvalid: false, renderer: textSearchRenderer },
                 { data: 'Subdir', renderer: textSearchRenderer },
                 { data: 'Icon', renderer: textSearchRenderer },
@@ -1675,12 +1851,14 @@
 
         function textSearchRenderer(instance, td, row, col, prop, value, cellProperties) {
             Handsontable.renderers.TextRenderer.apply(this, arguments);
+            applyEditorValidationCellState(td, 'bookmarks', row, prop);
             applySearchCellState(td, row, prop, value);
         }
 
         function localURLRenderer(instance, td, row, col, prop, value, cellProperties) {
             const display = localPortDisplayMap[value] || value || '';
             Handsontable.renderers.TextRenderer.apply(this, [instance, td, row, col, prop, display, cellProperties]);
+            applyEditorValidationCellState(td, 'bookmarks', row, prop);
             applySearchCellState(td, row, prop, display);
         }
 
@@ -1697,6 +1875,7 @@
                 }
                 td.className = (td.className || '') + ' ' + statusClass + ' link-check-note';
             }
+            applyEditorValidationCellState(td, 'bookmarks', row, prop);
             applySearchCellState(td, row, prop, value);
         }
 
@@ -1835,6 +2014,15 @@
 
         document.getElementById('check-links').addEventListener('click', function (e) {
             e.preventDefault();
+            const validationError = validateEditorDataBeforeSubmit();
+            if (validationError) {
+                const message = validationError.message || editorMessages.validationFailed;
+                if (instanceCategories && instanceCategories.render) { instanceCategories.render(); }
+                if (instanceBookmarks && instanceBookmarks.render) { instanceBookmarks.render(); }
+                focusEditorValidationCell(validationError.target);
+                showEditorValidationError(this, message);
+                return;
+            }
             bindData();
             const btn = this;
             btn.disabled = true;
@@ -1904,6 +2092,7 @@
 
         instanceBookmarks.addHook('afterChange', function (changes, source) {
             if (!changes || source === 'loadData') { return; }
+            clearEditorValidationState(false);
             const touchedRows = {};
             changes.forEach(function (change) {
                 const row = change[0];
@@ -1923,12 +2112,14 @@
         });
 
         instanceBookmarks.addHook('afterCreateRow', function () {
+            clearEditorValidationState(false);
             syncBookmarksStateFromTable();
             rebuildBookmarkSearchIndex();
             refreshBookmarkSearchAfterDataChange();
         });
 
         instanceBookmarks.addHook('afterRemoveRow', function () {
+            clearEditorValidationState(false);
             syncBookmarksStateFromTable();
             rebuildBookmarkSearchIndex();
             refreshBookmarkSearchAfterDataChange();

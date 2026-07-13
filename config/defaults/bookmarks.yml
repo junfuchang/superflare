@@ -1,0 +1,27 @@
+categories:
+- id: "1"
+  title: 分类1
+- id: "2"
+  title: 分类2
+- id: "3"
+  title: 分类3
+- id: "4"
+  title: 分类4
+- id: "5"
+  title: 分类5
+links:
+- name: 抖音
+  link: https://www.douyin.com/
+  category: "1"
+  subdir: 视频平台
+- name: 小红书
+  link: https://www.xiaohongshu.com/
+  category: "1"
+  subdir: 社交平台
+- name: 无效链接使用默认图标
+  link: https://www.bing123google.com/
+  desc: 搜索引擎
+  category: "2"
+- name: github
+  link: https://github.com/junfuchang/superflare
+  category: "2"

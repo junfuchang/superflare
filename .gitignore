@@ -35,6 +35,11 @@ apps.yml
 bookmarks.yml
 config.yml
 ports.yaml
+!config/defaults/
+!config/defaults/config.yml
+!config/defaults/apps.yml
+!config/defaults/bookmarks.yml
+!config/defaults/ports.yaml
 var/
 tmp-superflare.*
 .tools/*

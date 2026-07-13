@@ -45,6 +45,38 @@ func TestInjectGuideAssetsAddsGuideResources(t *testing.T) {
 	}
 }
 
+func TestGuideScriptDocumentsCurrentSuperFlareFlow(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("guide-assets", "app.js"))
+	if err != nil {
+		t.Fatalf("read guide app.js: %v", err)
+	}
+	script := string(body)
+	expected := []string{
+		"SuperFlare 使用向导",
+		"搜索模式",
+		"应用与书签",
+		"子目录",
+		"图标",
+		"在线编辑",
+		"备份与恢复",
+		"主题与背景",
+		"端口",
+		"Docker",
+		"fnOS",
+	}
+	for _, token := range expected {
+		if !strings.Contains(script, token) {
+			t.Fatalf("guide script should mention %q in %s", token, script)
+		}
+	}
+	blocked := []string{"plugin-weather", "天气", "完全离线", "鍐", "鎼", "涔"}
+	for _, token := range blocked {
+		if strings.Contains(script, token) {
+			t.Fatalf("guide script should not contain stale or mojibake token %q in %s", token, script)
+		}
+	}
+}
+
 func TestGetUserHomePageRejectsNonHomePageContent(t *testing.T) {
 	origFetch := getGuideHTML
 	getGuideHTML = func(url string) (string, error) {

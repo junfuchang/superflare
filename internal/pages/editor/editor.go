@@ -200,6 +200,11 @@ func editorJSONError(message string) map[string]string {
 	return map[string]string{"error": message}
 }
 
+func editorWantsJSON(c *echo.Context) bool {
+	accept := strings.ToLower((*c).Request().Header.Get(echo.HeaderAccept))
+	return strings.Contains(accept, echo.MIMEApplicationJSON)
+}
+
 func buildEditorNoticeRedirectURL(notice string) string {
 	if strings.TrimSpace(notice) == "" {
 		return define.RegularPages.Editor.Path
@@ -230,10 +235,19 @@ func updateData(c *echo.Context) error {
 		Bookmarks  string `form:"bookmarks"`
 	}
 	if err := c.Bind(&body); err != nil {
+		if editorWantsJSON(c) {
+			return c.JSON(http.StatusBadRequest, editorJSONError("missing form data"))
+		}
 		return renderEditorErrorPage(c, http.StatusBadRequest, fmt.Errorf("missing form data"))
 	}
 	if err := data.UpdateBookmarksFromEditor(body.Categories, body.Bookmarks); err != nil {
+		if editorWantsJSON(c) {
+			return c.JSON(http.StatusBadRequest, editorJSONError(err.Error()))
+		}
 		return renderEditorErrorPage(c, http.StatusBadRequest, err)
+	}
+	if editorWantsJSON(c) {
+		return c.JSON(http.StatusOK, map[string]string{"notice": editorNoticeSaveSuccess})
 	}
 	return c.Redirect(http.StatusFound, buildEditorNoticeRedirectURL(editorNoticeSaveSuccess))
 }
@@ -561,7 +575,7 @@ func writeRestoreFilesAtomicallyLocked(files map[string][]byte) error {
 			}
 			return fmt.Errorf("refresh page palette cache failed: %w", err)
 		}
-		if err := refreshRuntimeLoginConfig(); err != nil {
+		if err := refreshRuntimeLoginConfigLocked(); err != nil {
 			rollbackErr := rollbackPendingRestoreFiles(pending, len(pending)-1)
 			for _, item := range pending {
 				data.InvalidateConfigCache(item.name)
@@ -596,6 +610,15 @@ func cleanupPendingRestoreTemps(items []pendingRestoreFile) {
 
 func refreshRuntimeLoginConfig() error {
 	user, pass, err := data.GetLoginConfig()
+	return storeRuntimeLoginConfig(user, pass, err)
+}
+
+func refreshRuntimeLoginConfigLocked() error {
+	user, pass, err := data.GetLoginConfigLocked()
+	return storeRuntimeLoginConfig(user, pass, err)
+}
+
+func storeRuntimeLoginConfig(user string, pass string, err error) error {
 	if err != nil {
 		return err
 	}
@@ -1017,9 +1040,21 @@ func render(c *echo.Context) error {
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
-	portsConfig, err := data.LoadPortBindings()
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+	showEditorPortPicker := !auth.IsLoginDisabled(c)
+	portsJSON := "[]"
+	localLANHost := ""
+	if showEditorPortPicker {
+		portsConfig, err := data.LoadPortBindings()
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+		}
+		portsJSON, err = marshalEditorPorts(portsConfig.Items)
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
+		}
+		if portsJSON != "[]" {
+			localLANHost = portscollector.LocalLANHost()
+		}
 	}
 	m := pool.GetTemplateMap()
 	defer pool.PutTemplateMap(m)
@@ -1029,12 +1064,9 @@ func render(c *echo.Context) error {
 	m["DebugAssetVersion"] = getDebugAssetVersion()
 	m["DataCategories"] = template.HTML(dataCategories)
 	m["DataBookmarks"] = template.HTML(dataBookmarks)
-	portsJSON, err := marshalEditorPorts(portsConfig.Items)
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
-	}
 	m["DataPorts"] = template.HTML(portsJSON)
-	m["LocalLANHost"] = portscollector.LocalLANHost()
+	m["LocalLANHost"] = localLANHost
+	m["ShowEditorPortPicker"] = showEditorPortPicker
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
 	m["Locale"] = options.Locale

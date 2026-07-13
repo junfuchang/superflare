@@ -1,12 +1,6 @@
 package data
 
-import (
-	"fmt"
-
-	"gopkg.in/yaml.v2"
-
-	"github.com/junfuchang/superflare/config/model"
-)
+import "fmt"
 
 func EnsureRuntimeDataFiles() error {
 	if err := ensureBookmarksConfigExists("apps", true); err != nil {
@@ -69,9 +63,9 @@ func ensurePortsConfigExists() error {
 	if exists {
 		return nil
 	}
-	out, err := yaml.Marshal(model.Ports{})
+	_, out, err := loadDefaultPortsConfig()
 	if err != nil {
-		return fmt.Errorf("marshal default ports config failed: %w", err)
+		return err
 	}
 	if err := saveFile(filePath, out); err != nil {
 		return fmt.Errorf("init ports config failed: %w", err)

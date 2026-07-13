@@ -46,7 +46,7 @@
         <br />
     {{ end }}
 
-    {{ if .UserIsLogin }}
+    {{ if .CanConfigureLogin }}
     <form method="POST" action="{{ .SettingPages.Others.Path }}">
         <div class="form-group form-about">
             <h2>{{ T .Locale "login_config" }}</h2>

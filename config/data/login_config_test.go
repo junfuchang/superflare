@@ -147,7 +147,7 @@ func TestUpdateLoginConfigRollsBackConfigWhenEnvReplaceFails(t *testing.T) {
 	}
 }
 
-func TestGetLoginConfigReturnsEnvValuesWhenConfigCredentialsEmpty(t *testing.T) {
+func TestGetLoginConfigRepairsConfigWhenCredentialsEmptyEvenIfEnvComplete(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -169,12 +169,12 @@ func TestGetLoginConfigReturnsEnvValuesWhenConfigCredentialsEmpty(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetLoginConfig: %v", err)
 	}
-	if user != "env-user" || pass != "env-pass" {
-		t.Fatalf("expected env credentials, got user=%q pass=%q", user, pass)
+	if user != "admin" || pass != "admin" {
+		t.Fatalf("expected repaired default credentials, got user=%q pass=%q", user, pass)
 	}
 }
 
-func TestGetLoginConfigReturnsEnvValuesWhenAssignmentsUseSpacesQuotesAndExport(t *testing.T) {
+func TestGetLoginConfigRepairsEmptyConfigAndFlexibleEnvAssignments(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -196,8 +196,8 @@ func TestGetLoginConfigReturnsEnvValuesWhenAssignmentsUseSpacesQuotesAndExport(t
 	if err != nil {
 		t.Fatalf("GetLoginConfig: %v", err)
 	}
-	if user != "env-user" || pass != "env pass" {
-		t.Fatalf("expected env credentials from flexible assignments, got user=%q pass=%q", user, pass)
+	if user != "admin" || pass != "admin" {
+		t.Fatalf("expected repaired default credentials, got user=%q pass=%q", user, pass)
 	}
 }
 
@@ -228,7 +228,7 @@ func TestGetLoginConfigReturnsErrorWhenConfigBrokenEvenIfEnvComplete(t *testing.
 	}
 }
 
-func TestGetLoginConfigReturnsErrorWhenConfigCredentialsIncomplete(t *testing.T) {
+func TestGetLoginConfigRepairsConfigCredentialsWhenIncomplete(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -246,16 +246,16 @@ func TestGetLoginConfigReturnsErrorWhenConfigCredentialsIncomplete(t *testing.T)
 		t.Fatalf("write .env: %v", err)
 	}
 
-	_, _, err = GetLoginConfig()
-	if err == nil {
-		t.Fatal("expected GetLoginConfig to fail")
+	user, pass, err := GetLoginConfig()
+	if err != nil {
+		t.Fatalf("GetLoginConfig: %v", err)
 	}
-	if !strings.Contains(err.Error(), "config.yml login credentials are incomplete") {
-		t.Fatalf("unexpected error: %v", err)
+	if user != "admin" || pass != "admin" {
+		t.Fatalf("expected repaired default credentials, got user=%q pass=%q", user, pass)
 	}
 }
 
-func TestGetLoginConfigReturnsErrorWhenEnvCredentialsIncomplete(t *testing.T) {
+func TestGetLoginConfigRepairsEnvCredentialsWhenIncomplete(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -273,12 +273,12 @@ func TestGetLoginConfigReturnsErrorWhenEnvCredentialsIncomplete(t *testing.T) {
 		t.Fatalf("write .env: %v", err)
 	}
 
-	_, _, err = GetLoginConfig()
-	if err == nil {
-		t.Fatal("expected GetLoginConfig to fail")
+	user, pass, err := GetLoginConfig()
+	if err != nil {
+		t.Fatalf("GetLoginConfig: %v", err)
 	}
-	if !strings.Contains(err.Error(), ".env login credentials are incomplete") {
-		t.Fatalf("unexpected error: %v", err)
+	if user != "admin" || pass != "admin" {
+		t.Fatalf("expected repaired default credentials, got user=%q pass=%q", user, pass)
 	}
 }
 

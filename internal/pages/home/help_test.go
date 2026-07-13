@@ -49,6 +49,41 @@ func TestGenerateHelpTemplate_DefaultsToChinese(t *testing.T) {
 	}
 }
 
+func TestGenerateHelpTemplate_AlignsIconText(t *testing.T) {
+	origRuntime, origRuntimeSet := saveHelpRuntimeFlags()
+	defer restoreHelpRuntimeFlags(origRuntime, origRuntimeSet)
+	restoreHelpRuntimeFlags(helpRuntimeSnapshot{}, false)
+
+	html := string(GenerateHelpTemplate("zh"))
+	if !strings.Contains(html, `class="app-text has-icon"`) {
+		t.Fatalf("expected help cards to reserve icon space, got %s", html)
+	}
+	if strings.Contains(html, `<div class="app-text">`) {
+		t.Fatalf("expected help cards to avoid unaligned text containers, got %s", html)
+	}
+}
+
+func TestGenerateHelpTemplate_UsesReadableChineseLabels(t *testing.T) {
+	orig := saveAppFlags()
+	origRuntime, origRuntimeSet := saveHelpRuntimeFlags()
+	defer restoreAppFlags(orig)
+	defer restoreHelpRuntimeFlags(origRuntime, origRuntimeSet)
+	define.AppFlags = model.Flags{EnableGuide: true, EnableEditor: true}
+	helpRuntimeFlags.Store(helpRuntimeSnapshotFromFlags(define.AppFlags))
+
+	html := string(GenerateHelpTemplate("zh"))
+	for _, token := range []string{`title="使用向导"`, `title="在线编辑"`, `title="图标库"`} {
+		if !strings.Contains(html, token) {
+			t.Fatalf("help template should contain readable Chinese label %q in %s", token, html)
+		}
+	}
+	for _, token := range []string{"浣跨敤", "鍦ㄧ嚎", "鍥炬爣"} {
+		if strings.Contains(html, token) {
+			t.Fatalf("help template should not contain mojibake token %q in %s", token, html)
+		}
+	}
+}
+
 func TestGenerateHelpTemplate_UsesEnglishWhenLocaleIsEnglish(t *testing.T) {
 	origRuntime, origRuntimeSet := saveHelpRuntimeFlags()
 	defer restoreHelpRuntimeFlags(origRuntime, origRuntimeSet)

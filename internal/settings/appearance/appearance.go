@@ -201,6 +201,8 @@ func pageAppearance(c *echo.Context) error {
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["ShowSettingsSidebar"] = true
+	m["ShowPortsSettings"] = !auth.IsLoginDisabled(c)
+	m["DisableLoginMode"] = auth.IsLoginDisabled(c)
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo

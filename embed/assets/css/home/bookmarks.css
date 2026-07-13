@@ -107,7 +107,7 @@
   content: "-";
 }
 
-@media (max-width: 767px) {
+@media (max-width: 560px) {
   #container-bookmakrs .bookmark-groups {
     column-count: 2;
     column-gap: 18px;

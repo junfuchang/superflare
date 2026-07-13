@@ -31,6 +31,7 @@ const (
 	appleTouchIconRoutePath   = "/apple-touch-icon.png"
 	androidChrome192RoutePath = "/android-chrome-192x192.png"
 	androidChrome512RoutePath = "/android-chrome-512x512.png"
+	siteIconStateHeader       = "X-SuperFlare-Site-Icon"
 )
 
 type assetsRuntimeSnapshot struct {
@@ -220,12 +221,14 @@ func serveSiteFavicon(c *echo.Context) error {
 		} else {
 			c.Response().Header().Set("Cache-Control", "public, max-age=604800")
 		}
+		c.Response().Header().Set(siteIconStateHeader, "cached")
 		c.Response().Header().Del("ETag")
 		return c.Blob(http.StatusOK, contentType, data)
 	}
 
 	fn.WarmSiteFaviconURL(iconURL)
 	c.Response().Header().Set("Cache-Control", "no-store")
+	c.Response().Header().Set(siteIconStateHeader, "fallback")
 	c.Response().Header().Del("ETag")
 	fallback, fallbackContentType, fallbackErr := readBuiltinBookmarkIcon()
 	if fallbackErr != nil {

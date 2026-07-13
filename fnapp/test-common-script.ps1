@@ -69,6 +69,23 @@ EOF
 upsert_yaml_value "`$yaml_file" LoginPass 'new: pass #1'
 grep -Eq "^LoginPass: 'new: pass #1'`$" "`$yaml_file" || { echo "yaml upsert failed"; cat "`$yaml_file"; exit 1; }
 
+cat >"`$env_file" <<'EOF'
+FLARE_USER=custom-user
+FLARE_PASS=
+EOF
+ensure_login_env_defaults
+grep -Eq '^FLARE_USER=admin`$' "`$env_file" || { echo "env blank password should reset user to admin"; cat "`$env_file"; exit 1; }
+grep -Eq '^FLARE_PASS=admin`$' "`$env_file" || { echo "env blank password should reset pass to admin"; cat "`$env_file"; exit 1; }
+
+cat >"`$yaml_file" <<'EOF'
+LoginUser: 'custom-user'
+LoginPass: ''
+Title: "SuperFlare"
+EOF
+ensure_login_config_defaults
+grep -Eq "^LoginUser: 'admin'`$" "`$yaml_file" || { echo "yaml blank password should reset user to admin"; cat "`$yaml_file"; exit 1; }
+grep -Eq "^LoginPass: 'admin'`$" "`$yaml_file" || { echo "yaml blank password should reset pass to admin"; cat "`$yaml_file"; exit 1; }
+
 lock_result_file="`$TRIM_PKGETC/lock-result"
 write_lock_result() {
     printf 'locked\n' > "`$lock_result_file"

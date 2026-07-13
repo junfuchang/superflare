@@ -319,6 +319,8 @@ func pageTheme(c *echo.Context) error {
 	m["PageName"] = "Theme"
 	m["SettingPages"] = define.SettingPages
 	m["ShowSettingsSidebar"] = true
+	m["ShowPortsSettings"] = !auth.IsLoginDisabled(c)
+	m["DisableLoginMode"] = auth.IsLoginDisabled(c)
 	m["Themes"] = themes
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon

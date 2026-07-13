@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/junfuchang/superflare/config/data"
+	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/logger"
@@ -92,6 +93,15 @@ func ParseEnvFileE(baseFlags model.Flags) (model.Flags, error) {
 	}
 	rawUser := strings.TrimSpace(envs.Section("").Key("FLARE_USER").String())
 	rawPass := strings.TrimSpace(envs.Section("").Key("FLARE_PASS").String())
+	if rawUser == "" || rawPass == "" {
+		if err := data.ResetEnvLoginCredentialsToDefault(envPath); err != nil {
+			return baseFlags, fmt.Errorf("repair .env login config failed: %w", err)
+		}
+		rawUser = define.DEFAULT_LOGIN_USER
+		rawPass = define.DEFAULT_LOGIN_PASS
+		envs.Section("").Key("FLARE_USER").SetValue(rawUser)
+		envs.Section("").Key("FLARE_PASS").SetValue(rawPass)
+	}
 	if err := data.ValidateLoginCredentialPair(rawUser, rawPass, ".env"); err != nil {
 		return baseFlags, fmt.Errorf("parse .env login config failed: %w", err)
 	}

@@ -1,0 +1,4 @@
+ports:
+- port: 3636
+  protocol: tcp
+  remark: superflare

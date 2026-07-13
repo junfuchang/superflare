@@ -299,6 +299,40 @@ func TestRedirLocalReturnsStyledServerErrorWhenSettingsConfigBroken(t *testing.T
 	}
 }
 
+func TestRedirLocalRedirectsToSourceWhenLocalURLCannotShareNetwork(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	originalRequestLooksLocalNetwork := requestLooksLocalNetwork
+	requestLooksLocalNetwork = func(r *http.Request) bool { return true }
+	defer func() { requestLooksLocalNetwork = originalRequestLooksLocalNetwork }()
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "apps.yml"), []byte("links:\n- name: App A\n  link: https://public.example.com/app\n  local_link: http://192.168.10.1/app\n"), 0644); err != nil {
+		t.Fatalf("write apps.yml: %v", err)
+	}
+
+	e := echo.New()
+	RegisterRouting(e)
+
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.0.10:3636/redir/local?go=aHR0cHM6Ly9wdWJsaWMuZXhhbXBsZS5jb20vYXBw&local=aHR0cDovLzE5Mi4xNjguMTAuMS9hcHA%3D", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "https://public.example.com/app" {
+		t.Fatalf("unexpected redirect location: %s", location)
+	}
+}
+
 func TestRedirLocalReturnsStyledServerErrorWhenSettingsConfigBrokenAndTargetInvalid(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {

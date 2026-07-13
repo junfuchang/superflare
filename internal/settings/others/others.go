@@ -24,6 +24,9 @@ func RegisterRouting(e *echo.Echo) {
 }
 
 func updateLoginOptions(c *echo.Context) error {
+	if auth.IsLoginDisabled(c) {
+		return echo.NewHTTPError(http.StatusNotFound, "not found")
+	}
 	var body struct {
 		LoginUser        string `form:"login-user"`
 		LoginPass        string `form:"login-pass"`
@@ -35,6 +38,9 @@ func updateLoginOptions(c *echo.Context) error {
 	user := strings.TrimSpace(body.LoginUser)
 	pass := strings.TrimSpace(body.LoginPass)
 	confirm := strings.TrimSpace(body.LoginPassConfirm)
+	if user == "" {
+		return renderOthers(c, "login_user_required_error")
+	}
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
@@ -42,9 +48,6 @@ func updateLoginOptions(c *echo.Context) error {
 	currentLoginConfig, err := resolveCurrentLoginConfig(c, statuspage.CurrentLocale(c), options)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
-	}
-	if user == "" {
-		user = strings.TrimSpace(currentLoginConfig.User)
 	}
 	if pass == "" && confirm == "" {
 		pass = strings.TrimSpace(currentLoginConfig.Pass)
@@ -106,6 +109,7 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	userName = loginDisplay.UserName
 	loginDate = loginDisplay.LoginDate
 	canManageSettings := disableLoginMode || isLogined
+	canConfigureLogin := isLogined && !disableLoginMode
 	renderWarnings = auth.AppendSessionWarnings(c, locale, renderWarnings)
 	pageStyle, styleWarning, err := statuspage.RequireConfiguredBodyStyleForRender(locale, "settings")
 	if err != nil {
@@ -131,6 +135,8 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	m["PageName"] = "Others"
 	m["SettingPages"] = define.SettingPages
 	m["ShowSettingsSidebar"] = canManageSettings
+	m["ShowPortsSettings"] = !disableLoginMode
+	m["CanConfigureLogin"] = canConfigureLogin
 	if canManageSettings {
 		m["OthersPageMode"] = "settings"
 	} else {
@@ -138,17 +144,23 @@ func renderOthers(c *echo.Context, loginConfigError string) error {
 	}
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
-	currentLoginConfig, err := resolveCurrentLoginConfig(c, locale, options)
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
-	}
-	if loginConfigError == "" && currentLoginConfig.WarningKey != "" {
-		loginConfigError = currentLoginConfig.WarningKey
-	}
-	m["OptionLoginUser"] = currentLoginConfig.User
-	m["DefaultLoginCredentialsActive"] = isLogined && loginCredentialsAreDefault(currentLoginConfig.User, currentLoginConfig.Pass)
+	m["OptionLoginUser"] = ""
+	m["DefaultLoginCredentialsActive"] = false
 	m["LoginConfigError"] = loginConfigError
-	m["LoginConfigErrorDetail"] = currentLoginConfig.WarningDetail
+	m["LoginConfigErrorDetail"] = ""
+	if canConfigureLogin {
+		currentLoginConfig, err := resolveCurrentLoginConfig(c, locale, options)
+		if err != nil {
+			return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+		}
+		if loginConfigError == "" && currentLoginConfig.WarningKey != "" {
+			loginConfigError = currentLoginConfig.WarningKey
+		}
+		m["OptionLoginUser"] = currentLoginConfig.User
+		m["DefaultLoginCredentialsActive"] = loginCredentialsAreDefault(currentLoginConfig.User, currentLoginConfig.Pass)
+		m["LoginConfigError"] = loginConfigError
+		m["LoginConfigErrorDetail"] = currentLoginConfig.WarningDetail
+	}
 	m["Version"] = appver.DisplayVersion()
 	footer.BindTemplateData(m, options.Footer)
 	m["RenderWarnings"] = renderWarnings

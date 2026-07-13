@@ -330,10 +330,8 @@ ensure_login_env_defaults() {
     user="$(read_env_value "${env_file}" "FLARE_USER")"
     pass="$(read_env_value "${env_file}" "FLARE_PASS")"
 
-    if [ -z "${user}" ]; then
+    if [ -z "${user}" ] || [ -z "${pass}" ]; then
         upsert_env_value "${env_file}" "FLARE_USER" "admin"
-    fi
-    if [ -z "${pass}" ]; then
         upsert_env_value "${env_file}" "FLARE_PASS" "admin"
     fi
 }
@@ -345,10 +343,8 @@ ensure_login_config_defaults() {
     user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")"
     pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
 
-    if [ -z "${user}" ]; then
+    if [ -z "${user}" ] || [ -z "${pass}" ]; then
         upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "admin"
-    fi
-    if [ -z "${pass}" ]; then
         upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "admin"
     fi
 }

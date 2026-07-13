@@ -92,12 +92,13 @@ function Copy-DefaultConfigFiles {
     )
 
     Ensure-Directory -Path $DefaultsDir
+    $sourceRoot = Join-Path $RepoRoot "config\defaults"
 
     foreach ($name in @("config.yml", "apps.yml", "bookmarks.yml", "ports.yaml")) {
-        $source = Join-Path $RepoRoot $name
+        $source = Join-Path $sourceRoot $name
         $target = Join-Path $DefaultsDir $name
         if (-not (Test-Path $source -PathType Leaf)) {
-            throw "Required runtime file missing: $source"
+            throw "Required default template missing: $source"
         }
         Copy-Item -Path $source -Destination $target -Force
     }

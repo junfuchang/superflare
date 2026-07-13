@@ -3,7 +3,6 @@ package data
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -12,61 +11,14 @@ import (
 )
 
 func initBookmarks(filePath string, isFavorite bool) (result model.Bookmarks, err error) {
-	const exampleName = "示例链接"
-	const exampleLink = "https://link.example.com"
-	const exampleDesc = "链接描述文本"
-
-	exampleIcons := [28]string{
-		"evernote", "FireHydrant", "email", "MicrosoftOnenote",
-		"Robber", "EvPlugType1", "FileImage", "Image",
-		"checkDecagram", "sofaOutline", "foodCroissant", "musicCircleOutline", "eraser",
-		"BowArrow", "KeyboardOutline", "Incognito", "mastodon", "messageCog",
-		"alphaFCircleOutline", "alphaLCircleOutline", "alphaACircleOutline", "alphaRCircleOutline", "alphaECircleOutline",
-		"accountSupervisorCircle", "flask", "cityVariantOutline", "alphaYCircleOutline", "sproutOutline",
-	}
-
+	defaultName := "bookmarks.yml"
 	if isFavorite {
-		for i := 0; i < 4; i++ {
-			result.Items = append(result.Items, model.Bookmark{
-				Name: exampleName,
-				URL:  exampleLink,
-				Icon: exampleIcons[i],
-				Desc: exampleDesc,
-			})
-		}
-		for i := 0; i < 4; i++ {
-			result.Items = append(result.Items, model.Bookmark{
-				Name: exampleName,
-				URL:  exampleLink,
-				Icon: exampleIcons[i+4],
-			})
-		}
-	} else {
-		const prefix = "cate-id-"
-		for i := 0; i < 4; i++ {
-			result.Categories = append(result.Categories, model.Category{
-				ID:   prefix + strconv.Itoa(i),
-				Name: "链接分类" + strconv.Itoa(i+1),
-			})
-		}
-		for i := 0; i < 20; i++ {
-			result.Items = append(result.Items, model.Bookmark{
-				Name:     exampleName,
-				URL:      exampleLink,
-				Icon:     exampleIcons[8+i],
-				Category: prefix + strconv.Itoa(i%4),
-			})
-		}
+		defaultName = "apps.yml"
 	}
 
-	if err := validateBookmarks(result, isFavorite); err != nil {
-		return result, fmt.Errorf("validate default bookmarks failed: %w", err)
-	}
-
-	out, err := yaml.Marshal(result)
+	result, out, err := loadDefaultBookmarksConfig(defaultName, isFavorite)
 	if err != nil {
-		log.Println("marshal default bookmarks failed")
-		return result, fmt.Errorf("marshal default bookmarks failed: %w", err)
+		return result, err
 	}
 
 	if err := saveFile(filePath, out); err != nil {

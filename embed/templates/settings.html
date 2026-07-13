@@ -41,7 +41,9 @@
       </div>
       {{ end }}
       <div class="main-container clearfix">
+        {{ if .ShowSettingsSidebar }}
         {{ template "settings-sidebar.html" . }}
+        {{ end }}
 
         {{ if eq .PageName "Theme" }}
           {{ template "settings-theme.html" . }}

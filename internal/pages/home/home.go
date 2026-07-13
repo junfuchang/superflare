@@ -92,6 +92,7 @@ const _cspValue = "object-src 'none'; base-uri 'none'; require-trusted-types-for
 const _cspScriptNone = "script-src 'none'; "
 const _inlineClockScript = `(function(){var container=document.getElementById("live-datetime");if(!container){return;}var dateNode=container.querySelector('[data-role="date"]');var dayNode=container.querySelector('[data-role="day"]');var timeNode=container.querySelector('[data-role="time"]');var locale=container.getAttribute("data-locale")||"zh";var browserLocale=locale==="en"?"en-US":"zh-CN";function formatDate(now){if(locale==="en"){return new Intl.DateTimeFormat(browserLocale,{month:"short",day:"2-digit",year:"numeric"}).format(now);}return new Intl.DateTimeFormat(browserLocale,{year:"numeric",month:"long",day:"numeric"}).format(now);}function formatDay(now){return new Intl.DateTimeFormat(browserLocale,{weekday:"long"}).format(now);}function pad(num){return String(num).padStart(2,"0");}function tick(){var now=new Date();if(dateNode){dateNode.textContent=formatDate(now);}if(dayNode){dayNode.textContent=formatDay(now);}if(timeNode){timeNode.textContent=[pad(now.getHours()),pad(now.getMinutes()),pad(now.getSeconds())].join(":");}}tick();window.setInterval(tick,1000);}());`
 const _inlineBackgroundLoaderScript = background.InlineLoaderScript
+const _inlineSiteIconRefreshScript = `(function(){var nodes=Array.prototype.slice.call(document.querySelectorAll("img[data-site-icon-src]"));if(!nodes.length||!window.fetch||!window.URL||!URL.createObjectURL){return;}var left=8;function tick(){nodes.forEach(function(img){var src=img.dataset.siteIconSrc;if(!src||img.dataset.siteIconDone){return;}fetch(src,{cache:"no-store"}).then(function(res){if(!res.ok||res.headers.get("X-SuperFlare-Site-Icon")!=="cached"){return null;}return res.blob();}).then(function(blob){if(!blob){return;}var old=img.dataset.siteIconObjectUrl;if(old){URL.revokeObjectURL(old);}var next=URL.createObjectURL(blob);img.dataset.siteIconObjectUrl=next;img.src=next;img.dataset.siteIconDone="1";}).catch(function(){});});left-=1;if(left>0&&nodes.some(function(img){return !img.dataset.siteIconDone;})){window.setTimeout(tick,1200);}}window.setTimeout(tick,450);window.addEventListener("pagehide",function(){nodes.forEach(function(img){if(img.dataset.siteIconObjectUrl){URL.revokeObjectURL(img.dataset.siteIconObjectUrl);}});},{once:true});}());`
 
 var cryptoRandRead = rand.Read
 
@@ -332,6 +333,7 @@ func appendAdaptiveColumnStyle(b *strings.Builder, maxColumns int) {
 		minColumnWidth    = 180
 		appColumnGap      = 18
 		bookmarkColumnGap = 18
+		bookmarkMasonryAt = 560
 	)
 	b.WriteString(`<style>`)
 	b.WriteString(`@media (min-width:1201px){#page-home.pageview .container{padding-left:clamp(40px,4vw,250px);padding-right:clamp(40px,4vw,250px);}}`)
@@ -346,7 +348,7 @@ func appendAdaptiveColumnStyle(b *strings.Builder, maxColumns int) {
 	if mobileColumns < 1 {
 		mobileColumns = 1
 	}
-	b.WriteString(fmt.Sprintf(`@media (max-width:767px){#container-bookmakrs .bookmark-groups{display:block;column-count:%d;column-gap:%dpx;}#container-bookmakrs .bookmark-group-container{break-inside:avoid;display:inline-block;width:100%%;max-width:none;min-width:0;float:none;margin-bottom:%dpx;vertical-align:top;}}`, mobileColumns, bookmarkColumnGap, bookmarkColumnGap))
+	b.WriteString(fmt.Sprintf(`@media (max-width:%dpx){#container-bookmakrs .bookmark-groups{display:block;column-count:%d;column-gap:%dpx;}#container-bookmakrs .bookmark-group-container{break-inside:avoid;display:inline-block;width:100%%;max-width:none;min-width:0;float:none;margin-bottom:%dpx;vertical-align:top;}}`, bookmarkMasonryAt, mobileColumns, bookmarkColumnGap, bookmarkColumnGap))
 	b.WriteString(`@media (max-width:340px){#container-bookmakrs .bookmark-groups{column-count:1;}}`)
 	b.WriteString(`</style>`)
 }
@@ -402,7 +404,7 @@ func renderHelp(c *echo.Context) error {
 	if styleWarning != "" {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
-	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -455,6 +457,7 @@ func renderHelp(c *echo.Context) error {
 	m["ScriptNonce"] = scriptNonce
 	m["InlineClockScript"] = template.JS(_inlineClockScript)
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	m["InlineSiteIconRefreshScript"] = inlineSiteIconRefreshScript(options)
 	return c.Render(http.StatusOK, "home.html", m)
 }
 
@@ -546,7 +549,7 @@ func pageBookmark(c *echo.Context) error {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, false, true, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled)
+	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -588,6 +591,7 @@ func pageBookmark(c *echo.Context) error {
 	m["HasRenderWarnings"] = len(renderWarnings) > 0
 	m["ScriptNonce"] = scriptNonce
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	m["InlineSiteIconRefreshScript"] = inlineSiteIconRefreshScript(options)
 	return c.Render(http.StatusOK, "home.html", m)
 }
 
@@ -613,7 +617,7 @@ func pageApplication(c *echo.Context) error {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, true, false, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled)
+	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -654,6 +658,7 @@ func pageApplication(c *echo.Context) error {
 	m["HasRenderWarnings"] = len(renderWarnings) > 0
 	m["ScriptNonce"] = scriptNonce
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	m["InlineSiteIconRefreshScript"] = inlineSiteIconRefreshScript(options)
 	return c.Render(http.StatusOK, "home.html", m)
 }
 
@@ -687,7 +692,7 @@ func render(c *echo.Context, filter string) error {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
 	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, options.ShowApps, options.ShowBookmarks, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled)
+	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -750,6 +755,7 @@ func render(c *echo.Context, filter string) error {
 	m["ScriptNonce"] = scriptNonce
 	m["InlineClockScript"] = template.JS(_inlineClockScript)
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
+	m["InlineSiteIconRefreshScript"] = inlineSiteIconRefreshScript(options)
 	return c.Render(http.StatusOK, "home.html", m)
 }
 
@@ -883,4 +889,15 @@ func maybeMakeScriptNonce(enabled bool) (string, error) {
 	} else {
 		return base64.RawStdEncoding.EncodeToString(buf), nil
 	}
+}
+
+func inlineSiteIconRefreshScript(options model.Application) template.JS {
+	if !hasAsyncSiteIconRefresh(options) {
+		return ""
+	}
+	return template.JS(_inlineSiteIconRefreshScript)
+}
+
+func hasAsyncSiteIconRefresh(options model.Application) bool {
+	return strings.ToUpper(strings.TrimSpace(options.IconMode)) == define.IconModeMissingFill
 }

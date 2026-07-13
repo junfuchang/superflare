@@ -24,7 +24,7 @@
   {{ else }}
   <style type="text/css">{{.PageInlineStyle}}</style>
   {{ end }}
-  <meta name="description" content="SuperFlare - self-hosted startpage for your server"/>
+  <meta name="description" content="SuperFlare 是一款面向个人、兼具极致性能与极低资源开销的轻量化自托管导航首页，主打零散书签整理、内网服务快速访问与快捷导航管理。"/>
   {{.CustomHomeStyle}}
   <style>
     #btn-open-settings.toolbar-btn-link,
@@ -264,6 +264,9 @@
   {{ end }}
   {{ if .HasBackgroundAssets }}
   <script nonce="{{.ScriptNonce}}">{{.InlineBackgroundLoaderScript}}</script>
+  {{ end }}
+  {{ if .InlineSiteIconRefreshScript }}
+  <script nonce="{{.ScriptNonce}}">{{.InlineSiteIconRefreshScript}}</script>
   {{ end }}
 </body>
 </html>

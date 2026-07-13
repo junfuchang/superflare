@@ -29,6 +29,13 @@ func RegisterRouting(e *echo.Echo) {
 	e.POST(define.SettingPages.Ports.Path, updatePortRemarks, auth.AuthRequired)
 }
 
+func rejectWhenLoginDisabled(c *echo.Context) error {
+	if auth.IsLoginDisabled(c) {
+		return echo.NewHTTPError(http.StatusNotFound, "not found")
+	}
+	return nil
+}
+
 func portsFailurePayload(message string, err error) map[string]any {
 	payload := map[string]any{
 		"ok":    false,
@@ -54,6 +61,9 @@ func ensureSettingsConfigLoadable(c *echo.Context) error {
 }
 
 func updatePortRemarks(c *echo.Context) error {
+	if err := rejectWhenLoginDisabled(c); err != nil {
+		return err
+	}
 	var body struct {
 		Ports         string `form:"ports"`
 		IncludeHidden string `form:"includeHidden"`
@@ -205,6 +215,9 @@ func portBindingKey(protocol string, port int) string {
 }
 
 func pagePortsData(c *echo.Context) error {
+	if err := rejectWhenLoginDisabled(c); err != nil {
+		return err
+	}
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, portsFailurePayload("settings config error", err))
@@ -227,6 +240,9 @@ func pagePortsData(c *echo.Context) error {
 }
 
 func pagePorts(c *echo.Context) error {
+	if err := rejectWhenLoginDisabled(c); err != nil {
+		return err
+	}
 	options, err := data.GetAllSettingsOptions()
 	if err != nil {
 		statuspage.BindOptionsLoadError(c, err)
@@ -265,6 +281,8 @@ func pagePorts(c *echo.Context) error {
 	m["PageAppearance"] = pageStyle
 	m["SettingPages"] = define.SettingPages
 	m["ShowSettingsSidebar"] = true
+	m["ShowPortsSettings"] = true
+	m["DisableLoginMode"] = false
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["ShowLoginInfo"] = showLoginInfo
 	m["UserIsLogin"] = showLoginInfo

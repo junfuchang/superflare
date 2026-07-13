@@ -1,7 +1,7 @@
 appname=superflare
 version=0.0.1
 display_name=SuperFlare
-desc=SuperFlare 是一个面向个人主页、NAS 和局域网环境的拥有极致性能与极低资源占用的轻量自托管导航首页，支持登录保护、在线编辑、备份恢复、端口发现、主题背景定制、图标自动补全和多语言界面，项目 fork 自 soulteary/docker-flare 并重点增强Windows、 fnOS / NAS 等各场景下的部署和维护体验。
+desc=SuperFlare 是一款面向个人、兼具极致性能与极低资源开销的轻量化自托管导航首页，主打零散书签整理、内网服务快速访问与快捷导航管理。该项目基于 GitHub 开源项目 soulteary/docker-flare 深度二次增强迭代，内置登录防护、在线编辑、数据备份与恢复、端口自动探测、个性化主题自定义、图标自动补全及多语言界面等全套实用能力，可便捷部署在 VPS、局域网等各类环境中。
 platform=x86
 source=thirdparty
 maintainer=soulteary/docker-flare

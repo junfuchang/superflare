@@ -82,6 +82,58 @@ func TestMarshalEditorPortsReturnsErrorWhenJSONMarshalFails(t *testing.T) {
 	}
 }
 
+func TestRenderHidesRemarkedPortsWhenLoginDisabled(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	writeEditorRenderFiles(t, tmpDir)
+
+	origRuntime, runtimeSet := define.SnapshotAppRuntimeFlags()
+	origFlags := define.AppFlags
+	origBaseFlags := define.AppBaseFlags
+	origSourceFlags := define.AppSourceFlags
+	origAuth := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() {
+		if runtimeSet {
+			define.StoreAppRuntimeFlags(origRuntime.Source, origRuntime.Base, origRuntime.Current)
+		} else {
+			define.ResetAppRuntimeFlags()
+		}
+		define.AppFlags = origFlags
+		define.AppBaseFlags = origBaseFlags
+		define.AppSourceFlags = origSourceFlags
+		auth.StoreAuthRuntimeConfig(origAuth)
+	})
+
+	flags := model.Flags{
+		Port:             3636,
+		CookieName:       "superflare",
+		CookieSecret:     "editor-secret",
+		DisableLoginMode: true,
+		User:             "admin",
+		Pass:             "admin",
+	}
+	define.StoreAppRuntimeCurrentFlags(flags)
+
+	e := echo.New()
+	e.Renderer = editorPortsCaptureRenderer{t: t, want: "[]"}
+	auth.RequestHandleWithFlags(e, flags)
+	e.GET("/editor", render)
+
+	req := httptest.NewRequest(http.MethodGet, "/editor", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCheckOneLink_UsesGETInsteadOfHEAD(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
@@ -503,6 +555,31 @@ func TestUpdateDataReturnsStyledErrorPageWhenPayloadInvalid(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "解析书签数据失败") {
 		t.Fatalf("expected bookmark parse detail, got %s", rec.Body.String())
+	}
+}
+
+func TestUpdateDataReturnsJSONWhenPayloadInvalidAndJSONAccepted(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/editor", strings.NewReader("categories=1,Links&bookmarks=broken"))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	req.Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := updateData(c); err != nil {
+		t.Fatalf("updateData: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "status-panel") {
+		t.Fatalf("expected JSON error, got styled page: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "解析书签数据失败") {
+		t.Fatalf("expected bookmark parse detail, got %s", rec.Body.String())
+	}
+	if contentType := rec.Header().Get(echo.HeaderContentType); !strings.Contains(contentType, echo.MIMEApplicationJSON) {
+		t.Fatalf("expected JSON content type, got %q", contentType)
 	}
 }
 
@@ -1124,6 +1201,49 @@ func (r editorNoticeCaptureRenderer) Render(c *echo.Context, w io.Writer, name s
 	return nil
 }
 
+type editorPortsCaptureRenderer struct {
+	t    *testing.T
+	want string
+}
+
+func (r editorPortsCaptureRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		if typed, ok := data.(map[string]interface{}); ok {
+			m = typed
+		} else {
+			r.t.Fatalf("unexpected renderer data type %T", data)
+		}
+	}
+	got := strings.TrimSpace(fmt.Sprint(m["DataPorts"]))
+	if got != r.want {
+		r.t.Fatalf("expected DataPorts %s, got %s", r.want, got)
+	}
+	if got, _ := m["ShowEditorPortPicker"].(bool); got {
+		r.t.Fatal("expected editor port picker to be disabled")
+	}
+	if got, _ := m["LocalLANHost"].(string); got != "" {
+		r.t.Fatalf("expected LocalLANHost to be hidden, got %q", got)
+	}
+	return nil
+}
+
+func writeEditorRenderFiles(t *testing.T, dir string) {
+	t.Helper()
+	files := map[string]string{
+		"config.yml":    "Title: SuperFlare\nLocale: zh\nTheme: blackboard\n",
+		"apps.yml":      "links:\n- name: app\n  link: https://app.example.com\n",
+		"bookmarks.yml": "categories:\n- id: default\n  title: Default\nlinks:\n- name: bookmark\n  category: default\n  link: https://bookmark.example.com\n",
+		"ports.yaml":    "ports:\n- port: 3060\n  protocol: tcp\n  remark: dev\n",
+	}
+	for name, raw := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(raw), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+}
+
 func TestRunLinkChecksWithCheckerBoundsConcurrency(t *testing.T) {
 	items := make([]linkCheckItem, 0, 24)
 	for i := 0; i < 24; i++ {
@@ -1399,7 +1519,7 @@ func TestRefreshRuntimeLoginConfigReturnsErrorWhenConfigBrokenEvenIfEnvComplete(
 	}
 }
 
-func TestWriteRestoreFilesAtomicallyFallsBackToSourceLoginFlagsWhenBackupClearsConfigAccount(t *testing.T) {
+func TestWriteRestoreFilesAtomicallyRepairsDefaultLoginWhenBackupClearsConfigAccount(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -1444,18 +1564,26 @@ func TestWriteRestoreFilesAtomicallyFallsBackToSourceLoginFlagsWhenBackupClearsC
 	}
 
 	snapshot := auth.SnapshotLoginRuntimeConfigForSessionName(auth.RequestHandleSessionName(define.AppFlags.CookieName, define.AppFlags.Port))
-	if snapshot.User != "source-user" || snapshot.Pass != "source-pass" {
-		t.Fatalf("expected runtime login snapshot to fall back to source flags, got user=%q pass=%q", snapshot.User, snapshot.Pass)
+	if snapshot.User != define.DEFAULT_LOGIN_USER || snapshot.Pass != define.DEFAULT_LOGIN_PASS {
+		t.Fatalf("expected runtime login snapshot to use repaired defaults, got user=%q pass=%q", snapshot.User, snapshot.Pass)
 	}
 	if define.AppFlags.User != "old-user" || define.AppFlags.Pass != "old-pass" {
-		t.Fatalf("expected global app flags unchanged after fallback refresh, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
+		t.Fatalf("expected global app flags unchanged after default repair, got user=%q pass=%q", define.AppFlags.User, define.AppFlags.Pass)
 	}
 	if define.AppBaseFlags.User != "old-user" || define.AppBaseFlags.Pass != "old-pass" {
-		t.Fatalf("expected global base flags unchanged after fallback refresh, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+		t.Fatalf("expected global base flags unchanged after default repair, got user=%q pass=%q", define.AppBaseFlags.User, define.AppBaseFlags.Pass)
+	}
+	configRaw, err := os.ReadFile(filepath.Join(tmpDir, "config.yml"))
+	if err != nil {
+		t.Fatalf("read repaired config.yml: %v", err)
+	}
+	configText := string(configRaw)
+	if !strings.Contains(configText, "LoginUser: "+define.DEFAULT_LOGIN_USER) || !strings.Contains(configText, "LoginPass: "+define.DEFAULT_LOGIN_PASS) {
+		t.Fatalf("expected restored config credentials to be repaired to defaults, got %s", configText)
 	}
 }
 
-func TestWriteRestoreFilesAtomicallyUsesStoredRuntimeSourceFlagsInsteadOfGlobalFlags(t *testing.T) {
+func TestWriteRestoreFilesAtomicallyRepairsDefaultLoginWithStoredRuntimeSession(t *testing.T) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -1529,8 +1657,8 @@ func TestWriteRestoreFilesAtomicallyUsesStoredRuntimeSourceFlagsInsteadOfGlobalF
 	}
 
 	snapshot := auth.SnapshotLoginRuntimeConfigForSessionName(auth.RequestHandleSessionName("runtime-cookie", 3636))
-	if snapshot.User != "runtime-source-user" || snapshot.Pass != "runtime-source-pass" {
-		t.Fatalf("expected stored runtime source flags to provide fallback login, got user=%q pass=%q", snapshot.User, snapshot.Pass)
+	if snapshot.User != define.DEFAULT_LOGIN_USER || snapshot.Pass != define.DEFAULT_LOGIN_PASS {
+		t.Fatalf("expected stored runtime session to receive repaired defaults, got user=%q pass=%q", snapshot.User, snapshot.Pass)
 	}
 }
 
