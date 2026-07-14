@@ -548,6 +548,66 @@ func TestFetchPublicSiteFaviconDiscoversHTMLDeclaredIconWhenRootIcoFails(t *test
 	}
 }
 
+func TestFetchPublicSiteFaviconDiscoversIconBeforeLargeHTMLBodyLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	largeHTML := `<!doctype html><html><head><link rel="icon" href="/assets/favicon.svg"></head><body>` +
+		strings.Repeat("x", siteIconHTMLBytes+1024) + `</body></html>`
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/favicon.ico":
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"text/plain"}},
+					Body:       io.NopCloser(strings.NewReader("not found")),
+					Request:    req,
+				}, nil
+			case "/":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+					Body:       io.NopCloser(strings.NewReader(largeHTML)),
+					Request:    req,
+				}, nil
+			case "/assets/favicon.svg":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+					Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"><title>large-page-icon</title></svg>`)),
+					Request:    req,
+				}, nil
+			default:
+				t.Fatalf("unexpected favicon request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+
+	data, contentType, err := FetchPublicSiteFavicon("https://example.com/favicon.ico")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon should discover an icon before the HTML limit: %v", err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Fatalf("discovered favicon content type = %q", contentType)
+	}
+	if !strings.Contains(string(data), "large-page-icon") {
+		t.Fatalf("unexpected discovered favicon body: %q", string(data))
+	}
+}
+
 func TestWarmSiteFaviconURLLimitsGlobalConcurrentFetches(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()

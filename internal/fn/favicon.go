@@ -342,23 +342,11 @@ func discoverSiteFaviconFromHTML(rootIconURL string) (string, error) {
 		return "", fmt.Errorf("unexpected page status: %d", resp.StatusCode)
 	}
 
-	reader := io.LimitReader(resp.Body, siteIconHTMLBytes+1)
-	data, err := io.ReadAll(reader)
+	hrefs, err := collectFaviconHrefs(io.LimitReader(resp.Body, siteIconHTMLBytes))
 	if err != nil {
 		return "", err
 	}
-	if len(data) == 0 {
-		return "", fmt.Errorf("empty page response")
-	}
-	if len(data) > siteIconHTMLBytes {
-		return "", fmt.Errorf("page response too large")
-	}
-
-	doc, err := xhtml.Parse(bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-	for _, href := range collectFaviconHrefs(doc) {
+	for _, href := range hrefs {
 		ref, err := url.Parse(strings.TrimSpace(href))
 		if err != nil || ref == nil {
 			continue
@@ -371,33 +359,37 @@ func discoverSiteFaviconFromHTML(rootIconURL string) (string, error) {
 	return "", fmt.Errorf("no html favicon found")
 }
 
-func collectFaviconHrefs(node *xhtml.Node) []string {
-	if node == nil {
-		return nil
-	}
+func collectFaviconHrefs(reader io.Reader) ([]string, error) {
+	tokenizer := xhtml.NewTokenizer(reader)
 	var out []string
-	var walk func(*xhtml.Node)
-	walk = func(n *xhtml.Node) {
-		if n == nil {
-			return
-		}
-		if n.Type == xhtml.ElementNode && strings.EqualFold(n.Data, "link") {
-			if href, ok := faviconHrefFromLinkNode(n); ok {
+	for {
+		switch tokenizer.Next() {
+		case xhtml.ErrorToken:
+			err := tokenizer.Err()
+			if err != nil && !errors.Is(err, io.EOF) {
+				return nil, err
+			}
+			return out, nil
+		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
+			token := tokenizer.Token()
+			if !strings.EqualFold(token.Data, "link") {
+				continue
+			}
+			if href, ok := faviconHrefFromAttributes(token.Attr); ok {
 				out = append(out, href)
 			}
-		}
-		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
+		case xhtml.EndTagToken:
+			if strings.EqualFold(tokenizer.Token().Data, "head") {
+				return out, nil
+			}
 		}
 	}
-	walk(node)
-	return out
 }
 
-func faviconHrefFromLinkNode(node *xhtml.Node) (string, bool) {
+func faviconHrefFromAttributes(attributes []xhtml.Attribute) (string, bool) {
 	var rel string
 	var href string
-	for _, attr := range node.Attr {
+	for _, attr := range attributes {
 		switch strings.ToLower(strings.TrimSpace(attr.Key)) {
 		case "rel":
 			rel = attr.Val
