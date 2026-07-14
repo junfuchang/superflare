@@ -19,48 +19,6 @@ const editorFixedCategory = "[SuperFlare \u5e94\u7528]"
 
 var editorDataRenamePath = os.Rename
 
-// TODO Removed after private link feature support
-type _BOOKMARK_REMOVE_PRIVATE struct {
-	Name     string `yaml:"name"`
-	URL      string `yaml:"link"`
-	LocalURL string `yaml:"local_link,omitempty"`
-	Icon     string `yaml:"icon,omitempty"`
-	Desc     string `yaml:"desc,omitempty"`
-	Category string `yaml:"category,omitempty"`
-	Subdir   string `yaml:"subdir,omitempty"`
-}
-
-func removePrivateProp(input []model.Bookmark) (result []_BOOKMARK_REMOVE_PRIVATE) {
-	for _, src := range input {
-		var dest _BOOKMARK_REMOVE_PRIVATE
-		dest.Name = src.Name
-		dest.URL = src.URL
-		dest.LocalURL = src.LocalURL
-		dest.Icon = src.Icon
-		dest.Desc = src.Desc
-		dest.Category = src.Category
-		dest.Subdir = src.Subdir
-		result = append(result, dest)
-	}
-	return result
-}
-
-func restorePrivateProp(input []_BOOKMARK_REMOVE_PRIVATE) (result []model.Bookmark) {
-	for _, src := range input {
-		var dest model.Bookmark
-		dest.Name = src.Name
-		dest.URL = src.URL
-		dest.LocalURL = src.LocalURL
-		dest.Icon = src.Icon
-		dest.Desc = src.Desc
-		dest.Category = src.Category
-		dest.Subdir = src.Subdir
-		dest.Private = false
-		result = append(result, dest)
-	}
-	return result
-}
-
 func GetBookmarksForEditor() (categories string, bookmarks string, err error) {
 	favoriteBookmarks, err := LoadFavoriteBookmarks()
 	if err != nil {
@@ -82,7 +40,7 @@ func GetBookmarksForEditor() (categories string, bookmarks string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("marshal editor categories failed: %w", err)
 	}
-	bookmarks, err = jsonStringify(removePrivateProp(mixedBookmarks))
+	bookmarks, err = jsonStringify(mixedBookmarks)
 	if err != nil {
 		return "", "", fmt.Errorf("marshal editor bookmarks failed: %w", err)
 	}
@@ -171,6 +129,7 @@ func getBookmarksFromCSV(input string, categories []model.Category) (favoriteBoo
 
 		if bookmark.Category == editorFixedCategory || bookmark.Category == "" {
 			bookmark.Category = ""
+			bookmark.Favorite = false
 			favoriteBookmarks = append(favoriteBookmarks, bookmark)
 			continue
 		}
@@ -216,8 +175,20 @@ func isBlankCSVRecord(record []string) bool {
 	return true
 }
 
+func parseEditorBool(value string, row int, field string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	default:
+		return false, fmt.Errorf("bookmark row %d has invalid %s value %q", row, field, value)
+	}
+}
+
 func parseBookmarkCSVRecord(record []string, row int) (model.Bookmark, error) {
 	bookmark := model.Bookmark{}
+	var err error
 	switch len(record) {
 	case 6:
 		bookmark.Name = csvRecordValue(record, 1)
@@ -240,6 +211,22 @@ func parseBookmarkCSVRecord(record []string, row int) (model.Bookmark, error) {
 		bookmark.Subdir = csvRecordValue(record, 5)
 		bookmark.Icon = csvRecordValue(record, 6)
 		bookmark.Desc = csvRecordValue(record, 7)
+	case 10:
+		bookmark.Name = csvRecordValue(record, 1)
+		bookmark.URL = csvRecordValue(record, 2)
+		bookmark.LocalURL = csvRecordValue(record, 3)
+		bookmark.Category = csvRecordValue(record, 4)
+		bookmark.Subdir = csvRecordValue(record, 5)
+		bookmark.Icon = csvRecordValue(record, 6)
+		bookmark.Desc = csvRecordValue(record, 7)
+		bookmark.Private, err = parseEditorBool(csvRecordValue(record, 8), row, "Private")
+		if err != nil {
+			return bookmark, err
+		}
+		bookmark.Favorite, err = parseEditorBool(csvRecordValue(record, 9), row, "Favorite")
+		if err != nil {
+			return bookmark, err
+		}
 	default:
 		return bookmark, fmt.Errorf("bookmark row %d has unsupported field count: %d", row, len(record))
 	}

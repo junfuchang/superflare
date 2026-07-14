@@ -125,6 +125,103 @@ func TestGetBookmarksFromCSVParsesLocalURL(t *testing.T) {
 	}
 }
 
+func TestGetBookmarksFromCSVParsesVisibilityAndFavorite(t *testing.T) {
+	const categories = "1,Links"
+	const tenFieldRows = "1,App,https://app.example.com,,[SuperFlare 应用],,home,App,true,true\n" +
+		"2,Bookmark,https://bookmark.example.com,,Links,,link,Bookmark,true,true"
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatalf("getCategoriesFromCSV: %v", err)
+	}
+	applications, normal, err := getBookmarksFromCSV(tenFieldRows, bookmarkCategories)
+	if err != nil {
+		t.Fatalf("getBookmarksFromCSV: %v", err)
+	}
+	if len(applications) != 1 {
+		t.Fatalf("expected one application, got %#v", applications)
+	}
+	if !applications[0].Private || applications[0].Favorite {
+		t.Fatalf("application flags = Private:%t Favorite:%t, want Private:true Favorite:false", applications[0].Private, applications[0].Favorite)
+	}
+	if len(normal) != 1 {
+		t.Fatalf("expected one normal bookmark, got %#v", normal)
+	}
+	if !normal[0].Private || !normal[0].Favorite {
+		t.Fatalf("normal bookmark flags = Private:%t Favorite:%t, want Private:true Favorite:true", normal[0].Private, normal[0].Favorite)
+	}
+}
+
+func TestGetBookmarksFromCSVRejectsInvalidBoolean(t *testing.T) {
+	const categories = "1,Links"
+	tests := []struct {
+		name   string
+		row    string
+		field  string
+		rowNum string
+	}{
+		{
+			name:   "private",
+			row:    "1,Bookmark,https://bookmark.example.com,,Links,,link,Bookmark,yes,false",
+			field:  "Private",
+			rowNum: "row 1",
+		},
+		{
+			name:   "favorite",
+			row:    "1,First,https://first.example.com,,Links,,link,First\n2,Bookmark,https://bookmark.example.com,,Links,,link,Bookmark,false,yes",
+			field:  "Favorite",
+			rowNum: "row 2",
+		},
+	}
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatalf("getCategoriesFromCSV: %v", err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := getBookmarksFromCSV(tt.row, bookmarkCategories)
+			if err == nil {
+				t.Fatalf("expected invalid %s value to fail", tt.field)
+			}
+			if !strings.Contains(err.Error(), tt.rowNum) || !strings.Contains(err.Error(), tt.field) {
+				t.Fatalf("error %q should contain %q and %q", err, tt.rowNum, tt.field)
+			}
+		})
+	}
+}
+
+func TestGetBookmarksFromCSVLegacyRowsDefaultFlags(t *testing.T) {
+	const categories = "1,Links"
+	tests := []struct {
+		name string
+		row  string
+	}{
+		{name: "six fields", row: "1,Six,https://six.example.com,Links,link,Six"},
+		{name: "seven fields", row: "1,Seven,https://seven.example.com,Links,Lab,link,Seven"},
+		{name: "eight fields", row: "1,Eight,https://eight.example.com,https://local.example.com,Links,Lab,link,Eight"},
+	}
+
+	bookmarkCategories, err := getCategoriesFromCSV(categories)
+	if err != nil {
+		t.Fatalf("getCategoriesFromCSV: %v", err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applications, normal, err := getBookmarksFromCSV(tt.row, bookmarkCategories)
+			if err != nil {
+				t.Fatalf("getBookmarksFromCSV: %v", err)
+			}
+			if len(applications) != 0 || len(normal) != 1 {
+				t.Fatalf("unexpected parsed rows: applications=%#v normal=%#v", applications, normal)
+			}
+			if normal[0].Private || normal[0].Favorite {
+				t.Fatalf("legacy flags = Private:%t Favorite:%t, want both false", normal[0].Private, normal[0].Favorite)
+			}
+		})
+	}
+}
+
 func TestGetBookmarksFromCSVRejectsUnknownCategoryName(t *testing.T) {
 	const categories = "1,Links"
 	const bookmarks = "1,Broken,https://broken.example.com,,MissingCategory,,link,Broken link"
@@ -172,17 +269,41 @@ func TestGetCategoriesFromCSVRejectsReservedFixedCategoryName(t *testing.T) {
 	}
 }
 
-func TestPropsRemoveAndRestore(t *testing.T) {
-	var input []model.Bookmark
-	input = append(input, model.Bookmark{Private: true, LocalURL: "http://192.168.1.10"})
+func TestGetBookmarksForEditorPreservesFlags(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
 
-	removed := restorePrivateProp(removePrivateProp(input))
-	for i := 0; i < len(removed); i++ {
-		if removed[i].Private != false {
-			t.Fatal("Remove and restore private prop Failed")
-		}
-		if removed[i].LocalURL != input[i].LocalURL {
-			t.Fatal("Remove and restore local URL Failed")
+	if err := os.WriteFile(filepath.Join(tmpDir, "apps.yml"), []byte("links: []\n"), 0644); err != nil {
+		t.Fatalf("write apps.yml: %v", err)
+	}
+	const bookmarksYAML = `categories:
+- id: links
+  title: Links
+links:
+- name: Private favorite
+  link: https://bookmark.example.com
+  category: links
+  private: true
+  favorite: true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "bookmarks.yml"), []byte(bookmarksYAML), 0644); err != nil {
+		t.Fatalf("write bookmarks.yml: %v", err)
+	}
+
+	_, bookmarks, err := GetBookmarksForEditor()
+	if err != nil {
+		t.Fatalf("GetBookmarksForEditor: %v", err)
+	}
+	for _, expected := range []string{`"Private":true`, `"Favorite":true`} {
+		if !strings.Contains(bookmarks, expected) {
+			t.Fatalf("editor bookmarks JSON %q does not contain %q", bookmarks, expected)
 		}
 	}
 }
