@@ -84,6 +84,28 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 	}
 }
 
+func TestEditorTemplateSupportsPrivateAndNormalBookmarkFavorites(t *testing.T) {
+	raw, err := TPL.ReadFile("html/editor.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+	for _, expected := range []string{
+		`{ data: 'Private', type: 'checkbox'`,
+		`{ data: 'Favorite', type: 'checkbox'`,
+		`item.Private ? 'true' : 'false'`,
+		`item.Favorite && item.Category !== FLARE_FIX_CATEGORY[0] ? 'true' : 'false'`,
+		`prop === 'Favorite'`,
+		`this.instance.getSourceDataAtRow(row)`,
+		`FLARE_FIX_CATEGORY[0]`,
+		`setDataAtRowProp(row, 'Favorite', false`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor template missing %q", expected)
+		}
+	}
+}
+
 func TestEditorTemplateAppliesLinkCheckResultsInBatch(t *testing.T) {
 	raw, err := TPL.ReadFile("html/editor.html")
 	if err != nil {

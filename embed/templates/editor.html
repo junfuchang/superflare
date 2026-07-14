@@ -993,6 +993,8 @@
                 item.Category = categoriesMap[item.Category]
             }
             item.LocalURL = item.LocalURL || '';
+            item.Private = item.Private === true;
+            item.Favorite = item.Category === FLARE_FIX_CATEGORY[0] ? false : item.Favorite === true;
             item.CheckResult = '';
             return item;
         }).sort((a, b) => (a.Category + "").localeCompare(b.Category + ""));
@@ -1103,7 +1105,7 @@
         let instanceBookmarks = new Handsontable(container, {
             language: tableLocale,
             data: Array.from(bookmarks),
-            colHeaders: ['\u4e66\u7b7e\u540d\u79f0', '\u4e66\u7b7e\u5730\u5740', '\u5185\u7f51\u5730\u5740', '\u7c7b\u578b', '\u5b50\u76ee\u5f55', '\u56fe\u6807', '\u63cf\u8ff0', '\u68c0\u67e5\u7ed3\u679c'],
+            colHeaders: ['\u4e66\u7b7e\u540d\u79f0', '\u4e66\u7b7e\u5730\u5740', '\u5185\u7f51\u5730\u5740', '\u7c7b\u578b', '\u5b50\u76ee\u5f55', '\u56fe\u6807', '\u63cf\u8ff0', '\u672a\u767b\u5f55\u9690\u85cf', '\u6536\u85cf', '\u68c0\u67e5\u7ed3\u679c'],
             rowHeaders: true,
             manualRowMove: true,
             contextMenu: ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"],
@@ -1112,6 +1114,14 @@
             stretchH: 'all',
             renderAllRows: false,
             manualColumnResize: true,
+            cells: function (row, col, prop) {
+                const cellProperties = {};
+                if (prop === 'Favorite') {
+                    const sourceRow = this.instance.getSourceDataAtRow(row);
+                    cellProperties.readOnly = !!sourceRow && sourceRow.Category === FLARE_FIX_CATEGORY[0];
+                }
+                return cellProperties;
+            },
             afterCreateRow: function () {
                 clearEditorValidationState(false);
                 scheduleTableLayoutSync();
@@ -1287,7 +1297,9 @@
                     item.Category,
                     item.Subdir,
                     item.Icon,
-                    item.Desc
+                    item.Desc,
+                    item.Private ? 'true' : 'false',
+                    item.Favorite && item.Category !== FLARE_FIX_CATEGORY[0] ? 'true' : 'false'
                 ].map(csvEscape).join(',');
             }).join('\r\n');
         }
@@ -1728,6 +1740,8 @@
                 { data: 'Subdir', renderer: textSearchRenderer },
                 { data: 'Icon', renderer: textSearchRenderer },
                 { data: 'Desc', renderer: textSearchRenderer },
+                { data: 'Private', type: 'checkbox' },
+                { data: 'Favorite', type: 'checkbox' },
                 { data: 'CheckResult', readOnly: true, renderer: linkCheckRenderer }
             ]
         }
@@ -1742,6 +1756,8 @@
                     Subdir: '',
                     Icon: '',
                     Desc: '',
+                    Private: false,
+                    Favorite: false,
                     CheckResult: '',
                     CheckStatus: ''
                 };
@@ -1754,6 +1770,8 @@
                 Subdir: table.getDataAtRowProp(rowIndex, 'Subdir') || '',
                 Icon: table.getDataAtRowProp(rowIndex, 'Icon') || '',
                 Desc: table.getDataAtRowProp(rowIndex, 'Desc') || '',
+                Private: table.getDataAtRowProp(rowIndex, 'Private') === true,
+                Favorite: table.getDataAtRowProp(rowIndex, 'Favorite') === true,
                 CheckResult: table.getDataAtRowProp(rowIndex, 'CheckResult') || '',
                 CheckStatus: table.getDataAtRowProp(rowIndex, 'CheckStatus') || ''
             };
@@ -2101,6 +2119,9 @@
                 touchedRows[row] = true;
                 if (prop === 'LocalURL' && localPortValueMap[newValue]) {
                     instanceBookmarks.setDataAtRowProp(row, 'LocalURL', localPortValueMap[newValue], 'local-port-select');
+                }
+                if (prop === 'Category' && newValue === FLARE_FIX_CATEGORY[0]) {
+                    instanceBookmarks.setDataAtRowProp(row, 'Favorite', false, 'application-favorite-clear');
                 }
             });
             Object.keys(touchedRows).forEach(function (rowKey) {
