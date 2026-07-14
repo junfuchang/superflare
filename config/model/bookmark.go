@@ -8,6 +8,7 @@ type Bookmark struct {
 	Icon     string `yaml:"icon,omitempty"`
 	Desc     string `yaml:"desc,omitempty"`
 	Private  bool   `yaml:"private,omitempty"`
+	Favorite bool   `yaml:"favorite,omitempty"`
 	Category string `yaml:"category,omitempty"`
 	Subdir   string `yaml:"subdir,omitempty"`
 }

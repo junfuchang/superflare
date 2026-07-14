@@ -51,7 +51,7 @@ func saveAppConfigToYamlFileWith(name string, result model.Application, save fun
 }
 
 func loadAppConfigFromYaml(name string) (model.Application, error) {
-	var result model.Application
+	result := model.Application{ShowFavorites: true}
 	filePath, err := configPath(name)
 	if err != nil {
 		return result, err
@@ -76,7 +76,7 @@ func loadAppConfigFromYaml(name string) (model.Application, error) {
 }
 
 func LoadAppConfigFromRaw(raw []byte) (model.Application, error) {
-	var result model.Application
+	result := model.Application{ShowFavorites: true}
 	if err := yaml.Unmarshal(raw, &result); err != nil {
 		return result, fmt.Errorf("parse config raw failed: %w", err)
 	}

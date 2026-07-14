@@ -12,6 +12,7 @@ SearchEngine: bing
 SearchEngineOpenMode: new-tab
 ShowDateTime: true
 ShowApps: true
+ShowFavorites: true
 ShowBookmarks: true
 HideSettingButton: false
 HideHelpButton: true

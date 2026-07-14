@@ -47,8 +47,21 @@ func TestLoadAppConfigFromYamlDefaultValues(t *testing.T) {
 	assert.Equal(t, "zh", data.Locale, "default Locale")
 	assert.Equal(t, "bing", data.SearchEngine, "default search engine")
 	assert.Equal(t, "new-tab", data.SearchEngineOpenMode, "default search engine open mode")
+	assert.True(t, data.ShowFavorites, "default show favorites")
 	assert.Equal(t, 5, data.HomeMaxColumns, "default home max columns")
 	assert.Equal(t, 1600, data.HomeMaxWidth, "default home max width")
+}
+
+func TestLoadAppConfigFromRawDefaultsMissingShowFavoritesToTrue(t *testing.T) {
+	options, err := LoadAppConfigFromRaw([]byte("Title: SuperFlare\nLocale: zh\nTheme: onedark\n"))
+	require.NoError(t, err)
+	assert.True(t, options.ShowFavorites)
+}
+
+func TestLoadAppConfigFromRawPreservesExplicitShowFavoritesFalse(t *testing.T) {
+	options, err := LoadAppConfigFromRaw([]byte("Title: SuperFlare\nLocale: zh\nTheme: onedark\nShowFavorites: false\n"))
+	require.NoError(t, err)
+	assert.False(t, options.ShowFavorites)
 }
 
 func TestLoadAppConfigFromYamlInvalidYAML(t *testing.T) {
