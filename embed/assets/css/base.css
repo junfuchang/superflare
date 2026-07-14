@@ -145,7 +145,7 @@ h2 a {
 }
 
 #container-apps,
-#container-bookmakrs {
+.bookmark-module {
   margin: 2rem 0;
 }
 

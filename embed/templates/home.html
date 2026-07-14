@@ -184,8 +184,15 @@
       </div>
       {{ end }}
 
+      {{ if .OptionShowFavorites }}
+      <div class="plugin-container clearfix bookmark-module" id="container-favorites">
+        <h2>{{.FavoritesTitle}}</h2>
+        {{.Favorites}}
+      </div>
+      {{ end }}
+
       {{ if .OptionShowBookmarks }}
-      <div class="plugin-container clearfix" id="container-bookmakrs">
+      <div class="plugin-container clearfix bookmark-module" id="container-bookmakrs">
         <h2><a href="{{.BookmarksURI}}">{{.BookmarksTitle}}</a></h2>
         {{.Bookmarks}}
       </div>
@@ -267,6 +274,9 @@
   {{ end }}
   {{ if .InlineSiteIconRefreshScript }}
   <script nonce="{{.ScriptNonce}}">{{.InlineSiteIconRefreshScript}}</script>
+  {{ end }}
+  {{ if .InlineBookmarkTooltipScript }}
+  <script nonce="{{.ScriptNonce}}">{{.InlineBookmarkTooltipScript}}</script>
   {{ end }}
 </body>
 </html>

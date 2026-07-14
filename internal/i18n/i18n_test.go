@@ -28,3 +28,15 @@ func TestDateFormatDefaultsToChinese(t *testing.T) {
 		t.Fatalf("DateFormat unknown locale = %q", got)
 	}
 }
+
+func TestFavoritesModuleTranslationsAreNonEmpty(t *testing.T) {
+	translations := map[string]string{
+		"zh": "收藏",
+		"en": "Favorites",
+	}
+	for locale, want := range translations {
+		if got := T(locale, "favorites"); got != want {
+			t.Fatalf("T(%q, favorites) = %q, want %q", locale, got, want)
+		}
+	}
+}

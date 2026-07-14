@@ -93,6 +93,7 @@ const _cspScriptNone = "script-src 'none'; "
 const _inlineClockScript = `(function(){var container=document.getElementById("live-datetime");if(!container){return;}var dateNode=container.querySelector('[data-role="date"]');var dayNode=container.querySelector('[data-role="day"]');var timeNode=container.querySelector('[data-role="time"]');var locale=container.getAttribute("data-locale")||"zh";var browserLocale=locale==="en"?"en-US":"zh-CN";function formatDate(now){if(locale==="en"){return new Intl.DateTimeFormat(browserLocale,{month:"short",day:"2-digit",year:"numeric"}).format(now);}return new Intl.DateTimeFormat(browserLocale,{year:"numeric",month:"long",day:"numeric"}).format(now);}function formatDay(now){return new Intl.DateTimeFormat(browserLocale,{weekday:"long"}).format(now);}function pad(num){return String(num).padStart(2,"0");}function tick(){var now=new Date();if(dateNode){dateNode.textContent=formatDate(now);}if(dayNode){dayNode.textContent=formatDay(now);}if(timeNode){timeNode.textContent=[pad(now.getHours()),pad(now.getMinutes()),pad(now.getSeconds())].join(":");}}tick();window.setInterval(tick,1000);}());`
 const _inlineBackgroundLoaderScript = background.InlineLoaderScript
 const _inlineSiteIconRefreshScript = `(function(){var nodes=Array.prototype.slice.call(document.querySelectorAll("img[data-site-icon-src]"));if(!nodes.length||!window.fetch||!window.URL||!URL.createObjectURL){return;}var groups=new Map();nodes.forEach(function(img){var src=img.dataset.siteIconSrc;if(!src){return;}var group=groups.get(src);if(group){group.push(img);}else{groups.set(src,[img]);}});var objectUrls=[];groups.forEach(function(group,src){fetch(src).then(function(res){if(!res.ok||res.headers.get("X-SuperFlare-Site-Icon")!=="cached"){return null;}return res.blob();}).then(function(blob){if(!blob){return;}var objectUrl=URL.createObjectURL(blob);objectUrls.push(objectUrl);group.forEach(function(img){img.src=objectUrl;img.dataset.siteIconDone="1";});}).catch(function(){});});window.addEventListener("pagehide",function(){objectUrls.forEach(function(objectUrl){URL.revokeObjectURL(objectUrl);});},{once:true});}());`
+const _inlineBookmarkTooltipScript = `(function(){var selector="[data-bookmark-description]";var tooltipId="bookmark-description-tooltip";var tooltip=document.getElementById(tooltipId);if(!tooltip){tooltip=document.createElement("div");tooltip.id=tooltipId;tooltip.className="bookmark-description-tooltip";tooltip.setAttribute("role","tooltip");tooltip.hidden=true;document.body.appendChild(tooltip);}var timer=null;var pendingTarget=null;var activeTarget=null;var originalAriaDescribedBy=null;function cancelTimer(){if(timer!==null){window.clearTimeout(timer);timer=null;}}function restoreDescription(){if(!activeTarget){return;}if(originalAriaDescribedBy===null){activeTarget.removeAttribute("aria-describedby");}else{activeTarget.setAttribute("aria-describedby",originalAriaDescribedBy);}activeTarget=null;originalAriaDescribedBy=null;}function hide(){cancelTimer();pendingTarget=null;restoreDescription();tooltip.hidden=true;tooltip.textContent="";}function position(target){var gap=8;var targetRect=target.getBoundingClientRect();var tooltipRect=tooltip.getBoundingClientRect();var left=targetRect.left+(targetRect.width-tooltipRect.width)/2;var top=targetRect.bottom+gap;if(top+tooltipRect.height>window.innerHeight-gap){top=targetRect.top-tooltipRect.height-gap;}left=Math.max(gap,Math.min(left,window.innerWidth-tooltipRect.width-gap));top=Math.max(gap,Math.min(top,window.innerHeight-tooltipRect.height-gap));tooltip.style.left=Math.round(left)+"px";tooltip.style.top=Math.round(top)+"px";}function show(target){var description=target.getAttribute("data-bookmark-description");if(!description||!description.trim()){hide();return;}hide();activeTarget=target;originalAriaDescribedBy=target.getAttribute("aria-describedby");var describedBy=originalAriaDescribedBy?originalAriaDescribedBy.trim().split(/\s+/):[];if(describedBy.indexOf(tooltipId)===-1){describedBy.push(tooltipId);}target.setAttribute("aria-describedby",describedBy.join(" "));tooltip.textContent=description;tooltip.hidden=false;position(target);}function findTarget(event){var origin=event.target;if(!origin||!origin.closest){return null;}return origin.closest(selector);}function movedWithin(target,relatedTarget){return relatedTarget&&target.contains(relatedTarget);}document.addEventListener("pointerover",function(event){var target=findTarget(event);if(!target||movedWithin(target,event.relatedTarget)){return;}cancelTimer();pendingTarget=target;timer=window.setTimeout(function(){timer=null;var nextTarget=pendingTarget;pendingTarget=null;if(nextTarget){show(nextTarget);}},500);});document.addEventListener("pointerout",function(event){var target=findTarget(event);if(!target||movedWithin(target,event.relatedTarget)){return;}if(target===pendingTarget||target===activeTarget){hide();}});document.addEventListener("focusin",function(event){var target=findTarget(event);if(target){show(target);}});document.addEventListener("focusout",function(event){var target=findTarget(event);if(!target||movedWithin(target,event.relatedTarget)){return;}if(target===pendingTarget||target===activeTarget){hide();}});window.addEventListener("scroll",hide,true);document.addEventListener("keydown",function(event){if(event.key==="Escape"){hide();}});document.addEventListener("visibilitychange",hide);window.addEventListener("pagehide",hide);}());`
 
 var cryptoRandRead = rand.Read
 
@@ -175,14 +176,14 @@ func customHomeStyle(options model.Application, assets background.Assets) templa
 	if options.BookmarkCategoryColor != "" || options.BookmarkItemColor != "" {
 		b.WriteString(`<style>`)
 		if options.BookmarkCategoryColor != "" {
-			b.WriteString(`#container-bookmakrs .bookmark-group-container h3.bookmark-group-title,#container-bookmakrs .bookmark-subdir summary,#container-bookmakrs .bookmark-subdir summary::before{color:`)
+			b.WriteString(`.bookmark-module .bookmark-group-container h3.bookmark-group-title,.bookmark-module .bookmark-subdir summary,.bookmark-module .bookmark-subdir summary::before{color:`)
 			b.WriteString(options.BookmarkCategoryColor)
 			b.WriteString(`;}`)
 		}
 		if options.BookmarkItemColor != "" {
-			b.WriteString(`#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark,#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark span{color:`)
+			b.WriteString(`.bookmark-module .bookmark-group-container .bookmark-list a.bookmark,.bookmark-module .bookmark-group-container .bookmark-list a.bookmark span{color:`)
 			b.WriteString(options.BookmarkItemColor)
-			b.WriteString(`;}#container-bookmakrs .bookmark-group-container .bookmark-list a.bookmark img{color:`)
+			b.WriteString(`;}.bookmark-module .bookmark-group-container .bookmark-list a.bookmark img{color:`)
 			b.WriteString(options.BookmarkItemColor)
 			b.WriteString(`;}`)
 		}
@@ -337,7 +338,7 @@ func appendAdaptiveColumnStyle(b *strings.Builder, maxColumns int) {
 	)
 	b.WriteString(`<style>`)
 	b.WriteString(`@media (min-width:1201px){#page-home.pageview .container{padding-left:clamp(40px,4vw,250px);padding-right:clamp(40px,4vw,250px);}}`)
-	b.WriteString(fmt.Sprintf(`#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-gap:%dpx;row-gap:0;align-items:start;}#container-apps .apps-container .app-container{float:none;width:auto;min-width:0;}#container-bookmakrs .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-count:auto;column-gap:%dpx;gap:%dpx;align-items:start;}#container-bookmakrs .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;float:none;margin-bottom:0;vertical-align:top;align-self:start;}`,
+	b.WriteString(fmt.Sprintf(`#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-gap:%dpx;row-gap:0;align-items:start;}#container-apps .apps-container .app-container{float:none;width:auto;min-width:0;}.bookmark-module .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(%dpx,calc((100%% - (%d - 1) * %dpx) / %d)),1fr));column-count:auto;column-gap:%dpx;gap:%dpx;align-items:start;}.bookmark-module .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;float:none;margin-bottom:0;vertical-align:top;align-self:start;}`,
 		minColumnWidth, maxColumns, appColumnGap, maxColumns, appColumnGap,
 		minColumnWidth, maxColumns, bookmarkColumnGap, maxColumns, bookmarkColumnGap, bookmarkColumnGap,
 	))
@@ -348,8 +349,8 @@ func appendAdaptiveColumnStyle(b *strings.Builder, maxColumns int) {
 	if mobileColumns < 1 {
 		mobileColumns = 1
 	}
-	b.WriteString(fmt.Sprintf(`@media (max-width:%dpx){#container-bookmakrs .bookmark-groups{display:block;column-count:%d;column-gap:%dpx;}#container-bookmakrs .bookmark-group-container{break-inside:avoid;display:inline-block;width:100%%;max-width:none;min-width:0;float:none;margin-bottom:%dpx;vertical-align:top;}}`, bookmarkMasonryAt, mobileColumns, bookmarkColumnGap, bookmarkColumnGap))
-	b.WriteString(`@media (max-width:340px){#container-bookmakrs .bookmark-groups{column-count:1;}}`)
+	b.WriteString(fmt.Sprintf(`@media (max-width:%dpx){.bookmark-module .bookmark-groups{display:block;column-count:%d;column-gap:%dpx;}.bookmark-module .bookmark-group-container{break-inside:avoid;display:inline-block;width:100%%;max-width:none;min-width:0;float:none;margin-bottom:%dpx;vertical-align:top;}}`, bookmarkMasonryAt, mobileColumns, bookmarkColumnGap, bookmarkColumnGap))
+	b.WriteString(`@media (max-width:340px){.bookmark-module .bookmark-groups{column-count:1;}}`)
 	b.WriteString(`</style>`)
 }
 
@@ -561,7 +562,8 @@ func pageBookmark(c *echo.Context) error {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
 	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, false, nil, options.ShowBookmarks, bookmarkModules.items, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options))
+	hasBookmarkDescriptions := options.ShowBookmarks && bookmarkModules.BookmarksHaveDescriptions
+	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options) || hasBookmarkDescriptions)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -580,13 +582,14 @@ func pageBookmark(c *echo.Context) error {
 	m["ApplicationsURI"] = define.RegularPages.Applications.Path
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
+	m["FavoritesTitle"] = resolveFavoritesTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	m["Bookmarks"] = bookmarkModules.Bookmarks
 	m["Favorites"] = bookmarkModules.Favorites
 	m["HasFavorites"] = bookmarkModules.HasFavorites
 	m["BookmarksHaveDescriptions"] = bookmarkModules.BookmarksHaveDescriptions
 	m["FavoritesHaveDescriptions"] = bookmarkModules.FavoritesHaveDescriptions
-	m["HasBookmarkDescriptions"] = options.ShowBookmarks && bookmarkModules.BookmarksHaveDescriptions
+	m["HasBookmarkDescriptions"] = hasBookmarkDescriptions
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
 	footer.BindTemplateData(m, options.Footer)
@@ -605,6 +608,7 @@ func pageBookmark(c *echo.Context) error {
 	m["ScriptNonce"] = scriptNonce
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
 	m["InlineSiteIconRefreshScript"] = inlineSiteIconRefreshScript(options)
+	m["InlineBookmarkTooltipScript"] = inlineBookmarkTooltipScript(hasBookmarkDescriptions)
 	return c.Render(http.StatusOK, "home.html", m)
 }
 
@@ -722,7 +726,7 @@ func render(c *echo.Context, filter string) error {
 		showBookmarkWarnings = bookmarkModules.HasFavorites
 	}
 	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, options.ShowApps, applications.items, showBookmarkWarnings, bookmarkWarningItems, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options))
+	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options) || bookmarkModules.HasDescriptions)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -744,6 +748,7 @@ func render(c *echo.Context, filter string) error {
 	m["ApplicationsURI"] = define.RegularPages.Applications.Path
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
+	m["FavoritesTitle"] = resolveFavoritesTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	m["Applications"] = applications.HTML
 	m["Bookmarks"] = bookmarkModules.Bookmarks
@@ -783,6 +788,7 @@ func render(c *echo.Context, filter string) error {
 	m["InlineClockScript"] = template.JS(_inlineClockScript)
 	m["InlineBackgroundLoaderScript"] = template.JS(_inlineBackgroundLoaderScript)
 	m["InlineSiteIconRefreshScript"] = inlineSiteIconRefreshScript(options)
+	m["InlineBookmarkTooltipScript"] = inlineBookmarkTooltipScript(bookmarkModules.HasDescriptions)
 	return c.Render(http.StatusOK, "home.html", m)
 }
 
@@ -892,6 +898,13 @@ func resolveAppsTitle(options model.Application, locale string) string {
 	return i18n.T(locale, "apps")
 }
 
+func resolveFavoritesTitle(options model.Application, locale string) string {
+	if title := strings.TrimSpace(options.FavoritesTitle); title != "" {
+		return title
+	}
+	return i18n.T(locale, "favorites")
+}
+
 func resolveBookmarksTitle(options model.Application, locale string) string {
 	if strings.TrimSpace(options.BookmarksTitle) != "" {
 		return options.BookmarksTitle
@@ -923,6 +936,13 @@ func inlineSiteIconRefreshScript(options model.Application) template.JS {
 		return ""
 	}
 	return template.JS(_inlineSiteIconRefreshScript)
+}
+
+func inlineBookmarkTooltipScript(enabled bool) template.JS {
+	if !enabled {
+		return ""
+	}
+	return template.JS(_inlineBookmarkTooltipScript)
 }
 
 func hasAsyncSiteIconRefresh(options model.Application) bool {

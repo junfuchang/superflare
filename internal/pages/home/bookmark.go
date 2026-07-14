@@ -219,7 +219,13 @@ func renderBookmarkItem(b *strings.Builder, bookmark model.Bookmark, OpenBookmar
 		b.WriteString(`<li><a rel="noopener" href="`)
 	}
 	b.WriteString(template.HTMLEscapeString(templateURL))
-	b.WriteString(`" class="bookmark">`)
+	b.WriteString(`" class="bookmark"`)
+	if description := strings.TrimSpace(bookmark.Desc); description != "" {
+		b.WriteString(` data-bookmark-description="`)
+		b.WriteString(template.HTMLEscapeString(description))
+		b.WriteString(`"`)
+	}
+	b.WriteString(`>`)
 	b.WriteString(templateIcon)
 	b.WriteString(`<span class="bookmark-label">`)
 	b.WriteString(template.HTMLEscapeString(bookmark.Name))

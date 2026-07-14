@@ -553,6 +553,206 @@ func TestFavoritesDescriptionHandlerStateUsesOnlyRenderedModules(t *testing.T) {
 	}
 }
 
+type bookmarkTooltipRenderer struct {
+	t          *testing.T
+	wantScript bool
+}
+
+func (r bookmarkTooltipRenderer) Render(c *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	script, _ := m["InlineBookmarkTooltipScript"].(template.JS)
+	nonce, _ := m["ScriptNonce"].(string)
+	csp := c.Response().Header().Get("Content-Security-Policy")
+	if !r.wantScript {
+		if script != "" {
+			r.t.Fatalf("tooltip script must be empty without a rendered description, got %q", script)
+		}
+		if nonce != "" {
+			r.t.Fatalf("tooltip-only page must not receive a nonce without a rendered description, got %q", nonce)
+		}
+		if csp != getCSPValue("") {
+			r.t.Fatalf("CSP = %q, want %q", csp, getCSPValue(""))
+		}
+		return nil
+	}
+	if script == "" {
+		r.t.Fatal("expected tooltip script for a rendered bookmark description")
+	}
+	for _, expected := range []string{
+		`500`,
+		`textContent`,
+		`getElementById`,
+		`createElement("div")`,
+		`document.body.appendChild`,
+		`setAttribute("role","tooltip")`,
+		`aria-describedby`,
+		`document.addEventListener("pointerover"`,
+		`document.addEventListener("pointerout"`,
+		`document.addEventListener("focusin"`,
+		`document.addEventListener("focusout"`,
+		`window.addEventListener("scroll"`,
+		`document.addEventListener("keydown"`,
+		`visibilitychange`,
+		`pagehide`,
+		`Escape`,
+		`innerWidth`,
+		`innerHeight`,
+		`Math.min`,
+		`Math.max`,
+	} {
+		if !strings.Contains(string(script), expected) {
+			r.t.Fatalf("tooltip script missing %q: %s", expected, script)
+		}
+	}
+	if nonce == "" {
+		r.t.Fatal("expected tooltip script to receive a CSP nonce")
+	}
+	if !strings.Contains(csp, "'nonce-"+nonce+"'") {
+		r.t.Fatalf("CSP %q does not authorize tooltip nonce %q", csp, nonce)
+	}
+	return nil
+}
+
+func TestBookmarkTooltipHandlerBindsScriptAndNonceOnlyForRenderedDescriptions(t *testing.T) {
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+	tests := []struct {
+		name          string
+		path          string
+		handler       echo.HandlerFunc
+		showBookmarks bool
+		showFavorites bool
+		items         []model.Bookmark
+		wantScript    bool
+	}{
+		{
+			name:          "home favorite description",
+			path:          "/",
+			handler:       pageHome,
+			showFavorites: true,
+			items:         []model.Bookmark{{Name: "Favorite", URL: "https://favorite.example", Desc: "details", Favorite: true}},
+			wantScript:    true,
+		},
+		{
+			name:          "home whitespace-only bookmark description",
+			path:          "/",
+			handler:       pageHome,
+			showBookmarks: true,
+			items:         []model.Bookmark{{Name: "Blank", URL: "https://blank.example", Desc: " \t\n "}},
+		},
+		{
+			name:          "bookmark subpage description",
+			path:          define.RegularPages.Bookmarks.Path,
+			handler:       pageBookmark,
+			showBookmarks: true,
+			items:         []model.Bookmark{{Name: "Subpage", URL: "https://subpage.example", Desc: "details"}},
+			wantScript:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			useDescriptionStateFixtures(t, tt.showBookmarks, tt.showFavorites)
+			originalAppsLoader := loadFavoriteBookmarks
+			originalBookmarksLoader := loadNormalBookmarks
+			loadFavoriteBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{}, nil }
+			loadNormalBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{Items: tt.items}, nil }
+			t.Cleanup(func() {
+				loadFavoriteBookmarks = originalAppsLoader
+				loadNormalBookmarks = originalBookmarksLoader
+			})
+
+			e := echo.New()
+			e.Renderer = bookmarkTooltipRenderer{t: t, wantScript: tt.wantScript}
+			auth.RequestHandleWithFlags(e, model.Flags{
+				DisableLoginMode: true,
+				CookieName:       "bookmark-tooltip",
+				Port:             3636,
+			})
+			e.GET(tt.path, tt.handler)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+type favoritesModuleRenderer struct {
+	t         *testing.T
+	wantTitle string
+}
+
+func (r favoritesModuleRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	if show, _ := m["OptionShowFavorites"].(bool); !show {
+		r.t.Fatal("expected non-empty enabled favorites module")
+	}
+	if favorites, _ := m["Favorites"].(template.HTML); favorites == "" {
+		r.t.Fatal("expected rendered favorites HTML")
+	}
+	if title, _ := m["FavoritesTitle"].(string); title != r.wantTitle {
+		r.t.Fatalf("FavoritesTitle = %q, want %q", title, r.wantTitle)
+	}
+	return nil
+}
+
+func TestFavoritesModuleHandlerBindsTrimmedCustomAndLocalizedTitles(t *testing.T) {
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+	tests := []struct {
+		name        string
+		customTitle string
+		wantTitle   string
+	}{
+		{name: "localized default", wantTitle: "Favorites"},
+		{name: "trimmed custom title", customTitle: `FavoritesTitle: "  Pinned  "` + "\n", wantTitle: "Pinned"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			useDescriptionStateFixtures(t, false, true)
+			if tt.customTitle != "" {
+				config, err := os.ReadFile("config.yml")
+				if err != nil {
+					t.Fatalf("read config.yml: %v", err)
+				}
+				if err := os.WriteFile("config.yml", append(config, tt.customTitle...), 0644); err != nil {
+					t.Fatalf("write custom favorites title: %v", err)
+				}
+			}
+			originalAppsLoader := loadFavoriteBookmarks
+			originalBookmarksLoader := loadNormalBookmarks
+			loadFavoriteBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{}, nil }
+			loadNormalBookmarks = func() (model.Bookmarks, error) {
+				return model.Bookmarks{Items: []model.Bookmark{{Name: "Favorite", URL: "https://favorite.example", Favorite: true}}}, nil
+			}
+			t.Cleanup(func() {
+				loadFavoriteBookmarks = originalAppsLoader
+				loadNormalBookmarks = originalBookmarksLoader
+			})
+
+			e := echo.New()
+			e.Renderer = favoritesModuleRenderer{t: t, wantTitle: tt.wantTitle}
+			auth.RequestHandleWithFlags(e, model.Flags{DisableLoginMode: true, CookieName: "favorites-title", Port: 3636})
+			e.GET("/", pageHome)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestPrivateSearchFiltersBeforeRendering(t *testing.T) {
 	usePrivateProjectionFixtures(t)
 	options := model.Application{IconMode: define.IconModeHidden}
@@ -1224,9 +1424,9 @@ func TestAppendAdaptiveColumnStyleUsesDesktopWrapAndMobileWaterfall(t *testing.T
 
 	assert.Contains(t, style, "@media (min-width:1201px){#page-home.pageview .container{padding-left:clamp(40px,4vw,250px);padding-right:clamp(40px,4vw,250px);}}")
 	assert.Contains(t, style, "#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-gap:18px;row-gap:0;align-items:start;}")
-	assert.Contains(t, style, "#container-bookmakrs .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-count:auto;column-gap:18px;gap:18px;align-items:start;}")
-	assert.Contains(t, style, "#container-bookmakrs .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;")
-	assert.Contains(t, style, "@media (max-width:560px){#container-bookmakrs .bookmark-groups{display:block;column-count:2;column-gap:18px;}")
+	assert.Contains(t, style, ".bookmark-module .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-count:auto;column-gap:18px;gap:18px;align-items:start;}")
+	assert.Contains(t, style, ".bookmark-module .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;")
+	assert.Contains(t, style, "@media (max-width:560px){.bookmark-module .bookmark-groups{display:block;column-count:2;column-gap:18px;}")
 	assert.NotContains(t, style, ";};}")
 }
 
@@ -2633,6 +2833,86 @@ func TestRenderBookmarkItemUsesDedicatedLabelSpan(t *testing.T) {
 	html := b.String()
 	if !strings.Contains(html, `class="bookmark-label"`) {
 		t.Fatalf("expected bookmark label span class, got %s", html)
+	}
+}
+
+func TestBookmarkTooltipDescriptionAttributeEscapesAndTrims(t *testing.T) {
+	var b strings.Builder
+
+	renderBookmarkItem(&b, model.Bookmark{
+		Name: "Example",
+		URL:  "https://example.com",
+		Desc: `  status "quoted" & <tag> 'single'  `,
+	}, false, false, define.IconModeHidden, false, nil)
+
+	html := b.String()
+	want := `data-bookmark-description="status &#34;quoted&#34; &amp; &lt;tag&gt; &#39;single&#39;"`
+	if !strings.Contains(html, want) {
+		t.Fatalf("expected escaped trimmed description attribute %q, got %s", want, html)
+	}
+	for _, unsafe := range []string{`status "quoted"`, `<tag>`, `  status`} {
+		if strings.Contains(html, unsafe) {
+			t.Fatalf("bookmark description leaked unsafe or untrimmed text %q: %s", unsafe, html)
+		}
+	}
+}
+
+func TestBookmarkTooltipDescriptionAttributeOmittedWhenBlank(t *testing.T) {
+	var b strings.Builder
+	renderBookmarkItem(&b, model.Bookmark{
+		Name: "Example",
+		URL:  "https://example.com",
+		Desc: " \t\r\n ",
+	}, false, false, define.IconModeHidden, false, nil)
+
+	if strings.Contains(b.String(), "data-bookmark-description") {
+		t.Fatalf("whitespace-only description must not emit tooltip data: %s", b.String())
+	}
+}
+
+func TestBookmarkTooltipIsNotAddedToApplicationCards(t *testing.T) {
+	originalLoader := loadFavoriteBookmarks
+	loadFavoriteBookmarks = func() (model.Bookmarks, error) {
+		return model.Bookmarks{Items: []model.Bookmark{{
+			Name: "Application",
+			URL:  "https://application.example",
+			Desc: "visible application description",
+		}}}, nil
+	}
+	t.Cleanup(func() { loadFavoriteBookmarks = originalLoader })
+
+	projection, err := generateApplicationProjectionWithLocalAndURLErr("", &model.Application{IconMode: define.IconModeHidden}, false, nil, true)
+	if err != nil {
+		t.Fatalf("generate application projection: %v", err)
+	}
+	if strings.Contains(string(projection.HTML), "data-bookmark-description") {
+		t.Fatalf("application cards must not receive bookmark tooltip data: %s", projection.HTML)
+	}
+}
+
+func TestBookmarkStylesDynamicSelectorsUseSharedModuleClass(t *testing.T) {
+	style := string(customHomeStyle(model.Application{
+		BookmarkCategoryColor: "#123456",
+		BookmarkItemColor:     "#abcdef",
+	}, background.Assets{}))
+	if !strings.Contains(style, `.bookmark-module .bookmark-group-container h3.bookmark-group-title`) {
+		t.Fatalf("expected shared bookmark module selector for category color, got %s", style)
+	}
+	if !strings.Contains(style, `.bookmark-module .bookmark-group-container .bookmark-list a.bookmark`) {
+		t.Fatalf("expected shared bookmark module selector for item color, got %s", style)
+	}
+	if strings.Contains(style, `#container-bookmakrs`) {
+		t.Fatalf("dynamic bookmark colors must not target only the legacy bookmark id: %s", style)
+	}
+
+	var b strings.Builder
+	appendAdaptiveColumnStyle(&b, 4)
+	adaptive := b.String()
+	if !strings.Contains(adaptive, `.bookmark-module .bookmark-groups`) || !strings.Contains(adaptive, `.bookmark-module .bookmark-group-container`) {
+		t.Fatalf("adaptive bookmark columns must target the shared module class: %s", adaptive)
+	}
+	if strings.Contains(adaptive, `#container-bookmakrs`) {
+		t.Fatalf("adaptive bookmark columns must not target only the legacy bookmark id: %s", adaptive)
 	}
 }
 

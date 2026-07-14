@@ -165,3 +165,76 @@ func TestHomeTemplateLoadsSiteIconRefreshScriptWithNonce(t *testing.T) {
 		t.Fatalf("expected site icon refresh script to stay outside custom style block, got %s", page)
 	}
 }
+
+func TestHomeTemplateFavoritesModuleOrderAndTooltipNonce(t *testing.T) {
+	raw, err := TPL.ReadFile("html/home.html")
+	if err != nil {
+		t.Fatalf("read home template: %v", err)
+	}
+	page := string(raw)
+	appsIndex := strings.Index(page, `id="container-apps"`)
+	favoritesIndex := strings.Index(page, `id="container-favorites"`)
+	bookmarksIndex := strings.Index(page, `id="container-bookmakrs"`)
+	if appsIndex == -1 || favoritesIndex == -1 || bookmarksIndex == -1 {
+		t.Fatalf("expected apps, favorites, and bookmarks modules, got apps=%d favorites=%d bookmarks=%d", appsIndex, favoritesIndex, bookmarksIndex)
+	}
+	if !(appsIndex < favoritesIndex && favoritesIndex < bookmarksIndex) {
+		t.Fatalf("expected favorites between apps and bookmarks, got apps=%d favorites=%d bookmarks=%d", appsIndex, favoritesIndex, bookmarksIndex)
+	}
+	for _, expected := range []string{
+		`{{ if .OptionShowFavorites }}`,
+		`class="plugin-container clearfix bookmark-module" id="container-favorites"`,
+		`<h2>{{.FavoritesTitle}}</h2>`,
+		`{{.Favorites}}`,
+		`class="plugin-container clearfix bookmark-module" id="container-bookmakrs"`,
+		`{{ if .InlineBookmarkTooltipScript }}`,
+		`<script nonce="{{.ScriptNonce}}">{{.InlineBookmarkTooltipScript}}</script>`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("home template missing %q", expected)
+		}
+	}
+	if got := strings.Count(page, `{{.InlineBookmarkTooltipScript}}`); got != 1 {
+		t.Fatalf("expected one delegated bookmark tooltip script, got %d", got)
+	}
+	favoritesStart := strings.Index(page, `id="container-favorites"`)
+	favoritesEnd := strings.Index(page[favoritesStart:], `{{ end }}`)
+	if favoritesEnd == -1 {
+		t.Fatal("expected favorites module conditional to close")
+	}
+	if strings.Contains(page[favoritesStart:favoritesStart+favoritesEnd], `<a href=`) {
+		t.Fatal("favorites module title must not link to a new subpage")
+	}
+}
+
+func TestBookmarkStylesUseSharedModuleAndTooltip(t *testing.T) {
+	baseRaw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "assets", "css", "base.css")))
+	if err != nil {
+		t.Fatalf("read base.css: %v", err)
+	}
+	bookmarkRaw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "assets", "css", "home", "bookmarks.css")))
+	if err != nil {
+		t.Fatalf("read bookmarks.css: %v", err)
+	}
+	baseCSS := string(baseRaw)
+	bookmarkCSS := string(bookmarkRaw)
+	if !strings.Contains(baseCSS, `.bookmark-module`) {
+		t.Fatalf("base module spacing must use shared bookmark class: %s", baseCSS)
+	}
+	for _, expected := range []string{
+		`.bookmark-module .bookmark-group-container`,
+		`.bookmark-description-tooltip`,
+		`position: fixed;`,
+		`z-index:`,
+		`max-width:`,
+		`overflow-wrap:`,
+		`pointer-events: none;`,
+	} {
+		if !strings.Contains(bookmarkCSS, expected) {
+			t.Fatalf("bookmark styles missing %q: %s", expected, bookmarkCSS)
+		}
+	}
+	if strings.Contains(bookmarkCSS, `#container-bookmakrs`) {
+		t.Fatalf("bookmark styles must use the shared module class, got %s", bookmarkCSS)
+	}
+}
