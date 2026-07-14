@@ -35,8 +35,10 @@ func updateAppearanceOptions(c *echo.Context) error {
 		OptionGreetings          string `form:"greetings"`
 		OptionShowDateTime       bool   `form:"show-datetime"`
 		OptionShowApps           bool   `form:"show-apps"`
+		OptionShowFavorites      bool   `form:"show-favorites"`
 		OptionShowBookmarks      bool   `form:"show-bookmarks"`
 		OptionAppsTitle          string `form:"apps-title"`
+		OptionFavoritesTitle     string `form:"favorites-title"`
 		OptionBookmarksTitle     string `form:"bookmarks-title"`
 		BookmarkCategoryColor    string `form:"bookmark-category-color"`
 		BookmarkItemColor        string `form:"bookmark-item-color"`
@@ -100,8 +102,10 @@ func updateAppearanceOptions(c *echo.Context) error {
 	update.Greetings = body.OptionGreetings
 	update.ShowDateTime = body.OptionShowDateTime
 	update.ShowApps = body.OptionShowApps
+	update.ShowFavorites = body.OptionShowFavorites
 	update.ShowBookmarks = body.OptionShowBookmarks
 	update.AppsTitle = strings.TrimSpace(body.OptionAppsTitle)
+	update.FavoritesTitle = strings.TrimSpace(body.OptionFavoritesTitle)
 	update.BookmarksTitle = strings.TrimSpace(body.OptionBookmarksTitle)
 	update.BookmarkCategoryColor = categoryColor
 	update.BookmarkItemColor = itemColor
@@ -218,8 +222,10 @@ func pageAppearance(c *echo.Context) error {
 	m["OptionGreetings"] = options.Greetings
 	m["OptionShowDateTime"] = options.ShowDateTime
 	m["OptionShowApps"] = options.ShowApps
+	m["OptionShowFavorites"] = options.ShowFavorites
 	m["OptionShowBookmarks"] = options.ShowBookmarks
 	m["OptionAppsTitle"] = options.AppsTitle
+	m["OptionFavoritesTitle"] = options.FavoritesTitle
 	m["OptionBookmarksTitle"] = options.BookmarksTitle
 	m["OptionBookmarkCategoryColor"] = options.BookmarkCategoryColor
 	m["OptionBookmarkItemColor"] = options.BookmarkItemColor

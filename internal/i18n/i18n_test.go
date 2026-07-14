@@ -39,4 +39,12 @@ func TestFavoritesModuleTranslationsAreNonEmpty(t *testing.T) {
 			t.Fatalf("T(%q, favorites) = %q, want %q", locale, got, want)
 		}
 	}
+
+	for _, locale := range []string{"zh", "en"} {
+		for _, key := range []string{"show_favorites", "custom_favorites_title"} {
+			if got := T(locale, key); got == "" || got == key {
+				t.Fatalf("T(%q, %q) = %q, want a non-empty translation", locale, key, got)
+			}
+		}
+	}
 }

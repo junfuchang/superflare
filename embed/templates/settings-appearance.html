@@ -175,6 +175,27 @@
         </div>
 
         <div class="form-group">
+            <label for="settings-show-favorites">{{ T .Locale "show_favorites" }}</label>
+            {{ if .OptionShowFavorites }}
+            <select name="show-favorites" id="settings-show-favorites">
+                <option value="1" selected>{{ T .Locale "yes" }}</option>
+                <option value="0">{{ T .Locale "no" }}</option>
+            </select>
+            {{ else }}
+            <select name="show-favorites" id="settings-show-favorites">
+                <option value="0" selected>{{ T .Locale "no" }}</option>
+                <option value="1">{{ T .Locale "yes" }}</option>
+            </select>
+            {{ end }}
+        </div>
+
+        <div class="form-group">
+            <label for="settings-favorites-title">{{ T .Locale "custom_favorites_title" }}</label>
+            <input type="text" name="favorites-title" id="settings-favorites-title" class="option-input" placeholder='{{ T .Locale "module_title_placeholder" }}' value="{{.OptionFavoritesTitle}}">
+            <p class="help-text">{{ T .Locale "module_title_help" }}</p>
+        </div>
+
+        <div class="form-group">
             <label for="settings-show-bookmarks">{{ T .Locale "show_bookmarks" }}</label>
             {{ if .OptionShowBookmarks }}
             <select name="show-bookmarks" id="settings-show-bookmarks">

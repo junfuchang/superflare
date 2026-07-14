@@ -322,8 +322,10 @@ func UpdateAppearance(update model.Application) error {
 		options.Greetings = update.Greetings
 		options.ShowDateTime = update.ShowDateTime
 		options.ShowApps = update.ShowApps
+		options.ShowFavorites = update.ShowFavorites
 		options.ShowBookmarks = update.ShowBookmarks
 		options.AppsTitle = update.AppsTitle
+		options.FavoritesTitle = update.FavoritesTitle
 		options.BookmarksTitle = update.BookmarksTitle
 		options.BookmarkCategoryColor = update.BookmarkCategoryColor
 		options.BookmarkItemColor = update.BookmarkItemColor

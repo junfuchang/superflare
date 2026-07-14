@@ -184,7 +184,9 @@ func TestUpdateAppearance(t *testing.T) {
 	}
 	var update model.Application
 	update.Title = Title
+	update.ShowFavorites = false
 	update.AppsTitle = "Services"
+	update.FavoritesTitle = "Pinned"
 	update.BookmarksTitle = "Links"
 	update.BookmarkCategoryColor = "#112233"
 	update.BookmarkItemColor = "rgba(10, 20, 30, 0.5)"
@@ -200,7 +202,10 @@ func TestUpdateAppearance(t *testing.T) {
 	if options.Title != Title {
 		t.Fatal("GetAllSettingsOptions Error")
 	}
-	if options.AppsTitle != update.AppsTitle || options.BookmarksTitle != update.BookmarksTitle {
+	if options.ShowFavorites != update.ShowFavorites {
+		t.Fatal("UpdateAppearance did not persist favorites visibility")
+	}
+	if options.AppsTitle != update.AppsTitle || options.FavoritesTitle != update.FavoritesTitle || options.BookmarksTitle != update.BookmarksTitle {
 		t.Fatal("UpdateAppearance did not persist custom module titles")
 	}
 	if options.BookmarkCategoryColor != update.BookmarkCategoryColor || options.BookmarkItemColor != update.BookmarkItemColor {

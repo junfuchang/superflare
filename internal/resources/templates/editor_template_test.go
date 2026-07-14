@@ -193,6 +193,25 @@ func TestGeneratedSettingsTemplateMatchesSourceTemplate(t *testing.T) {
 	}
 }
 
+func TestSettingsAppearanceFavoritesControlsAreBetweenApplicationsAndBookmarks(t *testing.T) {
+	raw, err := TPL.ReadFile("html/settings-appearance.html")
+	if err != nil {
+		t.Fatalf("read settings appearance template: %v", err)
+	}
+	page := string(raw)
+
+	apps := strings.Index(page, `id="settings-apps-title"`)
+	favorites := strings.Index(page, `id="settings-show-favorites"`)
+	favoritesTitle := strings.Index(page, `id="settings-favorites-title"`)
+	bookmarks := strings.Index(page, `id="settings-show-bookmarks"`)
+	if apps == -1 || favorites == -1 || favoritesTitle == -1 || bookmarks == -1 {
+		t.Fatalf("favorites appearance controls are incomplete: apps=%d favorites=%d favoritesTitle=%d bookmarks=%d", apps, favorites, favoritesTitle, bookmarks)
+	}
+	if !(apps < favorites && favorites < favoritesTitle && favoritesTitle < bookmarks) {
+		t.Fatal("favorites settings are out of order")
+	}
+}
+
 func TestSettingsOthersDefaultCredentialWarningIsInLoginSection(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", "settings-others.html")))
 	if err != nil {

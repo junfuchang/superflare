@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
 	settingsroot "github.com/junfuchang/superflare/internal/settings"
@@ -336,6 +337,49 @@ func TestUpdateAppearanceOptionsPersistsHideWarningsButton(t *testing.T) {
 	}
 }
 
+func TestUpdateAppearanceOptionsPersistsAndBindsFavoritesSettings(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: blackboard\nShowFavorites: false\n"), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("title", "SuperFlare")
+	form.Set("icon-mode", "FILLING")
+	form.Set("locale", "zh")
+	form.Set("show-favorites", "1")
+	form.Set("favorites-title", "  Pinned  ")
+	req := httptest.NewRequest(http.MethodPost, "/settings/appearance", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	e.Renderer = appearanceFavoritesRenderer{t: t, wantShow: true, wantTitle: "Pinned"}
+	c := e.NewContext(req, rec)
+
+	if err := updateAppearanceOptions(c); err != nil {
+		t.Fatalf("updateAppearanceOptions: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	options, err := data.GetAllSettingsOptions()
+	if err != nil {
+		t.Fatalf("GetAllSettingsOptions: %v", err)
+	}
+	if !options.ShowFavorites {
+		t.Fatal("expected ShowFavorites=true to be persisted")
+	}
+	if options.FavoritesTitle != "Pinned" {
+		t.Fatalf("expected trimmed FavoritesTitle %q, got %q", "Pinned", options.FavoritesTitle)
+	}
+}
+
 func TestPageAppearanceKeepsStoredRuntimeDebugModeAfterAppFlagsChange(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, _ := os.Getwd()
@@ -374,6 +418,28 @@ func TestPageAppearanceKeepsStoredRuntimeDebugModeAfterAppFlagsChange(t *testing
 type appearanceSuccessRenderer struct{}
 
 func (appearanceSuccessRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	_, err := io.WriteString(w, "ok")
+	return err
+}
+
+type appearanceFavoritesRenderer struct {
+	t         *testing.T
+	wantShow  bool
+	wantTitle string
+}
+
+func (r appearanceFavoritesRenderer) Render(c *echo.Context, w io.Writer, name string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected renderer data type %T", data)
+	}
+	if got, ok := m["OptionShowFavorites"].(bool); !ok || got != r.wantShow {
+		r.t.Fatalf("OptionShowFavorites = %#v, want %t", m["OptionShowFavorites"], r.wantShow)
+	}
+	if got, ok := m["OptionFavoritesTitle"].(string); !ok || got != r.wantTitle {
+		r.t.Fatalf("OptionFavoritesTitle = %#v, want %q", m["OptionFavoritesTitle"], r.wantTitle)
+	}
 	_, err := io.WriteString(w, "ok")
 	return err
 }
