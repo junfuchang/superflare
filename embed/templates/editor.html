@@ -2108,6 +2108,15 @@
             scheduleTableLayoutSync();
         }
 
+        function enforceApplicationFavoriteInvariant(row) {
+            if (
+                instanceBookmarks.getDataAtRowProp(row, 'Category') === FLARE_FIX_CATEGORY[0] &&
+                instanceBookmarks.getDataAtRowProp(row, 'Favorite') === true
+            ) {
+                instanceBookmarks.setDataAtRowProp(row, 'Favorite', false, 'application-favorite-invariant');
+            }
+        }
+
         instanceBookmarks.addHook('afterChange', function (changes, source) {
             if (!changes || source === 'loadData') { return; }
             clearEditorValidationState(false);
@@ -2120,8 +2129,8 @@
                 if (prop === 'LocalURL' && localPortValueMap[newValue]) {
                     instanceBookmarks.setDataAtRowProp(row, 'LocalURL', localPortValueMap[newValue], 'local-port-select');
                 }
-                if (prop === 'Category' && newValue === FLARE_FIX_CATEGORY[0]) {
-                    instanceBookmarks.setDataAtRowProp(row, 'Favorite', false, 'application-favorite-clear');
+                if (source !== 'application-favorite-invariant') {
+                    enforceApplicationFavoriteInvariant(row);
                 }
             });
             Object.keys(touchedRows).forEach(function (rowKey) {

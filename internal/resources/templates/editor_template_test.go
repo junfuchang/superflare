@@ -106,6 +106,27 @@ func TestEditorTemplateSupportsPrivateAndNormalBookmarkFavorites(t *testing.T) {
 	}
 }
 
+func TestEditorTemplateReappliesApplicationFavoriteInvariantAfterUndo(t *testing.T) {
+	raw, err := TPL.ReadFile("html/editor.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, expected := range []string{
+		`function enforceApplicationFavoriteInvariant(row) {`,
+		`instanceBookmarks.getDataAtRowProp(row, 'Category') === FLARE_FIX_CATEGORY[0]`,
+		`instanceBookmarks.getDataAtRowProp(row, 'Favorite') === true`,
+		`instanceBookmarks.setDataAtRowProp(row, 'Favorite', false, 'application-favorite-invariant');`,
+		`if (source !== 'application-favorite-invariant') {`,
+		`enforceApplicationFavoriteInvariant(row);`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor template missing undo-safe favorite invariant %q", expected)
+		}
+	}
+}
+
 func TestEditorTemplateAppliesLinkCheckResultsInBatch(t *testing.T) {
 	raw, err := TPL.ReadFile("html/editor.html")
 	if err != nil {
