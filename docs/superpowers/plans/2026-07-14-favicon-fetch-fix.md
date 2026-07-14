@@ -13,7 +13,7 @@
 - Do not read Windows system proxy settings or add platform-specific proxy discovery.
 - Preserve the built-in bookmark placeholder for DNS, connection, TLS, proxy, timeout, HTTP, parsing, and unsupported-content failures.
 - Inspect no more than 512 KiB of an HTML page while discovering a favicon.
-- Keep the existing 256 KiB favicon limit, source validation, redirect validation, cache location, and concurrent-fetch coalescing.
+- Keep a finite 4 MiB favicon limit, source validation, redirect validation, cache location, and concurrent-fetch coalescing.
 - Issue at most one browser request per unique favicon source during one page load.
 - Keep behavior consistent across native Windows, Linux, Docker, and fnapp deployments.
 
@@ -482,3 +482,116 @@ git log --oneline --decorate -n 6
 ```
 
 Expected: clean working tree after the three implementation commits, with the current branch ahead of `origin/main` only by the design, plan, and favicon-fix commits.
+
+---
+
+### Task 5: Relax the Favicon Payload Limit and Preserve Cache Reuse
+
+**Files:**
+- Modify: `internal/fn/favicon.go:23-29`
+- Modify: `internal/fn/favicon_test.go`
+- Modify: `docs/superpowers/specs/2026-07-14-favicon-fetch-design.md`
+- Modify: `docs/superpowers/plans/2026-07-14-favicon-fetch-fix.md`
+
+**Interfaces:**
+- Consumes: `FetchPublicSiteFavicon(string) ([]byte, string, error)` and the existing persistent favicon cache.
+- Produces: unchanged fetch/cache API with a 4 MiB payload limit.
+
+- [ ] **Step 1: Write the failing large-icon cache test**
+
+Add to `internal/fn/favicon_test.go`:
+
+```go
+func TestFetchPublicSiteFaviconAcceptsLargeIconAndCachesIt(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	const formerLimit = 256 * 1024
+	iconBody := `<svg xmlns="http://www.w3.org/2000/svg">` +
+		strings.Repeat("x", formerLimit*4) + `</svg>`
+	var upstreamRequests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamRequests, 1)
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(iconBody))
+	}))
+	defer server.Close()
+
+	oldClient := siteIconHTTPClient
+	siteIconHTTPClient = server.Client()
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	iconURL := server.URL + "/favicon.svg"
+	for attempt := 0; attempt < 2; attempt++ {
+		data, contentType, err := FetchPublicSiteFavicon(iconURL)
+		if err != nil {
+			t.Fatalf("FetchPublicSiteFavicon attempt %d: %v", attempt+1, err)
+		}
+		if contentType != "image/svg+xml" {
+			t.Fatalf("large favicon content type = %q", contentType)
+		}
+		if len(data) != len(iconBody) {
+			t.Fatalf("large favicon size = %d, want %d", len(data), len(iconBody))
+		}
+	}
+	if got := atomic.LoadInt32(&upstreamRequests); got != 1 {
+		t.Fatalf("large favicon upstream requests = %d, want 1", got)
+	}
+}
+```
+
+- [ ] **Step 2: Run the focused test and verify RED**
+
+Run:
+
+```powershell
+.\.tools\go\bin\go.exe test ./internal/fn -run '^TestFetchPublicSiteFaviconAcceptsLargeIconAndCachesIt$' -count=1 -v
+```
+
+Expected: FAIL with `favicon too large` because the payload exceeds 256 KiB.
+
+- [ ] **Step 3: Raise the bounded payload limit**
+
+Change the constant in `internal/fn/favicon.go`:
+
+```go
+siteIconMaxBytes = 4 * 1024 * 1024
+```
+
+Keep the existing `io.LimitReader(resp.Body, siteIconMaxBytes+1)` and oversize
+check unchanged so untrusted responses remain bounded.
+
+- [ ] **Step 4: Run focused, package, and full tests**
+
+Run:
+
+```powershell
+.\.tools\go\bin\go.exe test ./internal/fn -run '^TestFetchPublicSiteFaviconAcceptsLargeIconAndCachesIt$' -count=1 -v
+.\.tools\go\bin\go.exe test ./internal/fn -count=1
+.\.tools\go\bin\go.exe test ./... -count=1
+```
+
+Expected: PASS for all commands; the test records one upstream request across
+two fetch calls.
+
+- [ ] **Step 5: Verify formatting, build, and create a local commit**
+
+Run:
+
+```powershell
+.\.tools\go\bin\gofmt.exe -s -l internal\fn\favicon.go internal\fn\favicon_test.go
+git diff --check
+.\.tools\go\bin\go.exe build ./...
+git add -- internal/fn/favicon.go internal/fn/favicon_test.go docs/superpowers/specs/2026-07-14-favicon-fetch-design.md docs/superpowers/plans/2026-07-14-favicon-fetch-fix.md
+git commit -m "fix: allow larger favicon payloads"
+```
+
+Expected: formatting and build checks pass; commit remains local and is not
+pushed to any remote.

@@ -277,6 +277,50 @@ func TestSiteFaviconCachePathReturnsErrorWhenGetwdFails(t *testing.T) {
 	}
 }
 
+func TestFetchPublicSiteFaviconAcceptsLargeIconAndCachesIt(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	const formerLimit = 256 * 1024
+	iconBody := `<svg xmlns="http://www.w3.org/2000/svg">` +
+		strings.Repeat("x", formerLimit*4) + `</svg>`
+	var upstreamRequests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamRequests, 1)
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(iconBody))
+	}))
+	defer server.Close()
+
+	oldClient := siteIconHTTPClient
+	siteIconHTTPClient = server.Client()
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	iconURL := server.URL + "/favicon.svg"
+	for attempt := 0; attempt < 2; attempt++ {
+		data, contentType, err := FetchPublicSiteFavicon(iconURL)
+		if err != nil {
+			t.Fatalf("FetchPublicSiteFavicon attempt %d: %v", attempt+1, err)
+		}
+		if contentType != "image/svg+xml" {
+			t.Fatalf("large favicon content type = %q", contentType)
+		}
+		if len(data) != len(iconBody) {
+			t.Fatalf("large favicon size = %d, want %d", len(data), len(iconBody))
+		}
+	}
+	if got := atomic.LoadInt32(&upstreamRequests); got != 1 {
+		t.Fatalf("large favicon upstream requests = %d, want 1", got)
+	}
+}
+
 func TestFetchPublicSiteFaviconAcceptsSVGWithTextPlainHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

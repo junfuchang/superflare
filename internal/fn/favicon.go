@@ -23,7 +23,7 @@ import (
 const (
 	siteIconProxyPath = "/assets/site-icons"
 	siteIconCacheDir  = "var/cache/site-icons"
-	siteIconMaxBytes  = 256 * 1024
+	siteIconMaxBytes  = 4 * 1024 * 1024
 	siteIconHTMLBytes = 512 * 1024
 	siteIconWarmLimit = 8
 )

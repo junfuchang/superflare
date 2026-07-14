@@ -24,14 +24,16 @@ cannot reach an icon, SuperFlare should keep the built-in bookmark placeholder.
 
 - Discover icons declared near the start of large HTML pages without reading
   an unbounded response.
+- Accept practical multi-megabyte favicon payloads so display takes priority
+  over an unnecessarily small transfer limit.
 - Issue at most one browser request per unique favicon source during a page
   load.
 - Preserve the existing placeholder for network, timeout, HTTP, parsing, and
   unsupported-content failures.
 - Keep behavior identical across native Windows, Linux, Docker, and fnapp
   deployments.
-- Preserve existing cache, redirect validation, response-size limits, and
-  concurrent-fetch coalescing.
+- Preserve existing cache, redirect validation, bounded response-size
+  enforcement, and concurrent-fetch coalescing.
 
 ## Non-Goals
 
@@ -39,7 +41,7 @@ cannot reach an icon, SuperFlare should keep the built-in bookmark placeholder.
   discovery.
 - Retrying indefinitely or guaranteeing access to every third-party site.
 - Replacing the existing local favicon proxy or persistent cache.
-- Expanding the accepted icon formats or maximum icon size.
+- Removing the favicon response limit entirely or making it platform-specific.
 
 ## Server Flow
 
@@ -98,6 +100,17 @@ The following conditions are expected fallback cases:
 These cases do not produce client retry loops and do not require
 platform-specific behavior.
 
+## Follow-up: Relaxed Icon Payload Limit
+
+The favicon response limit is 4 MiB. This is large enough for atypically heavy
+SVG, PNG, and other supported icon payloads while retaining a finite memory and
+disk boundary for untrusted upstream responses. With the existing eight-fetch
+concurrency cap, the maximum in-memory payload budget remains bounded.
+
+Successfully fetched icons continue to use the existing persistent cache. A
+large valid icon is downloaded once, written atomically, and served from cache
+on subsequent requests. Responses above 4 MiB still use the bookmark fallback.
+
 ## Tests
 
 Implementation will follow a red-green cycle with focused regression coverage:
@@ -107,6 +120,8 @@ Implementation will follow a red-green cycle with focused regression coverage:
 - A cache-miss `/assets/site-icons` request waits for a successful local test
   server response and returns the fetched icon.
 - A failed upstream request returns the built-in placeholder and fallback state.
+- A valid icon larger than the former 256 KiB limit is accepted and reused from
+  cache without a second upstream request.
 - The refresh script contains no polling timer and groups duplicate source URLs
   into one request.
 - Browser network-event verification confirms that an unreachable bookmark
