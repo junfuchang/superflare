@@ -562,8 +562,11 @@ func TestFetchPublicSiteFaviconDiscoversIconBeforeLargeHTMLBodyLimit(t *testing.
 	oldClient := siteIconHTTPClient
 	defer func() { siteIconHTTPClient = oldClient }()
 
-	largeHTML := `<!doctype html><html><head><link rel="icon" href="/assets/favicon.svg"></head><body>` +
-		strings.Repeat("x", siteIconHTMLBytes+1024) + `</body></html>`
+	const htmlPrefix = `<!doctype html><html><head>`
+	const iconLink = `<link rel="icon" href="/assets/favicon.svg">`
+	largeHTML := htmlPrefix + strings.Repeat(" ", siteIconHTMLBytes-len(htmlPrefix)-len(iconLink)) + iconLink +
+		`</head><body>` + strings.Repeat("x", 1024) + `</body></html>`
+	htmlReader := &countingReader{reader: strings.NewReader(largeHTML)}
 	siteIconHTTPClient = &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
@@ -579,7 +582,7 @@ func TestFetchPublicSiteFaviconDiscoversIconBeforeLargeHTMLBodyLimit(t *testing.
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
-					Body:       io.NopCloser(strings.NewReader(largeHTML)),
+					Body:       io.NopCloser(htmlReader),
 					Request:    req,
 				}, nil
 			case "/assets/favicon.svg":
@@ -605,6 +608,9 @@ func TestFetchPublicSiteFaviconDiscoversIconBeforeLargeHTMLBodyLimit(t *testing.
 	}
 	if !strings.Contains(string(data), "large-page-icon") {
 		t.Fatalf("unexpected discovered favicon body: %q", string(data))
+	}
+	if got := htmlReader.bytesRead; got > siteIconHTMLBytes {
+		t.Fatalf("favicon HTML discovery read %d bytes, want <= %d", got, siteIconHTMLBytes)
 	}
 }
 
@@ -730,6 +736,17 @@ func TestFetchPublicSiteFaviconCanUseLocalEnvironmentProxy(t *testing.T) {
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+type countingReader struct {
+	reader    io.Reader
+	bytesRead int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytesRead += n
+	return n, err
+}
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)

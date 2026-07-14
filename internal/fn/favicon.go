@@ -34,8 +34,9 @@ var (
 		Transport:     safeSiteFaviconTransport(),
 		CheckRedirect: validateSiteFaviconRedirect,
 	}
-	siteIconInflight    sync.Map
-	siteIconWarmLimiter = make(chan struct{}, siteIconWarmLimit)
+	siteIconInflight     sync.Map
+	siteIconWarmLimiter  = make(chan struct{}, siteIconWarmLimit)
+	siteIconFetchLimiter = make(chan struct{}, siteIconWarmLimit)
 )
 
 var errSiteFaviconSourceNotAllowed = errors.New("site favicon source is not allowed")
@@ -238,6 +239,8 @@ func fetchAndCacheSiteFavicon(iconURL string) ([]byte, string, error) {
 
 	defer close(wait)
 	defer siteIconInflight.Delete(key)
+	siteIconFetchLimiter <- struct{}{}
+	defer func() { <-siteIconFetchLimiter }()
 
 	data, contentType, err := downloadSiteFavicon(iconURL)
 	if err != nil {

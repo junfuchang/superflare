@@ -1,13 +1,17 @@
 package assets
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v5"
 
@@ -175,6 +179,123 @@ func TestSiteIconProxyCacheMissWaitsForSuccessfulFetch(t *testing.T) {
 	}
 	if rec.Body.String() != iconBody {
 		t.Fatalf("site icon proxy body = %q", rec.Body.String())
+	}
+}
+
+func TestSiteIconProxyLimitsConcurrentUniqueSourceFetches(t *testing.T) {
+	setupAssetsConfigDir(t)
+	define.Init()
+	define.AppFlags.DebugMode = true
+
+	const (
+		maxConcurrentFetches = 8
+		requestCount         = maxConcurrentFetches + 1
+	)
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseUpstream := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+
+	entered := make(chan struct{}, requestCount)
+	var active int32
+	var maxActive int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			seen := atomic.LoadInt32(&maxActive)
+			if current <= seen || atomic.CompareAndSwapInt32(&maxActive, seen, current) {
+				break
+			}
+		}
+		entered <- struct{}{}
+		<-release
+		atomic.AddInt32(&active, -1)
+
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+	}))
+	defer upstream.Close()
+	defer releaseUpstream()
+
+	e := echo.New()
+	RegisterRouting(e)
+
+	type routeResult struct {
+		status int
+		state  string
+	}
+	ready := make(chan struct{}, requestCount)
+	start := make(chan struct{})
+	results := make(chan routeResult, requestCount)
+	var requests sync.WaitGroup
+	for i := 0; i < requestCount; i++ {
+		requests.Add(1)
+		go func(index int) {
+			defer requests.Done()
+			ready <- struct{}{}
+			<-start
+
+			iconURL := fmt.Sprintf("%s/favicon.ico?source=%d", upstream.URL, index)
+			req := httptest.NewRequest(http.MethodGet, "/assets/site-icons?src="+url.QueryEscape(iconURL), nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			results <- routeResult{status: rec.Code, state: rec.Header().Get(siteIconStateHeader)}
+		}(i)
+	}
+	for i := 0; i < requestCount; i++ {
+		<-ready
+	}
+	close(start)
+
+	reachedLimit := true
+	timer := time.NewTimer(5 * time.Second)
+	for i := 0; i < maxConcurrentFetches; i++ {
+		select {
+		case <-entered:
+		case <-timer.C:
+			reachedLimit = false
+		}
+		if !reachedLimit {
+			break
+		}
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+
+	if reachedLimit {
+		timer.Reset(time.Second)
+		select {
+		case <-entered:
+		case <-timer.C:
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}
+
+	releaseUpstream()
+	requests.Wait()
+
+	if !reachedLimit {
+		t.Fatal("favicon fetches did not reach the configured concurrency limit")
+	}
+	if got := atomic.LoadInt32(&maxActive); got > maxConcurrentFetches {
+		t.Fatalf("site icon proxy upstream concurrency = %d, want <= %d", got, maxConcurrentFetches)
+	}
+	for i := 0; i < requestCount; i++ {
+		result := <-results
+		if result.status != http.StatusOK || result.state != "cached" {
+			t.Fatalf("site icon proxy result = status %d state %q, want 200 cached", result.status, result.state)
+		}
 	}
 }
 
