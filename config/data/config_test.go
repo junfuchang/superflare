@@ -64,6 +64,34 @@ func TestLoadAppConfigFromRawPreservesExplicitShowFavoritesFalse(t *testing.T) {
 	assert.False(t, options.ShowFavorites)
 }
 
+func TestLoadAppConfigFromYamlDefaultsMissingShowFavoritesToTrue(t *testing.T) {
+	origWd, err := os.Getwd()
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { _ = os.Chdir(origWd) }()
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: onedark\n"), 0644))
+
+	options, err := loadAppConfigFromYaml("config")
+	require.NoError(t, err)
+	assert.True(t, options.ShowFavorites)
+}
+
+func TestLoadAppConfigFromYamlPreservesExplicitShowFavoritesFalse(t *testing.T) {
+	origWd, err := os.Getwd()
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { _ = os.Chdir(origWd) }()
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte("Title: SuperFlare\nLocale: zh\nTheme: onedark\nShowFavorites: false\n"), 0644))
+
+	options, err := loadAppConfigFromYaml("config")
+	require.NoError(t, err)
+	assert.False(t, options.ShowFavorites)
+}
+
 func TestLoadAppConfigFromYamlInvalidYAML(t *testing.T) {
 	origWd, err := os.Getwd()
 	require.NoError(t, err)
