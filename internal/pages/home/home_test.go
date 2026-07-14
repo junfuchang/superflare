@@ -142,6 +142,29 @@ func TestMaybeMakeScriptNonceReturnsErrorWhenCryptoRandFails(t *testing.T) {
 	}
 }
 
+func TestInlineSiteIconRefreshScriptDeduplicatesSourcesWithoutPolling(t *testing.T) {
+	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
+	for _, expected := range []string{
+		`var groups=new Map()`,
+		`groups.get(src)`,
+		`groups.set(src,[img])`,
+		`groups.forEach(function(group,src)`,
+		`group.forEach(function(img)`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("favicon refresh script should contain %q: %s", expected, script)
+		}
+	}
+	if got := strings.Count(script, `fetch(src)`); got != 1 {
+		t.Fatalf("favicon refresh script should contain one grouped fetch call, got %d: %s", got, script)
+	}
+	for _, unexpected := range []string{`setTimeout`, `var left=`, `cache:"no-store"`} {
+		if strings.Contains(script, unexpected) {
+			t.Fatalf("favicon refresh script should not contain %q: %s", unexpected, script)
+		}
+	}
+}
+
 func TestCustomHomeStyleWithBackgroundAssets(t *testing.T) {
 	options := model.Application{
 		BackgroundImage:   background.UploadedFullPath,
