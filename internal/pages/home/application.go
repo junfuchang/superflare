@@ -23,6 +23,10 @@ func GenerateApplicationsTemplateWithLocalErr(filter string, options *model.Appl
 }
 
 func GenerateApplicationsTemplateWithLocalAndURLErr(filter string, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL) (template.HTML, error) {
+	return generateApplicationsTemplateWithLocalAndURLErr(filter, options, preferLocal, requestURL, true)
+}
+
+func generateApplicationsTemplateWithLocalAndURLErr(filter string, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL, canViewPrivate bool) (template.HTML, error) {
 	if options == nil {
 		options = &model.Application{}
 	}
@@ -37,28 +41,22 @@ func GenerateApplicationsTemplateWithLocalAndURLErr(filter string, options *mode
 	b.Reset()
 	defer builderPool.Put(b)
 
-	n := len(appsData.Items)
-	parseApps := make([]model.Bookmark, 0, n)
+	filterLower := strings.ToLower(filter)
+	apps := make([]model.Bookmark, 0, len(appsData.Items))
 	for _, app := range appsData.Items {
+		if !bookmarkVisible(app, canViewPrivate) {
+			continue
+		}
 		app.URL = fn.ParseDynamicUrlWith(app.URL, requestURL)
 		app.LocalURL = fn.ParseDynamicUrlWith(app.LocalURL, requestURL)
-		parseApps = append(parseApps, app)
-	}
-
-	var apps []model.Bookmark
-	if filter != "" {
-		apps = make([]model.Bookmark, 0, n)
-	}
-
-	if filter != "" {
-		filterLower := strings.ToLower(filter)
-		for _, bookmark := range parseApps {
-			if strings.Contains(strings.ToLower(bookmark.Name), filterLower) || strings.Contains(strings.ToLower(bookmark.URL), filterLower) || strings.Contains(strings.ToLower(bookmark.LocalURL), filterLower) || strings.Contains(strings.ToLower(bookmark.Desc), filterLower) {
-				apps = append(apps, bookmark)
-			}
+		if filter != "" &&
+			!strings.Contains(strings.ToLower(app.Name), filterLower) &&
+			!strings.Contains(strings.ToLower(app.URL), filterLower) &&
+			!strings.Contains(strings.ToLower(app.LocalURL), filterLower) &&
+			!strings.Contains(strings.ToLower(app.Desc), filterLower) {
+			continue
 		}
-	} else {
-		apps = parseApps
+		apps = append(apps, app)
 	}
 
 	for _, app := range apps {

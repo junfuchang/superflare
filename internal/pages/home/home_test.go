@@ -15,11 +15,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gorilla/sessions"
 	"github.com/junfuchang/superflare/config/define"
 	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/auth"
 	"github.com/junfuchang/superflare/internal/background"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/i18n"
+	echosession "github.com/labstack/echo-contrib/v5/session"
 	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 )
@@ -50,6 +53,380 @@ func writeEmptyBookmarkFixtures(t *testing.T, dir string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "bookmarks.yml"), []byte("categories: []\nlinks: []\n"), 0644); err != nil {
 		t.Fatalf("write bookmarks.yml: %v", err)
+	}
+}
+
+func usePrivateProjectionFixtures(t *testing.T) {
+	t.Helper()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+
+	config := strings.Join([]string{
+		"Title: SuperFlare",
+		"Locale: en",
+		"Theme: blackboard",
+		"ShowApps: true",
+		"ShowFavorites: true",
+		"ShowBookmarks: true",
+		"IconMode: NONE",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte(config), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+
+	apps := strings.Join([]string{
+		"links:",
+		`- name: "App Favorite Impostor"`,
+		"  link: https://impostor.example",
+		"  favorite: true",
+		`- name: "Public App"`,
+		"  link: https://public-app.example",
+		`- name: "Private App"`,
+		"  link: https://private-app.example",
+		"  private: true",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "apps.yml"), []byte(apps), 0644); err != nil {
+		t.Fatalf("write apps.yml: %v", err)
+	}
+
+	bookmarks := strings.Join([]string{
+		"categories:",
+		"- id: main",
+		`  title: "Private Projection Group"`,
+		"links:",
+		`- name: "Zulu"`,
+		"  link: https://z.example",
+		"  category: main",
+		"  favorite: true",
+		`- name: "alpha"`,
+		"  link: https://a.example",
+		"  category: main",
+		`  desc: "private details"`,
+		"  favorite: true",
+		"  private: true",
+		`- name: "Beta"`,
+		"  link: https://b.example",
+		"  category: main",
+		"  favorite: true",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "bookmarks.yml"), []byte(bookmarks), 0644); err != nil {
+		t.Fatalf("write bookmarks.yml: %v", err)
+	}
+}
+
+func assertTextOrder(t *testing.T, text string, values ...string) {
+	t.Helper()
+	last := -1
+	for _, value := range values {
+		index := strings.Index(text, value)
+		if index < 0 {
+			t.Fatalf("expected %q in %s", value, text)
+		}
+		if index <= last {
+			t.Fatalf("expected %q after prior values in %s", value, text)
+		}
+		last = index
+	}
+}
+
+func TestFavoritesProjectionFiltersPrivateSortsAndKeepsRegularBookmarks(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	options := model.Application{IconMode: define.IconModeHidden}
+
+	anonymous, err := generateBookmarkModulesWithLocalAndURLErr("", &options, false, nil, false)
+	if err != nil {
+		t.Fatalf("generate anonymous bookmark modules: %v", err)
+	}
+	if strings.Contains(string(anonymous.Bookmarks), "alpha") || strings.Contains(string(anonymous.Favorites), "alpha") {
+		t.Fatalf("anonymous projections must exclude private bookmark: bookmarks=%s favorites=%s", anonymous.Bookmarks, anonymous.Favorites)
+	}
+	if anonymous.HasDescriptions {
+		t.Fatal("private descriptions must not affect anonymous projection state")
+	}
+
+	trusted, err := generateBookmarkModulesWithLocalAndURLErr("", &options, false, nil, true)
+	if err != nil {
+		t.Fatalf("generate trusted bookmark modules: %v", err)
+	}
+	bookmarksHTML := string(trusted.Bookmarks)
+	favoritesHTML := string(trusted.Favorites)
+	assertTextOrder(t, bookmarksHTML, "Zulu", "alpha", "Beta")
+	assertTextOrder(t, favoritesHTML, "alpha", "Beta", "Zulu")
+	if strings.Contains(favoritesHTML, "bookmark-group-title") || strings.Contains(favoritesHTML, "Private Projection Group") {
+		t.Fatalf("favorites projection must not render category headings: %s", favoritesHTML)
+	}
+	if !trusted.HasDescriptions {
+		t.Fatal("trusted projection should report its visible bookmark description")
+	}
+	for _, name := range []string{"Zulu", "alpha", "Beta"} {
+		if !strings.Contains(bookmarksHTML, name) {
+			t.Fatalf("favorited normal bookmark %q must remain in regular bookmarks: %s", name, bookmarksHTML)
+		}
+	}
+}
+
+func TestFavoritesProjectionIgnoresApplicationFavoriteFlag(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	modules, err := generateBookmarkModulesWithLocalAndURLErr("", &model.Application{IconMode: define.IconModeHidden}, false, nil, true)
+	if err != nil {
+		t.Fatalf("generate bookmark modules: %v", err)
+	}
+	if strings.Contains(string(modules.Favorites), "App Favorite Impostor") {
+		t.Fatalf("apps.yml favorite flag must not enter normal-bookmark favorites: %s", modules.Favorites)
+	}
+}
+
+func TestPrivateSearchFiltersBeforeRendering(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	options := model.Application{IconMode: define.IconModeHidden}
+
+	anonymousBookmarks, err := generateBookmarkModulesWithLocalAndURLErr("alpha", &options, false, nil, false)
+	if err != nil {
+		t.Fatalf("generate anonymous filtered bookmarks: %v", err)
+	}
+	if strings.Contains(string(anonymousBookmarks.Bookmarks), "alpha") || strings.Contains(string(anonymousBookmarks.Favorites), "alpha") {
+		t.Fatalf("search must not reveal a private bookmark: bookmarks=%s favorites=%s", anonymousBookmarks.Bookmarks, anonymousBookmarks.Favorites)
+	}
+
+	anonymousApps, err := generateApplicationsTemplateWithLocalAndURLErr("Private App", &options, false, nil, false)
+	if err != nil {
+		t.Fatalf("generate anonymous filtered applications: %v", err)
+	}
+	if strings.Contains(string(anonymousApps), "Private App") {
+		t.Fatalf("search must not reveal a private application: %s", anonymousApps)
+	}
+
+	trustedBookmarks, err := generateBookmarkModulesWithLocalAndURLErr("alpha", &options, false, nil, true)
+	if err != nil {
+		t.Fatalf("generate trusted filtered bookmarks: %v", err)
+	}
+	trustedApps, err := generateApplicationsTemplateWithLocalAndURLErr("Private App", &options, false, nil, true)
+	if err != nil {
+		t.Fatalf("generate trusted filtered applications: %v", err)
+	}
+	if !strings.Contains(string(trustedBookmarks.Bookmarks), "alpha") || !strings.Contains(string(trustedBookmarks.Favorites), "alpha") {
+		t.Fatalf("trusted search should include private bookmark: bookmarks=%s favorites=%s", trustedBookmarks.Bookmarks, trustedBookmarks.Favorites)
+	}
+	if !strings.Contains(string(trustedApps), "Private App") {
+		t.Fatalf("trusted search should include private application: %s", trustedApps)
+	}
+}
+
+type failingSessionStore struct{}
+
+func (failingSessionStore) Get(*http.Request, string) (*sessions.Session, error) {
+	return nil, errors.New("session backend unavailable")
+}
+
+func (store failingSessionStore) New(_ *http.Request, name string) (*sessions.Session, error) {
+	return sessions.NewSession(store, name), nil
+}
+
+func (failingSessionStore) Save(*http.Request, http.ResponseWriter, *sessions.Session) error {
+	return nil
+}
+
+func authenticatedCookie(t *testing.T, flags model.Flags) *http.Cookie {
+	t.Helper()
+	store := sessions.NewCookieStore([]byte(flags.CookieSecret))
+	store.MaxAge(auth.SESSION_MAX_AGE)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	sess, err := store.New(req, auth.RequestHandleSessionName(flags.CookieName, flags.Port))
+	if err != nil {
+		t.Fatalf("create authenticated session: %v", err)
+	}
+	sess.Values[auth.SESSION_KEY_USER_NAME] = "admin"
+	sess.Values[auth.SESSION_KEY_LOGIN_DATE] = "2026-07-15 12:00:00 CST"
+	sess.Options = &sessions.Options{Path: "/", MaxAge: auth.SESSION_MAX_AGE}
+	rec := httptest.NewRecorder()
+	if err := store.Save(req, rec, sess); err != nil {
+		t.Fatalf("save authenticated session: %v", err)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one authenticated session cookie, got %d", len(cookies))
+	}
+	return cookies[0]
+}
+
+func TestCanViewPrivateItemsTrustState(t *testing.T) {
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+
+	baseFlags := model.Flags{
+		CookieName:   "private-visibility",
+		CookieSecret: "private-visibility-secret",
+		Port:         3636,
+		User:         "admin",
+		Pass:         "password",
+	}
+	tests := []struct {
+		name           string
+		disableLogin   bool
+		authenticated  bool
+		invalidCookie  bool
+		failingSession bool
+		want           bool
+	}{
+		{name: "disabled login is trusted", disableLogin: true, want: true},
+		{name: "anonymous enabled login is untrusted", want: false},
+		{name: "authenticated enabled login is trusted", authenticated: true, want: true},
+		{name: "invalid session is untrusted", invalidCookie: true, want: false},
+		{name: "session read failure is untrusted", failingSession: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags := baseFlags
+			flags.DisableLoginMode = tt.disableLogin
+			e := echo.New()
+			auth.RequestHandleWithFlags(e, flags)
+			if tt.failingSession {
+				e.Use(echosession.Middleware(failingSessionStore{}))
+			}
+			e.GET("/visibility", func(c *echo.Context) error {
+				if canViewPrivateItems(c) {
+					return c.String(http.StatusOK, "trusted")
+				}
+				return c.String(http.StatusOK, "untrusted")
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/visibility", nil)
+			switch {
+			case tt.authenticated:
+				req.AddCookie(authenticatedCookie(t, flags))
+			case tt.invalidCookie:
+				req.AddCookie(&http.Cookie{
+					Name:  auth.RequestHandleSessionName(flags.CookieName, flags.Port),
+					Value: "invalid-cookie-value",
+				})
+			}
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			got := rec.Body.String() == "trusted"
+			if got != tt.want {
+				t.Fatalf("canViewPrivateItems() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type privateProjectionRenderer struct {
+	t              *testing.T
+	wantPrivate    bool
+	checkApps      bool
+	checkBookmarks bool
+	checkFavorites bool
+}
+
+func (r privateProjectionRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	checks := []struct {
+		enabled     bool
+		key         string
+		publicName  string
+		privateName string
+	}{
+		{enabled: r.checkApps, key: "Applications", publicName: "Public App", privateName: "Private App"},
+		{enabled: r.checkBookmarks, key: "Bookmarks", publicName: "Zulu", privateName: "alpha"},
+		{enabled: r.checkFavorites, key: "Favorites", publicName: "Zulu", privateName: "alpha"},
+	}
+	for _, check := range checks {
+		if !check.enabled {
+			continue
+		}
+		htmlValue, ok := m[check.key].(template.HTML)
+		if !ok {
+			r.t.Fatalf("expected %s HTML, got %T", check.key, m[check.key])
+		}
+		htmlText := string(htmlValue)
+		if !strings.Contains(htmlText, check.publicName) {
+			r.t.Fatalf("expected %s to contain public item %q: %s", check.key, check.publicName, htmlText)
+		}
+		if got := strings.Contains(htmlText, check.privateName); got != r.wantPrivate {
+			r.t.Fatalf("%s private visibility = %v, want %v: %s", check.key, got, r.wantPrivate, htmlText)
+		}
+	}
+	return nil
+}
+
+func TestPrivateItemsAreFilteredOnHomeAndSubpages(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+
+	tests := []struct {
+		name           string
+		path           string
+		method         string
+		handler        echo.HandlerFunc
+		search         string
+		disableLogin   bool
+		checkApps      bool
+		checkBookmarks bool
+		checkFavorites bool
+	}{
+		{name: "anonymous home", path: "/", handler: pageHome, checkApps: true, checkBookmarks: true, checkFavorites: true},
+		{name: "anonymous home search", path: "/", method: http.MethodPost, handler: pageSearch, search: "example", checkApps: true, checkBookmarks: true, checkFavorites: true},
+		{name: "anonymous applications subpage", path: define.RegularPages.Applications.Path, handler: pageApplication, checkApps: true},
+		{name: "anonymous bookmarks subpage", path: define.RegularPages.Bookmarks.Path, handler: pageBookmark, checkBookmarks: true},
+		{name: "disabled-login home", path: "/", handler: pageHome, disableLogin: true, checkApps: true, checkBookmarks: true, checkFavorites: true},
+		{name: "disabled-login applications subpage", path: define.RegularPages.Applications.Path, handler: pageApplication, disableLogin: true, checkApps: true},
+		{name: "disabled-login bookmarks subpage", path: define.RegularPages.Bookmarks.Path, handler: pageBookmark, disableLogin: true, checkBookmarks: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			method := tt.method
+			if method == "" {
+				method = http.MethodGet
+			}
+			flags := model.Flags{
+				DisableLoginMode: tt.disableLogin,
+				CookieName:       "handler-private-visibility",
+				CookieSecret:     "handler-private-visibility-secret",
+				Port:             3636,
+			}
+			e := echo.New()
+			e.Renderer = privateProjectionRenderer{
+				t:              t,
+				wantPrivate:    tt.disableLogin,
+				checkApps:      tt.checkApps,
+				checkBookmarks: tt.checkBookmarks,
+				checkFavorites: tt.checkFavorites,
+			}
+			auth.RequestHandleWithFlags(e, flags)
+			e.Add(method, tt.path, tt.handler)
+			var body io.Reader
+			if tt.search != "" {
+				form := url.Values{}
+				form.Set("search", tt.search)
+				body = strings.NewReader(form.Encode())
+			}
+			req := httptest.NewRequest(method, tt.path, body)
+			if tt.search != "" {
+				req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+			}
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

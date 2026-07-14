@@ -370,6 +370,13 @@ func pageHome(c *echo.Context) error {
 	return render(c, "")
 }
 
+func canViewPrivateItems(c *echo.Context) bool {
+	if auth.IsLoginDisabled(c) {
+		return true
+	}
+	return auth.ResolveLoginDisplayStateForView(c).ShowLoginInfo
+}
+
 func resolveHomeAssets(options model.Application) (background.Assets, error) {
 	source := strings.TrimSpace(options.BackgroundImage)
 	if source == "" {
@@ -569,11 +576,14 @@ func pageBookmark(c *echo.Context) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	bookmarksHTML, err := GenerateBookmarkTemplateWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL)
+	canViewPrivate := canViewPrivateItems(c)
+	bookmarkModules, err := generateBookmarkModulesWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL, canViewPrivate)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
-	m["Bookmarks"] = bookmarksHTML
+	m["Bookmarks"] = bookmarkModules.Bookmarks
+	m["Favorites"] = bookmarkModules.Favorites
+	m["HasBookmarkDescriptions"] = bookmarkModules.HasDescriptions
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
 	footer.BindTemplateData(m, options.Footer)
@@ -633,7 +643,8 @@ func pageApplication(c *echo.Context) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	applicationsHTML, err := GenerateApplicationsTemplateWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL)
+	canViewPrivate := canViewPrivateItems(c)
+	applicationsHTML, err := generateApplicationsTemplateWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL, canViewPrivate)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -716,16 +727,19 @@ func render(c *echo.Context, filter string) error {
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	preferLocal := fn.RequestLooksLocalNetwork(c.Request())
-	applicationsHTML, err := GenerateApplicationsTemplateWithLocalAndURLErr(filter, &options, preferLocal, &requestURL)
+	canViewPrivate := canViewPrivateItems(c)
+	applicationsHTML, err := generateApplicationsTemplateWithLocalAndURLErr(filter, &options, preferLocal, &requestURL, canViewPrivate)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
-	bookmarksHTML, err := GenerateBookmarkTemplateWithLocalAndURLErr(filter, &options, preferLocal, &requestURL)
+	bookmarkModules, err := generateBookmarkModulesWithLocalAndURLErr(filter, &options, preferLocal, &requestURL, canViewPrivate)
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
 	m["Applications"] = applicationsHTML
-	m["Bookmarks"] = bookmarksHTML
+	m["Bookmarks"] = bookmarkModules.Bookmarks
+	m["Favorites"] = bookmarkModules.Favorites
+	m["HasBookmarkDescriptions"] = bookmarkModules.HasDescriptions
 	m["SearchKeyword"] = template.HTML(searchKeyword)
 	m["SearchHintLabel"] = searchHintLabel
 	m["SearchFormTarget"] = buildSearchFormTarget(options)
@@ -741,6 +755,7 @@ func render(c *echo.Context, filter string) error {
 	m["OptionShowTitle"] = options.ShowTitle
 	m["OptionShowDateTime"] = options.ShowDateTime
 	m["OptionShowApps"] = options.ShowApps
+	m["OptionShowFavorites"] = options.ShowFavorites
 	m["OptionShowBookmarks"] = options.ShowBookmarks
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton

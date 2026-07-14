@@ -2,6 +2,7 @@ package home
 
 import (
 	"html/template"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,16 @@ import (
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/fn"
 )
+
+type bookmarkModules struct {
+	Bookmarks       template.HTML
+	Favorites       template.HTML
+	HasDescriptions bool
+}
+
+func bookmarkVisible(item model.Bookmark, canViewPrivate bool) bool {
+	return canViewPrivate || !item.Private
+}
 
 func GenerateBookmarkTemplateErr(filter string, options *model.Application) (template.HTML, error) {
 	return GenerateBookmarkTemplateWithLocalAndURLErr(filter, options, false, nil)
@@ -19,12 +30,17 @@ func GenerateBookmarkTemplateWithLocalErr(filter string, options *model.Applicat
 }
 
 func GenerateBookmarkTemplateWithLocalAndURLErr(filter string, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL) (template.HTML, error) {
+	modules, err := generateBookmarkModulesWithLocalAndURLErr(filter, options, preferLocal, requestURL, true)
+	return modules.Bookmarks, err
+}
+
+func generateBookmarkModulesWithLocalAndURLErr(filter string, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL, canViewPrivate bool) (bookmarkModules, error) {
 	if options == nil {
 		options = &model.Application{}
 	}
 	bookmarksData, err := data.LoadNormalBookmarks()
 	if err != nil {
-		return template.HTML(""), err
+		return bookmarkModules{}, err
 	}
 	b, ok := builderPool.Get().(*strings.Builder)
 	if !ok {
@@ -33,27 +49,38 @@ func GenerateBookmarkTemplateWithLocalAndURLErr(filter string, options *model.Ap
 	b.Reset()
 	defer builderPool.Put(b)
 
-	n := len(bookmarksData.Items)
-	parseBookmarks := make([]model.Bookmark, 0, n)
+	filterLower := strings.ToLower(filter)
+	bookmarks := make([]model.Bookmark, 0, len(bookmarksData.Items))
+	favorites := make([]model.Bookmark, 0, len(bookmarksData.Items))
+	hasDescriptions := false
 	for _, bookmark := range bookmarksData.Items {
+		if !bookmarkVisible(bookmark, canViewPrivate) {
+			continue
+		}
 		bookmark.URL = fn.ParseDynamicUrlWith(bookmark.URL, requestURL)
 		bookmark.LocalURL = fn.ParseDynamicUrlWith(bookmark.LocalURL, requestURL)
-		parseBookmarks = append(parseBookmarks, bookmark)
-	}
-
-	bookmarks := parseBookmarks
-	if filter != "" {
-		bookmarks = make([]model.Bookmark, 0, n)
-	}
-
-	if filter != "" {
-		filterLower := strings.ToLower(filter)
-		for _, bookmark := range parseBookmarks {
-			if strings.Contains(strings.ToLower(bookmark.Name), filterLower) || strings.Contains(strings.ToLower(bookmark.URL), filterLower) || strings.Contains(strings.ToLower(bookmark.LocalURL), filterLower) {
-				bookmarks = append(bookmarks, bookmark)
-			}
+		if filter != "" &&
+			!strings.Contains(strings.ToLower(bookmark.Name), filterLower) &&
+			!strings.Contains(strings.ToLower(bookmark.URL), filterLower) &&
+			!strings.Contains(strings.ToLower(bookmark.LocalURL), filterLower) {
+			continue
+		}
+		bookmarks = append(bookmarks, bookmark)
+		if strings.TrimSpace(bookmark.Desc) != "" {
+			hasDescriptions = true
+		}
+		if bookmark.Favorite {
+			favorites = append(favorites, bookmark)
 		}
 	}
+	sort.SliceStable(favorites, func(i, j int) bool {
+		left := strings.ToLower(strings.TrimSpace(favorites[i].Name))
+		right := strings.ToLower(strings.TrimSpace(favorites[j].Name))
+		if left != right {
+			return left < right
+		}
+		return favorites[i].Name < favorites[j].Name
+	})
 
 	if len(bookmarksData.Categories) > 0 {
 		b.WriteString(`<div class="bookmark-groups">`)
@@ -69,7 +96,16 @@ func GenerateBookmarkTemplateWithLocalAndURLErr(filter string, options *model.Ap
 		b.WriteString(`</div>`)
 	}
 
-	return template.HTML(b.String()), nil
+	var favoritesBuilder strings.Builder
+	favoritesBuilder.WriteString(`<div class="bookmark-groups">`)
+	renderBookmarksWithoutCategories(&favoritesBuilder, &favorites, options.OpenBookmarkNewTab, options.EnableEncryptedLink, options.IconMode, preferLocal, requestURL)
+	favoritesBuilder.WriteString(`</div>`)
+
+	return bookmarkModules{
+		Bookmarks:       template.HTML(b.String()),
+		Favorites:       template.HTML(favoritesBuilder.String()),
+		HasDescriptions: hasDescriptions,
+	}, nil
 }
 
 func renderBookmarksWithoutCategories(b *strings.Builder, bookmarks *[]model.Bookmark, OpenBookmarkNewTab bool, EnableEncryptedLink bool, IconMode string, preferLocal bool, requestURL *fn.DynamicURL) {
