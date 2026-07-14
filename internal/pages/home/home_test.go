@@ -683,6 +683,48 @@ func TestBookmarkTooltipHandlerBindsScriptAndNonceOnlyForRenderedDescriptions(t 
 	}
 }
 
+func TestBookmarkTooltipScriptKeepsHoverAndFocusChannelsIndependent(t *testing.T) {
+	script := _inlineBookmarkTooltipScript
+	for _, expected := range []string{
+		`var hoverTarget=null`,
+		`var hoverReady=false`,
+		`var hoverTimer=null`,
+		`var focusTarget=null`,
+		`function clearHover()`,
+		`function hideRendered()`,
+		`function reconcile()`,
+		`focusTarget||(hoverReady?hoverTarget:null)`,
+		`if(target===hoverTarget){clearHover();reconcile();}`,
+		`if(target===focusTarget){focusTarget=null;reconcile();}`,
+		`function reset(){clearHover();focusTarget=null;hideRendered();}`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("tooltip state machine missing %q: %s", expected, script)
+		}
+	}
+	for _, legacy := range []string{`var pendingTarget=null`, `function hide(){cancelTimer()`} {
+		if strings.Contains(script, legacy) {
+			t.Fatalf("tooltip state machine still shares destructive state %q: %s", legacy, script)
+		}
+	}
+}
+
+func TestBookmarkTooltipScriptCleansDisconnectedTargets(t *testing.T) {
+	script := _inlineBookmarkTooltipScript
+	for _, expected := range []string{
+		`if(!target||!target.isConnected)`,
+		`!scheduledTarget.isConnected`,
+		`new MutationObserver`,
+		`function cleanupDisconnectedTargets()`,
+		`activeTarget&&!activeTarget.isConnected`,
+		`observer.observe(document.body,{childList:true,subtree:true})`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("tooltip script missing disconnected-target cleanup %q: %s", expected, script)
+		}
+	}
+}
+
 type favoritesModuleRenderer struct {
 	t         *testing.T
 	wantTitle string

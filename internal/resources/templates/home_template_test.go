@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/junfuchang/superflare/config/define"
 )
 
 func TestHomeTemplateUsesWarningsModalInsteadOfStandalonePage(t *testing.T) {
@@ -236,5 +238,31 @@ func TestBookmarkStylesUseSharedModuleAndTooltip(t *testing.T) {
 	}
 	if strings.Contains(bookmarkCSS, `#container-bookmakrs`) {
 		t.Fatalf("bookmark styles must use the shared module class, got %s", bookmarkCSS)
+	}
+}
+
+func TestBookmarkTooltipStylesConstrainLongDescriptionsToViewport(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "assets", "css", "home", "bookmarks.css")))
+	if err != nil {
+		t.Fatalf("read bookmarks.css: %v", err)
+	}
+	css := string(raw)
+	for _, expected := range []string{
+		`max-height: calc(100vh - 16px);`,
+		`overflow-y: auto;`,
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("bookmark tooltip source styles missing %q: %s", expected, css)
+		}
+	}
+
+	generated := define.PAGE_INLINE_STYLE
+	for _, expected := range []string{
+		`max-height: calc(100vh - 16px)`,
+		`overflow-y: auto`,
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("generated inline styles missing %q", expected)
+		}
 	}
 }
