@@ -121,6 +121,58 @@ func usePrivateProjectionFixtures(t *testing.T) {
 	}
 }
 
+func usePrivateIconWarningFixtures(t *testing.T) {
+	t.Helper()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+
+	config := strings.Join([]string{
+		"Title: SuperFlare",
+		"Locale: en",
+		"Theme: blackboard",
+		"ShowApps: true",
+		"ShowFavorites: true",
+		"ShowBookmarks: true",
+		"IconMode: DEFAULT",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte(config), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	apps := strings.Join([]string{
+		"links:",
+		`- name: "Public App"`,
+		"  link: https://public-app.example",
+		`- name: "Private Invalid App"`,
+		"  link: https://private-app.example",
+		"  icon: definitely-not-an-mdi-icon",
+		"  private: true",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "apps.yml"), []byte(apps), 0644); err != nil {
+		t.Fatalf("write apps.yml: %v", err)
+	}
+	bookmarks := strings.Join([]string{
+		"categories: []",
+		"links:",
+		`- name: "Public Bookmark"`,
+		"  link: https://public-bookmark.example",
+		`- name: "Private Invalid Bookmark"`,
+		"  link: https://private-bookmark.example",
+		"  icon: definitely-not-an-mdi-icon",
+		"  private: true",
+		"  favorite: true",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "bookmarks.yml"), []byte(bookmarks), 0644); err != nil {
+		t.Fatalf("write bookmarks.yml: %v", err)
+	}
+}
+
 func assertTextOrder(t *testing.T, text string, values ...string) {
 	t.Helper()
 	last := -1
@@ -138,7 +190,7 @@ func assertTextOrder(t *testing.T, text string, values ...string) {
 
 func TestFavoritesProjectionFiltersPrivateSortsAndKeepsRegularBookmarks(t *testing.T) {
 	usePrivateProjectionFixtures(t)
-	options := model.Application{IconMode: define.IconModeHidden}
+	options := model.Application{ShowBookmarks: true, ShowFavorites: true, IconMode: define.IconModeHidden}
 
 	anonymous, err := generateBookmarkModulesWithLocalAndURLErr("", &options, false, nil, false)
 	if err != nil {
@@ -180,6 +232,324 @@ func TestFavoritesProjectionIgnoresApplicationFavoriteFlag(t *testing.T) {
 	}
 	if strings.Contains(string(modules.Favorites), "App Favorite Impostor") {
 		t.Fatalf("apps.yml favorite flag must not enter normal-bookmark favorites: %s", modules.Favorites)
+	}
+}
+
+func TestFavoritesProjectionReturnsEmptyWithoutVisibleMatches(t *testing.T) {
+	tests := []struct {
+		name           string
+		items          []model.Bookmark
+		filter         string
+		canViewPrivate bool
+	}{
+		{
+			name:           "source has no favorites",
+			items:          []model.Bookmark{{Name: "Regular", URL: "https://regular.example"}},
+			canViewPrivate: true,
+		},
+		{
+			name: "anonymous filters every favorite",
+			items: []model.Bookmark{
+				{Name: "Public Regular", URL: "https://public.example"},
+				{Name: "Private Favorite", URL: "https://private.example", Private: true, Favorite: true},
+			},
+		},
+		{
+			name: "search has no favorite match",
+			items: []model.Bookmark{
+				{Name: "Visible Match", URL: "https://visible.example"},
+				{Name: "Favorite Other", URL: "https://favorite.example", Favorite: true},
+			},
+			filter:         "Visible Match",
+			canViewPrivate: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalLoader := loadNormalBookmarks
+			loadNormalBookmarks = func() (model.Bookmarks, error) {
+				return model.Bookmarks{Items: tt.items}, nil
+			}
+			t.Cleanup(func() { loadNormalBookmarks = originalLoader })
+
+			modules, err := generateBookmarkModulesWithLocalAndURLErr(tt.filter, &model.Application{
+				ShowFavorites: true,
+				IconMode:      define.IconModeHidden,
+			}, false, nil, tt.canViewPrivate)
+			if err != nil {
+				t.Fatalf("generate bookmark modules: %v", err)
+			}
+			if modules.Favorites != "" {
+				t.Fatalf("empty favorites projection must return empty HTML, got %q", modules.Favorites)
+			}
+		})
+	}
+}
+
+type emptyFavoritesRenderer struct {
+	t *testing.T
+}
+
+func (r emptyFavoritesRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	if favorites, _ := m["Favorites"].(template.HTML); favorites != "" {
+		r.t.Fatalf("expected empty favorites HTML, got %q", favorites)
+	}
+	if showFavorites, _ := m["OptionShowFavorites"].(bool); showFavorites {
+		r.t.Fatal("empty favorites projection must disable the favorites module")
+	}
+	return nil
+}
+
+func TestFavoritesHandlerDisablesEmptyModule(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+
+	tests := []struct {
+		name         string
+		items        []model.Bookmark
+		disableLogin bool
+		search       string
+	}{
+		{
+			name:         "source has no favorites",
+			items:        []model.Bookmark{{Name: "Regular", URL: "https://regular.example"}},
+			disableLogin: true,
+		},
+		{
+			name: "anonymous filters every favorite",
+			items: []model.Bookmark{
+				{Name: "Public Regular", URL: "https://public.example"},
+				{Name: "Private Favorite", URL: "https://private.example", Private: true, Favorite: true},
+			},
+		},
+		{
+			name: "search has no favorite match",
+			items: []model.Bookmark{
+				{Name: "Visible Match", URL: "https://visible.example"},
+				{Name: "Favorite Other", URL: "https://favorite.example", Favorite: true},
+			},
+			disableLogin: true,
+			search:       "Visible Match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalAppsLoader := loadFavoriteBookmarks
+			originalBookmarksLoader := loadNormalBookmarks
+			loadFavoriteBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{}, nil }
+			loadNormalBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{Items: tt.items}, nil }
+			t.Cleanup(func() {
+				loadFavoriteBookmarks = originalAppsLoader
+				loadNormalBookmarks = originalBookmarksLoader
+			})
+
+			e := echo.New()
+			e.Renderer = emptyFavoritesRenderer{t: t}
+			auth.RequestHandleWithFlags(e, model.Flags{
+				DisableLoginMode: tt.disableLogin,
+				CookieName:       "empty-favorites",
+				CookieSecret:     "empty-favorites-secret",
+				Port:             3636,
+			})
+			method := http.MethodGet
+			handler := pageHome
+			var body io.Reader
+			if tt.search != "" {
+				method = http.MethodPost
+				handler = pageSearch
+				form := url.Values{}
+				form.Set("search", tt.search)
+				body = strings.NewReader(form.Encode())
+			}
+			e.Add(method, "/", handler)
+			req := httptest.NewRequest(method, "/", body)
+			if tt.search != "" {
+				req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+			}
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestFavoritesDescriptionStateUsesOnlyDisplayedModules(t *testing.T) {
+	tests := []struct {
+		name    string
+		options model.Application
+		items   []model.Bookmark
+		want    bool
+	}{
+		{
+			name:    "all bookmark modules hidden",
+			options: model.Application{IconMode: define.IconModeHidden},
+			items:   []model.Bookmark{{Name: "Described", URL: "https://described.example", Desc: "details"}},
+		},
+		{
+			name:    "favorites ignore regular-only descriptions",
+			options: model.Application{ShowFavorites: true, IconMode: define.IconModeHidden},
+			items: []model.Bookmark{
+				{Name: "Described Regular", URL: "https://regular.example", Desc: "details"},
+				{Name: "Favorite Without Description", URL: "https://favorite.example", Favorite: true},
+			},
+		},
+		{
+			name:    "visible favorite has description",
+			options: model.Application{ShowFavorites: true, IconMode: define.IconModeHidden},
+			items:   []model.Bookmark{{Name: "Described Favorite", URL: "https://favorite.example", Desc: "details", Favorite: true}},
+			want:    true,
+		},
+		{
+			name:    "visible regular bookmark has description",
+			options: model.Application{ShowBookmarks: true, IconMode: define.IconModeHidden},
+			items:   []model.Bookmark{{Name: "Described Regular", URL: "https://regular.example", Desc: "details"}},
+			want:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalLoader := loadNormalBookmarks
+			loadNormalBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{Items: tt.items}, nil }
+			t.Cleanup(func() { loadNormalBookmarks = originalLoader })
+
+			modules, err := generateBookmarkModulesWithLocalAndURLErr("", &tt.options, false, nil, true)
+			if err != nil {
+				t.Fatalf("generate bookmark modules: %v", err)
+			}
+			if modules.HasDescriptions != tt.want {
+				t.Fatalf("HasDescriptions = %v, want %v", modules.HasDescriptions, tt.want)
+			}
+		})
+	}
+}
+
+func useDescriptionStateFixtures(t *testing.T, showBookmarks bool, showFavorites bool) {
+	t.Helper()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+	config := fmt.Sprintf("Title: SuperFlare\nLocale: en\nTheme: blackboard\nShowApps: false\nShowFavorites: %t\nShowBookmarks: %t\nIconMode: NONE\n", showFavorites, showBookmarks)
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte(config), 0644); err != nil {
+		t.Fatalf("write config.yml: %v", err)
+	}
+	writeEmptyBookmarkFixtures(t, tmpDir)
+}
+
+type descriptionStateRenderer struct {
+	t    *testing.T
+	want bool
+}
+
+func (r descriptionStateRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	got, _ := m["HasBookmarkDescriptions"].(bool)
+	if got != r.want {
+		r.t.Fatalf("HasBookmarkDescriptions = %v, want %v", got, r.want)
+	}
+	return nil
+}
+
+func TestFavoritesDescriptionHandlerStateUsesOnlyRenderedModules(t *testing.T) {
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+	tests := []struct {
+		name          string
+		path          string
+		handler       echo.HandlerFunc
+		showBookmarks bool
+		showFavorites bool
+		items         []model.Bookmark
+		want          bool
+	}{
+		{
+			name:          "home favorites ignore regular-only description",
+			path:          "/",
+			handler:       pageHome,
+			showFavorites: true,
+			items: []model.Bookmark{
+				{Name: "Described Regular", URL: "https://regular.example", Desc: "details"},
+				{Name: "Favorite Without Description", URL: "https://favorite.example", Favorite: true},
+			},
+		},
+		{
+			name:          "home visible favorite description",
+			path:          "/",
+			handler:       pageHome,
+			showFavorites: true,
+			items:         []model.Bookmark{{Name: "Described Favorite", URL: "https://favorite.example", Desc: "details", Favorite: true}},
+			want:          true,
+		},
+		{
+			name:    "home hidden bookmark modules",
+			path:    "/",
+			handler: pageHome,
+			items:   []model.Bookmark{{Name: "Described Regular", URL: "https://regular.example", Desc: "details"}},
+		},
+		{
+			name:          "bookmarks subpage hidden",
+			path:          define.RegularPages.Bookmarks.Path,
+			handler:       pageBookmark,
+			showFavorites: true,
+			items:         []model.Bookmark{{Name: "Described Favorite", URL: "https://favorite.example", Desc: "details", Favorite: true}},
+		},
+		{
+			name:          "bookmarks subpage visible",
+			path:          define.RegularPages.Bookmarks.Path,
+			handler:       pageBookmark,
+			showBookmarks: true,
+			items:         []model.Bookmark{{Name: "Described Regular", URL: "https://regular.example", Desc: "details"}},
+			want:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			useDescriptionStateFixtures(t, tt.showBookmarks, tt.showFavorites)
+			originalAppsLoader := loadFavoriteBookmarks
+			originalBookmarksLoader := loadNormalBookmarks
+			loadFavoriteBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{}, nil }
+			loadNormalBookmarks = func() (model.Bookmarks, error) { return model.Bookmarks{Items: tt.items}, nil }
+			t.Cleanup(func() {
+				loadFavoriteBookmarks = originalAppsLoader
+				loadNormalBookmarks = originalBookmarksLoader
+			})
+
+			e := echo.New()
+			e.Renderer = descriptionStateRenderer{t: t, want: tt.want}
+			auth.RequestHandleWithFlags(e, model.Flags{
+				DisableLoginMode: true,
+				CookieName:       "description-state",
+				Port:             3636,
+			})
+			e.GET(tt.path, tt.handler)
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -425,6 +795,173 @@ func TestPrivateItemsAreFilteredOnHomeAndSubpages(t *testing.T) {
 			e.ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+type privateIconWarningRenderer struct {
+	t                   *testing.T
+	wantAppWarning      bool
+	wantBookmarkWarning bool
+}
+
+func (r privateIconWarningRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	warnings, _ := m["RenderWarnings"].([]string)
+	joined := strings.Join(warnings, "\n")
+	if got := strings.Contains(joined, "App icon config fallback"); got != r.wantAppWarning {
+		r.t.Fatalf("app warning present = %v, want %v: %#v", got, r.wantAppWarning, warnings)
+	}
+	if got := strings.Contains(joined, "Bookmark icon config fallback"); got != r.wantBookmarkWarning {
+		r.t.Fatalf("bookmark warning present = %v, want %v: %#v", got, r.wantBookmarkWarning, warnings)
+	}
+	return nil
+}
+
+func TestPrivateIconWarningsUseOnlyVisibleHandlerItems(t *testing.T) {
+	usePrivateIconWarningFixtures(t)
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+
+	tests := []struct {
+		name                string
+		path                string
+		handler             echo.HandlerFunc
+		disableLogin        bool
+		wantAppWarning      bool
+		wantBookmarkWarning bool
+	}{
+		{name: "anonymous home", path: "/", handler: pageHome},
+		{name: "trusted home", path: "/", handler: pageHome, disableLogin: true, wantAppWarning: true, wantBookmarkWarning: true},
+		{name: "anonymous applications subpage", path: define.RegularPages.Applications.Path, handler: pageApplication},
+		{name: "trusted applications subpage", path: define.RegularPages.Applications.Path, handler: pageApplication, disableLogin: true, wantAppWarning: true},
+		{name: "anonymous bookmarks subpage", path: define.RegularPages.Bookmarks.Path, handler: pageBookmark},
+		{name: "trusted bookmarks subpage", path: define.RegularPages.Bookmarks.Path, handler: pageBookmark, disableLogin: true, wantBookmarkWarning: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := echo.New()
+			e.Renderer = privateIconWarningRenderer{
+				t:                   t,
+				wantAppWarning:      tt.wantAppWarning,
+				wantBookmarkWarning: tt.wantBookmarkWarning,
+			}
+			auth.RequestHandleWithFlags(e, model.Flags{
+				DisableLoginMode: tt.disableLogin,
+				CookieName:       "private-icon-warning",
+				CookieSecret:     "private-icon-warning-secret",
+				Port:             3636,
+			})
+			e.GET(tt.path, tt.handler)
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+type sourceLoadRenderer struct {
+	t              *testing.T
+	checkApps      bool
+	checkBookmarks bool
+}
+
+func (r sourceLoadRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	if r.checkApps {
+		htmlValue, _ := m["Applications"].(template.HTML)
+		if !strings.Contains(string(htmlValue), "Injected App") {
+			r.t.Fatalf("application handler did not render injected source: %s", htmlValue)
+		}
+	}
+	if r.checkBookmarks {
+		htmlValue, _ := m["Bookmarks"].(template.HTML)
+		if !strings.Contains(string(htmlValue), "Injected Bookmark") {
+			r.t.Fatalf("bookmark handler did not render injected source: %s", htmlValue)
+		}
+	}
+	return nil
+}
+
+func TestPrivateHandlersLoadEachVisibleSourceOnce(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	config := strings.Join([]string{
+		"Title: SuperFlare",
+		"Locale: en",
+		"Theme: blackboard",
+		"ShowApps: true",
+		"ShowFavorites: true",
+		"ShowBookmarks: true",
+		"IconMode: DEFAULT",
+	}, "\n") + "\n"
+	if err := os.WriteFile("config.yml", []byte(config), 0644); err != nil {
+		t.Fatalf("write visible-icon config: %v", err)
+	}
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	t.Cleanup(func() { auth.StoreAuthRuntimeConfig(originalRuntime) })
+
+	tests := []struct {
+		name              string
+		path              string
+		handler           echo.HandlerFunc
+		checkApps         bool
+		checkBookmarks    bool
+		wantAppsLoads     int
+		wantBookmarkLoads int
+	}{
+		{name: "home", path: "/", handler: pageHome, checkApps: true, checkBookmarks: true, wantAppsLoads: 1, wantBookmarkLoads: 1},
+		{name: "applications subpage", path: define.RegularPages.Applications.Path, handler: pageApplication, checkApps: true, wantAppsLoads: 1},
+		{name: "bookmarks subpage", path: define.RegularPages.Bookmarks.Path, handler: pageBookmark, checkBookmarks: true, wantBookmarkLoads: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalAppsLoader := loadFavoriteBookmarks
+			originalBookmarksLoader := loadNormalBookmarks
+			appsLoads := 0
+			bookmarkLoads := 0
+			loadFavoriteBookmarks = func() (model.Bookmarks, error) {
+				appsLoads++
+				return model.Bookmarks{Items: []model.Bookmark{{Name: "Injected App", URL: "https://injected-app.example"}}}, nil
+			}
+			loadNormalBookmarks = func() (model.Bookmarks, error) {
+				bookmarkLoads++
+				return model.Bookmarks{Items: []model.Bookmark{{Name: "Injected Bookmark", URL: "https://injected-bookmark.example", Favorite: true}}}, nil
+			}
+			t.Cleanup(func() {
+				loadFavoriteBookmarks = originalAppsLoader
+				loadNormalBookmarks = originalBookmarksLoader
+			})
+
+			e := echo.New()
+			e.Renderer = sourceLoadRenderer{t: t, checkApps: tt.checkApps, checkBookmarks: tt.checkBookmarks}
+			auth.RequestHandleWithFlags(e, model.Flags{
+				DisableLoginMode: true,
+				CookieName:       "single-source-load",
+				Port:             3636,
+			})
+			e.GET(tt.path, tt.handler)
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if appsLoads != tt.wantAppsLoads || bookmarkLoads != tt.wantBookmarkLoads {
+				t.Fatalf("source loads = apps:%d bookmarks:%d, want apps:%d bookmarks:%d", appsLoads, bookmarkLoads, tt.wantAppsLoads, tt.wantBookmarkLoads)
 			}
 		})
 	}

@@ -21,9 +21,7 @@ func appendConfiguredIconWarnings(locale string, iconMode string, showApps bool,
 
 	if showApps {
 		if appsData, err := loadFavoriteBookmarks(); err == nil {
-			if count := countInvalidExplicitIcons(appsData.Items); count > 0 {
-				warnings = append(warnings, formatConfiguredIconWarning(locale, "apps", count, iconMode))
-			}
+			warnings = appendConfiguredIconWarningsForItems(locale, iconMode, true, appsData.Items, false, nil, warnings)
 		} else {
 			warnings = append(warnings, formatConfiguredIconLoadWarning(locale, "apps", err))
 		}
@@ -31,14 +29,30 @@ func appendConfiguredIconWarnings(locale string, iconMode string, showApps bool,
 
 	if showBookmarks {
 		if bookmarksData, err := loadNormalBookmarks(); err == nil {
-			if count := countInvalidExplicitIcons(bookmarksData.Items); count > 0 {
-				warnings = append(warnings, formatConfiguredIconWarning(locale, "bookmarks", count, iconMode))
-			}
+			warnings = appendConfiguredIconWarningsForItems(locale, iconMode, false, nil, true, bookmarksData.Items, warnings)
 		} else {
 			warnings = append(warnings, formatConfiguredIconLoadWarning(locale, "bookmarks", err))
 		}
 	}
 
+	return warnings
+}
+
+func appendConfiguredIconWarningsForItems(locale string, iconMode string, showApps bool, apps []model.Bookmark, showBookmarks bool, bookmarks []model.Bookmark, warnings []string) []string {
+	iconMode = strings.ToUpper(strings.TrimSpace(iconMode))
+	if iconMode == define.IconModeHidden {
+		return warnings
+	}
+	if showApps {
+		if count := countInvalidExplicitIcons(apps); count > 0 {
+			warnings = append(warnings, formatConfiguredIconWarning(locale, "apps", count, iconMode))
+		}
+	}
+	if showBookmarks {
+		if count := countInvalidExplicitIcons(bookmarks); count > 0 {
+			warnings = append(warnings, formatConfiguredIconWarning(locale, "bookmarks", count, iconMode))
+		}
+	}
 	return warnings
 }
 

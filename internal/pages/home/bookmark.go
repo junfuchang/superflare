@@ -6,15 +6,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/fn"
 )
 
 type bookmarkModules struct {
-	Bookmarks       template.HTML
-	Favorites       template.HTML
-	HasDescriptions bool
+	Bookmarks                 template.HTML
+	Favorites                 template.HTML
+	HasFavorites              bool
+	HasDescriptions           bool
+	BookmarksHaveDescriptions bool
+	FavoritesHaveDescriptions bool
+	items                     []model.Bookmark
+	favoriteItems             []model.Bookmark
 }
 
 func bookmarkVisible(item model.Bookmark, canViewPrivate bool) bool {
@@ -38,7 +42,7 @@ func generateBookmarkModulesWithLocalAndURLErr(filter string, options *model.App
 	if options == nil {
 		options = &model.Application{}
 	}
-	bookmarksData, err := data.LoadNormalBookmarks()
+	bookmarksData, err := loadNormalBookmarks()
 	if err != nil {
 		return bookmarkModules{}, err
 	}
@@ -52,7 +56,8 @@ func generateBookmarkModulesWithLocalAndURLErr(filter string, options *model.App
 	filterLower := strings.ToLower(filter)
 	bookmarks := make([]model.Bookmark, 0, len(bookmarksData.Items))
 	favorites := make([]model.Bookmark, 0, len(bookmarksData.Items))
-	hasDescriptions := false
+	bookmarksHaveDescriptions := false
+	favoritesHaveDescriptions := false
 	for _, bookmark := range bookmarksData.Items {
 		if !bookmarkVisible(bookmark, canViewPrivate) {
 			continue
@@ -66,11 +71,11 @@ func generateBookmarkModulesWithLocalAndURLErr(filter string, options *model.App
 			continue
 		}
 		bookmarks = append(bookmarks, bookmark)
-		if strings.TrimSpace(bookmark.Desc) != "" {
-			hasDescriptions = true
-		}
+		hasDescription := strings.TrimSpace(bookmark.Desc) != ""
+		bookmarksHaveDescriptions = bookmarksHaveDescriptions || hasDescription
 		if bookmark.Favorite {
 			favorites = append(favorites, bookmark)
+			favoritesHaveDescriptions = favoritesHaveDescriptions || hasDescription
 		}
 	}
 	sort.SliceStable(favorites, func(i, j int) bool {
@@ -96,15 +101,26 @@ func generateBookmarkModulesWithLocalAndURLErr(filter string, options *model.App
 		b.WriteString(`</div>`)
 	}
 
-	var favoritesBuilder strings.Builder
-	favoritesBuilder.WriteString(`<div class="bookmark-groups">`)
-	renderBookmarksWithoutCategories(&favoritesBuilder, &favorites, options.OpenBookmarkNewTab, options.EnableEncryptedLink, options.IconMode, preferLocal, requestURL)
-	favoritesBuilder.WriteString(`</div>`)
+	var favoritesHTML template.HTML
+	if len(favorites) > 0 {
+		var favoritesBuilder strings.Builder
+		favoritesBuilder.WriteString(`<div class="bookmark-groups">`)
+		renderBookmarksWithoutCategories(&favoritesBuilder, &favorites, options.OpenBookmarkNewTab, options.EnableEncryptedLink, options.IconMode, preferLocal, requestURL)
+		favoritesBuilder.WriteString(`</div>`)
+		favoritesHTML = template.HTML(favoritesBuilder.String())
+	}
+	hasDescriptions := (options.ShowBookmarks && bookmarksHaveDescriptions) ||
+		(options.ShowFavorites && len(favorites) > 0 && favoritesHaveDescriptions)
 
 	return bookmarkModules{
-		Bookmarks:       template.HTML(b.String()),
-		Favorites:       template.HTML(favoritesBuilder.String()),
-		HasDescriptions: hasDescriptions,
+		Bookmarks:                 template.HTML(b.String()),
+		Favorites:                 favoritesHTML,
+		HasFavorites:              len(favorites) > 0,
+		HasDescriptions:           hasDescriptions,
+		BookmarksHaveDescriptions: bookmarksHaveDescriptions,
+		FavoritesHaveDescriptions: favoritesHaveDescriptions,
+		items:                     bookmarks,
+		favoriteItems:             favorites,
 	}, nil
 }
 

@@ -555,7 +555,12 @@ func pageBookmark(c *echo.Context) error {
 	if styleWarning != "" {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
-	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, false, true, renderWarnings)
+	canViewPrivate := canViewPrivateItems(c)
+	bookmarkModules, err := generateBookmarkModulesWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL, canViewPrivate)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, false, nil, options.ShowBookmarks, bookmarkModules.items, renderWarnings)
 	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
@@ -576,14 +581,12 @@ func pageBookmark(c *echo.Context) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	canViewPrivate := canViewPrivateItems(c)
-	bookmarkModules, err := generateBookmarkModulesWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL, canViewPrivate)
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
-	}
 	m["Bookmarks"] = bookmarkModules.Bookmarks
 	m["Favorites"] = bookmarkModules.Favorites
-	m["HasBookmarkDescriptions"] = bookmarkModules.HasDescriptions
+	m["HasFavorites"] = bookmarkModules.HasFavorites
+	m["BookmarksHaveDescriptions"] = bookmarkModules.BookmarksHaveDescriptions
+	m["FavoritesHaveDescriptions"] = bookmarkModules.FavoritesHaveDescriptions
+	m["HasBookmarkDescriptions"] = options.ShowBookmarks && bookmarkModules.BookmarksHaveDescriptions
 	m["OptionTitle"] = options.Title
 	m["OptionSiteIcon"] = options.SiteIcon
 	footer.BindTemplateData(m, options.Footer)
@@ -626,7 +629,12 @@ func pageApplication(c *echo.Context) error {
 	if styleWarning != "" {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
-	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, true, false, renderWarnings)
+	canViewPrivate := canViewPrivateItems(c)
+	applications, err := generateApplicationProjectionWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL, canViewPrivate)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, options.ShowApps, applications.items, false, nil, renderWarnings)
 	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
@@ -643,12 +651,7 @@ func pageApplication(c *echo.Context) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	canViewPrivate := canViewPrivateItems(c)
-	applicationsHTML, err := generateApplicationsTemplateWithLocalAndURLErr("", &options, fn.RequestLooksLocalNetwork(c.Request()), &requestURL, canViewPrivate)
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
-	}
-	m["Applications"] = applicationsHTML
+	m["Applications"] = applications.HTML
 	m["PageName"] = i18n.T(locale, "page_apps")
 	m["SubPage"] = true
 	m["PageAppearance"] = pageStyle
@@ -702,7 +705,23 @@ func render(c *echo.Context, filter string) error {
 	if styleWarning != "" {
 		renderWarnings = append(renderWarnings, styleWarning)
 	}
-	renderWarnings = appendConfiguredIconWarnings(locale, options.IconMode, options.ShowApps, options.ShowBookmarks, renderWarnings)
+	preferLocal := fn.RequestLooksLocalNetwork(c.Request())
+	canViewPrivate := canViewPrivateItems(c)
+	applications, err := generateApplicationProjectionWithLocalAndURLErr(filter, &options, preferLocal, &requestURL, canViewPrivate)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	bookmarkModules, err := generateBookmarkModulesWithLocalAndURLErr(filter, &options, preferLocal, &requestURL, canViewPrivate)
+	if err != nil {
+		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
+	}
+	bookmarkWarningItems := bookmarkModules.items
+	showBookmarkWarnings := options.ShowBookmarks
+	if !showBookmarkWarnings && options.ShowFavorites {
+		bookmarkWarningItems = bookmarkModules.favoriteItems
+		showBookmarkWarnings = bookmarkModules.HasFavorites
+	}
+	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, options.ShowApps, applications.items, showBookmarkWarnings, bookmarkWarningItems, renderWarnings)
 	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
@@ -726,19 +745,12 @@ func render(c *echo.Context, filter string) error {
 	m["SettingsURI"] = define.RegularPages.Settings.Path
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
-	preferLocal := fn.RequestLooksLocalNetwork(c.Request())
-	canViewPrivate := canViewPrivateItems(c)
-	applicationsHTML, err := generateApplicationsTemplateWithLocalAndURLErr(filter, &options, preferLocal, &requestURL, canViewPrivate)
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
-	}
-	bookmarkModules, err := generateBookmarkModulesWithLocalAndURLErr(filter, &options, preferLocal, &requestURL, canViewPrivate)
-	if err != nil {
-		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
-	}
-	m["Applications"] = applicationsHTML
+	m["Applications"] = applications.HTML
 	m["Bookmarks"] = bookmarkModules.Bookmarks
 	m["Favorites"] = bookmarkModules.Favorites
+	m["HasFavorites"] = bookmarkModules.HasFavorites
+	m["BookmarksHaveDescriptions"] = bookmarkModules.BookmarksHaveDescriptions
+	m["FavoritesHaveDescriptions"] = bookmarkModules.FavoritesHaveDescriptions
 	m["HasBookmarkDescriptions"] = bookmarkModules.HasDescriptions
 	m["SearchKeyword"] = template.HTML(searchKeyword)
 	m["SearchHintLabel"] = searchHintLabel
@@ -755,7 +767,7 @@ func render(c *echo.Context, filter string) error {
 	m["OptionShowTitle"] = options.ShowTitle
 	m["OptionShowDateTime"] = options.ShowDateTime
 	m["OptionShowApps"] = options.ShowApps
-	m["OptionShowFavorites"] = options.ShowFavorites
+	m["OptionShowFavorites"] = options.ShowFavorites && bookmarkModules.HasFavorites
 	m["OptionShowBookmarks"] = options.ShowBookmarks
 	m["OptionHideSettingsButton"] = options.HideSettingsButton
 	m["OptionHideHelpButton"] = options.HideHelpButton

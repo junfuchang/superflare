@@ -5,13 +5,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/junfuchang/superflare/config/data"
 	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/fn"
 )
 
 var builderPool = sync.Pool{
 	New: func() any { return &strings.Builder{} },
+}
+
+type applicationProjection struct {
+	HTML  template.HTML
+	items []model.Bookmark
 }
 
 func GenerateApplicationsTemplateErr(filter string, options *model.Application) (template.HTML, error) {
@@ -27,12 +31,17 @@ func GenerateApplicationsTemplateWithLocalAndURLErr(filter string, options *mode
 }
 
 func generateApplicationsTemplateWithLocalAndURLErr(filter string, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL, canViewPrivate bool) (template.HTML, error) {
+	projection, err := generateApplicationProjectionWithLocalAndURLErr(filter, options, preferLocal, requestURL, canViewPrivate)
+	return projection.HTML, err
+}
+
+func generateApplicationProjectionWithLocalAndURLErr(filter string, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL, canViewPrivate bool) (applicationProjection, error) {
 	if options == nil {
 		options = &model.Application{}
 	}
-	appsData, err := data.LoadFavoriteBookmarks()
+	appsData, err := loadFavoriteBookmarks()
 	if err != nil {
-		return template.HTML(""), err
+		return applicationProjection{}, err
 	}
 	b, ok := builderPool.Get().(*strings.Builder)
 	if !ok {
@@ -109,5 +118,8 @@ func generateApplicationsTemplateWithLocalAndURLErr(filter string, options *mode
 			b.WriteString(`</p></div></a></div>`)
 		}
 	}
-	return template.HTML(b.String()), nil
+	return applicationProjection{
+		HTML:  template.HTML(b.String()),
+		items: apps,
+	}, nil
 }
