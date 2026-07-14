@@ -3,6 +3,7 @@ package assets
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +142,39 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIcon(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(body), "superflare") {
 		t.Fatalf("site icon proxy fallback should not return project favicon, got %q", body)
+	}
+}
+
+func TestSiteIconProxyCacheMissWaitsForSuccessfulFetch(t *testing.T) {
+	setupAssetsConfigDir(t)
+	define.Init()
+	define.AppFlags.DebugMode = true
+
+	const iconBody = `<svg xmlns="http://www.w3.org/2000/svg"><title>fetched-icon</title></svg>`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/favicon.ico" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(iconBody))
+	}))
+	defer upstream.Close()
+
+	e := echo.New()
+	RegisterRouting(e)
+	iconURL := upstream.URL + "/favicon.ico"
+	req := httptest.NewRequest(http.MethodGet, "/assets/site-icons?src="+url.QueryEscape(iconURL), nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("site icon proxy status = %d", rec.Code)
+	}
+	if got := rec.Header().Get(siteIconStateHeader); got != "cached" {
+		t.Fatalf("site icon proxy state = %q, want cached", got)
+	}
+	if rec.Body.String() != iconBody {
+		t.Fatalf("site icon proxy body = %q", rec.Body.String())
 	}
 }
 

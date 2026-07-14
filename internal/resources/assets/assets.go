@@ -215,7 +215,8 @@ func serveSiteFavicon(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing site favicon source")
 	}
 
-	if data, contentType, err := fn.ReadCachedPublicSiteFavicon(iconURL); err == nil {
+	data, contentType, err := fn.FetchPublicSiteFavicon(iconURL)
+	if err == nil {
 		if currentAssetsRuntime().DebugMode {
 			c.Response().Header().Set("Cache-Control", "no-store")
 		} else {
@@ -226,7 +227,6 @@ func serveSiteFavicon(c *echo.Context) error {
 		return c.Blob(http.StatusOK, contentType, data)
 	}
 
-	fn.WarmSiteFaviconURL(iconURL)
 	c.Response().Header().Set("Cache-Control", "no-store")
 	c.Response().Header().Set(siteIconStateHeader, "fallback")
 	c.Response().Header().Del("ETag")
