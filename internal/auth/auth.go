@@ -458,6 +458,11 @@ func clearSessionCookie(c *echo.Context) {
 	})
 }
 
+// InvalidateCurrentLoginSession expires the login cookie for the current client.
+func InvalidateCurrentLoginSession(c *echo.Context) {
+	clearSessionCookie(c)
+}
+
 func recordSessionWarning(c *echo.Context, code string, detail string) {
 	if c == nil {
 		return

@@ -56,10 +56,16 @@ func updateLoginOptions(c *echo.Context) error {
 	if pass != confirm {
 		return renderOthers(c, "login_pass_confirm_error")
 	}
+	runtimeLoginConfig := auth.SnapshotLoginRuntimeConfigForRequest(c)
+	credentialsChanged := user != strings.TrimSpace(runtimeLoginConfig.User) || pass != strings.TrimSpace(runtimeLoginConfig.Pass)
 	if err := data.UpdateLoginConfig(user, pass); err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(statuspage.CurrentLocale(c), http.StatusInternalServerError, err.Error()))
 	}
 	applyRuntimeLoginConfig(c, user, pass)
+	if credentialsChanged {
+		auth.InvalidateCurrentLoginSession(c)
+		return c.Redirect(http.StatusFound, define.SettingPages.Others.Path)
+	}
 	return pageOthers(c)
 }
 
