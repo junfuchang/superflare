@@ -54,6 +54,8 @@ func TestHomeTemplateUsesAppsSurfaceAndBodyLevelApplicationSubdirectoryModals(t 
 	for _, expected := range []string{
 		`class="apps-container clearfix apps-surface"`,
 		`{{.ApplicationSubdirectoryModals}}`,
+		`{{ if and .OptionShowApps .InlineApplicationSubdirectoryModalScript }}`,
+		`<script nonce="{{.ScriptNonce}}">{{.InlineApplicationSubdirectoryModalScript}}</script>`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("home template missing %q", expected)
@@ -116,7 +118,6 @@ func TestHomeTemplateDoesNotRenderApplicationSubdirectoryModalsWhenAppsAreHidden
 				"HasBackgroundAssets":              false,
 				"OptionShowDateTime":               false,
 				"HasBookmarkDescriptions":          false,
-				"HasApplicationSubdirectoryModals": true,
 			}); err != nil {
 				t.Fatalf("render home template: %v", err)
 			}

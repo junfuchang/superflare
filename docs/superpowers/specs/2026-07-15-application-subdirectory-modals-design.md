@@ -29,9 +29,9 @@ Application rows already preserve `subdir`, but the home application renderer ig
 
 ## Alternatives
 
-### Server-rendered hash-target modals (selected)
+### Server-rendered hash-target modals with focus management (selected)
 
-Generate folder triggers and modal markup together with the application projection. CSS `:target` opens and closes each modal, matching the existing warnings modal. This adds no JavaScript, no CSP nonce requirement, and no client-side data serialization.
+Generate folder triggers and modal markup together with the application projection. CSS `:target` opens and closes each modal, matching the existing warnings modal. A small nonce-protected inline enhancement moves focus into the active dialog, makes background siblings inert, traps keyboard focus, closes on Escape, and restores focus to the invoking folder. It uses the existing CSP nonce path and adds no client-side data serialization or CSP policy change.
 
 ### One reusable JavaScript modal
 
@@ -69,9 +69,13 @@ Each modal contains:
 - A labelled header showing the escaped folder name.
 - A dedicated `.application-subdir-content` region containing the folder's application cards.
 
+The panel is programmatically focusable. The backdrop is pointer-accessible but excluded from sequential focus because the visible close control provides the keyboard command. Folder triggers expose `aria-expanded`, and the focus enhancement keeps it synchronized with the active hash target.
+
 The panel uses a fixed responsive width with explicit minimum and maximum widths. Its height also has explicit responsive minimum and maximum bounds. The panel itself uses `overflow: hidden`; the content region uses `min-height: 0` and `overflow: auto`. A targeted modal prevents the page body from scrolling in browsers that support `:has()`.
 
 Application cards in the main module and modal share `.apps-surface`, so existing app-card appearance, responsive columns, uppercase mode, icon layout, link behavior, and dynamic column settings remain aligned.
+
+When a folder opens, every body-level sibling outside the active modal becomes inert. Tab and Shift+Tab stay inside the active panel, Escape removes the hash and closes it, and close operations restore focus to the folder trigger. Direct hash navigation resolves the corresponding trigger for the same restoration behavior.
 
 ## Visibility and Security
 

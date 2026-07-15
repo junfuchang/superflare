@@ -281,5 +281,8 @@
   {{ if .InlineBookmarkTooltipScript }}
   <script nonce="{{.ScriptNonce}}">{{.InlineBookmarkTooltipScript}}</script>
   {{ end }}
+  {{ if and .OptionShowApps .InlineApplicationSubdirectoryModalScript }}
+  <script nonce="{{.ScriptNonce}}">{{.InlineApplicationSubdirectoryModalScript}}</script>
+  {{ end }}
 </body>
 </html>

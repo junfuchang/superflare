@@ -94,6 +94,108 @@ const _inlineClockScript = `(function(){var container=document.getElementById("l
 const _inlineBackgroundLoaderScript = background.InlineLoaderScript
 const _inlineSiteIconRefreshScript = `(function(){var nodes=Array.prototype.slice.call(document.querySelectorAll("img[data-site-icon-src]"));if(!nodes.length||!window.fetch||!window.URL||!URL.createObjectURL){return;}var groups=new Map();nodes.forEach(function(img){var src=img.dataset.siteIconSrc;if(!src){return;}var group=groups.get(src);if(group){group.push(img);}else{groups.set(src,[img]);}});var objectUrls=[];groups.forEach(function(group,src){fetch(src).then(function(res){if(!res.ok||res.headers.get("X-SuperFlare-Site-Icon")!=="cached"){return null;}return res.blob();}).then(function(blob){if(!blob){return;}var objectUrl=URL.createObjectURL(blob);objectUrls.push(objectUrl);group.forEach(function(img){img.src=objectUrl;img.dataset.siteIconDone="1";});}).catch(function(){});});window.addEventListener("pagehide",function(){objectUrls.forEach(function(objectUrl){URL.revokeObjectURL(objectUrl);});},{once:true});}());`
 const _inlineBookmarkTooltipScript = `(function(){var selector="[data-bookmark-description]";var tooltipId="bookmark-description-tooltip";var tooltip=document.getElementById(tooltipId);if(!tooltip){tooltip=document.createElement("div");tooltip.id=tooltipId;tooltip.className="bookmark-description-tooltip";tooltip.setAttribute("role","tooltip");tooltip.hidden=true;document.body.appendChild(tooltip);}var hoverTarget=null;var hoverReady=false;var hoverTimer=null;var focusTarget=null;var activeTarget=null;var originalAriaDescribedBy=null;function cancelHoverTimer(){if(hoverTimer!==null){window.clearTimeout(hoverTimer);hoverTimer=null;}}function clearHover(){cancelHoverTimer();hoverTarget=null;hoverReady=false;}function restoreDescription(){if(!activeTarget){return;}if(originalAriaDescribedBy===null){activeTarget.removeAttribute("aria-describedby");}else{activeTarget.setAttribute("aria-describedby",originalAriaDescribedBy);}activeTarget=null;originalAriaDescribedBy=null;}function hideRendered(){restoreDescription();tooltip.hidden=true;tooltip.textContent="";}function position(target){var gap=8;var targetRect=target.getBoundingClientRect();var tooltipRect=tooltip.getBoundingClientRect();var left=targetRect.left+(targetRect.width-tooltipRect.width)/2;var top=targetRect.bottom+gap;if(top+tooltipRect.height>window.innerHeight-gap){top=targetRect.top-tooltipRect.height-gap;}left=Math.max(gap,Math.min(left,window.innerWidth-tooltipRect.width-gap));top=Math.max(gap,Math.min(top,window.innerHeight-tooltipRect.height-gap));tooltip.style.left=Math.round(left)+"px";tooltip.style.top=Math.round(top)+"px";}function show(target){if(!target||!target.isConnected){hideRendered();return;}var description=target.getAttribute("data-bookmark-description");if(!description||!description.trim()){hideRendered();return;}if(activeTarget!==target){restoreDescription();if(!target.isConnected){hideRendered();return;}activeTarget=target;originalAriaDescribedBy=target.getAttribute("aria-describedby");var describedBy=originalAriaDescribedBy?originalAriaDescribedBy.trim().split(/\s+/):[];if(describedBy.indexOf(tooltipId)===-1){describedBy.push(tooltipId);}target.setAttribute("aria-describedby",describedBy.join(" "));}tooltip.textContent=description;tooltip.hidden=false;position(target);}function reconcile(){if(hoverTarget&&!hoverTarget.isConnected){clearHover();}if(focusTarget&&!focusTarget.isConnected){focusTarget=null;}var target=focusTarget||(hoverReady?hoverTarget:null);if(!target){hideRendered();return;}show(target);}function reset(){clearHover();focusTarget=null;hideRendered();}function findTarget(event){var origin=event.target;if(!origin||!origin.closest){return null;}return origin.closest(selector);}function movedWithin(target,relatedTarget){return relatedTarget&&target.contains(relatedTarget);}document.addEventListener("pointerover",function(event){var target=findTarget(event);if(!target||movedWithin(target,event.relatedTarget)){return;}clearHover();hoverTarget=target;var scheduledTarget=target;hoverTimer=window.setTimeout(function(){hoverTimer=null;if(hoverTarget!==scheduledTarget||!scheduledTarget.isConnected){if(hoverTarget===scheduledTarget){hoverTarget=null;hoverReady=false;}reconcile();return;}hoverReady=true;reconcile();},500);reconcile();});document.addEventListener("pointerout",function(event){var target=findTarget(event);if(!target||movedWithin(target,event.relatedTarget)){return;}if(target===hoverTarget){clearHover();reconcile();}});document.addEventListener("focusin",function(event){var target=findTarget(event);if(target&&target.isConnected){focusTarget=target;reconcile();}});document.addEventListener("focusout",function(event){var target=findTarget(event);if(!target||movedWithin(target,event.relatedTarget)){return;}if(target===focusTarget){focusTarget=null;reconcile();}});function cleanupDisconnectedTargets(){var changed=false;if(hoverTarget&&!hoverTarget.isConnected){clearHover();changed=true;}if(focusTarget&&!focusTarget.isConnected){focusTarget=null;changed=true;}if(activeTarget&&!activeTarget.isConnected){changed=true;}if(changed){reconcile();}}var observer=new MutationObserver(cleanupDisconnectedTargets);observer.observe(document.body,{childList:true,subtree:true});window.addEventListener("scroll",reset,true);document.addEventListener("keydown",function(event){if(event.key==="Escape"){reset();}});document.addEventListener("visibilitychange",reset);window.addEventListener("pagehide",reset);}());`
+const _inlineApplicationSubdirectoryModalScript = `(function(){
+var modalSelector=".application-subdirectory-modal";
+var triggerSelector=".application-subdirectory-trigger a[aria-controls]";
+var closeSelector=".application-subdirectory-close,.application-subdirectory-backdrop";
+var panelSelector=".application-subdirectory-panel";
+var inertMarker="data-application-subdirectory-inert";
+var activeModal=null;
+var lastTrigger=null;
+function triggers(){return Array.prototype.slice.call(document.querySelectorAll(triggerSelector));}
+function modalFromHash(){
+if(!window.location.hash||window.location.hash==="#"){return null;}
+var candidate=null;
+try{candidate=document.querySelector(window.location.hash);}catch(error){return null;}
+return candidate&&candidate.matches(modalSelector)?candidate:null;
+}
+function panelFor(modal){return modal?modal.querySelector(panelSelector):null;}
+function findTrigger(modal){
+if(!modal){return null;}
+var found=null;
+triggers().some(function(trigger){
+if(trigger.getAttribute("aria-controls")===modal.id){found=trigger;return true;}
+return false;
+});
+return found;
+}
+function setExpanded(modal){
+triggers().forEach(function(trigger){
+trigger.setAttribute("aria-expanded",modal&&trigger.getAttribute("aria-controls")===modal.id?"true":"false");
+});
+}
+function setBackgroundInert(modal){
+Array.prototype.slice.call(document.body.children).forEach(function(child){
+if(child===modal||child.tagName==="SCRIPT"||child.hasAttribute("inert")){return;}
+child.setAttribute(inertMarker,"");
+child.setAttribute("inert","");
+});
+}
+function restoreBackground(){
+Array.prototype.slice.call(document.querySelectorAll("["+inertMarker+"]")).forEach(function(child){
+child.removeAttribute("inert");
+child.removeAttribute(inertMarker);
+});
+}
+function focusPanel(modal){
+var panel=panelFor(modal);
+if(!panel){return;}
+window.requestAnimationFrame(function(){
+if(activeModal===modal){panel.focus({preventScroll:true});}
+});
+}
+function restoreTrigger(){
+var trigger=lastTrigger;
+lastTrigger=null;
+if(!trigger||!trigger.isConnected){return;}
+window.setTimeout(function(){trigger.focus({preventScroll:true});},0);
+}
+function syncModal(){
+var next=modalFromHash();
+if(next===activeModal){return;}
+restoreBackground();
+if(next&&!lastTrigger){lastTrigger=findTrigger(next);}
+activeModal=next;
+setExpanded(activeModal);
+if(activeModal){setBackgroundInert(activeModal);focusPanel(activeModal);}else{restoreTrigger();}
+}
+function closeActiveModal(){
+if(!activeModal){return;}
+window.location.hash="";
+}
+function focusableElements(modal){
+var panel=panelFor(modal);
+if(!panel){return [];}
+return Array.prototype.slice.call(panel.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter(function(node){
+return node.getClientRects().length>0&&!node.hasAttribute("disabled");
+});
+}
+document.addEventListener("click",function(event){
+var origin=event.target;
+if(!origin||!origin.closest){return;}
+var closeControl=origin.closest(closeSelector);
+if(closeControl&&activeModal&&activeModal.contains(closeControl)){event.preventDefault();closeActiveModal();return;}
+var trigger=origin.closest(triggerSelector);
+if(trigger){lastTrigger=trigger;}
+});
+document.addEventListener("keydown",function(event){
+if(!activeModal){return;}
+if(event.key==="Escape"){event.preventDefault();closeActiveModal();return;}
+if(event.key!=="Tab"){return;}
+var panel=panelFor(activeModal);
+if(!panel){return;}
+var items=focusableElements(activeModal);
+if(!items.length){event.preventDefault();panel.focus({preventScroll:true});return;}
+var first=items[0];
+var last=items[items.length-1];
+var focused=document.activeElement;
+if(event.shiftKey){
+if(focused===first||focused===panel||!activeModal.contains(focused)){event.preventDefault();last.focus();}
+}else if(focused===last||!activeModal.contains(focused)){event.preventDefault();first.focus();}
+});
+window.addEventListener("hashchange",syncModal);
+syncModal();
+}());`
 
 var cryptoRandRead = rand.Read
 
@@ -639,7 +741,7 @@ func pageApplication(c *echo.Context) error {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
 	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, options.ShowApps, applications.items, false, nil, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options))
+	scriptNonce, err := maybeMakeScriptNonce(assets.Enabled || hasAsyncSiteIconRefresh(options) || (options.ShowApps && applications.HasDirectories))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -658,6 +760,7 @@ func pageApplication(c *echo.Context) error {
 	m["Applications"] = applications.HTML
 	m["ApplicationSubdirectoryModals"] = applications.Modals
 	m["HasApplicationSubdirectories"] = applications.HasDirectories
+	m["InlineApplicationSubdirectoryModalScript"] = inlineApplicationSubdirectoryModalScript(applications.HasDirectories)
 	m["PageName"] = i18n.T(locale, "page_apps")
 	m["SubPage"] = true
 	m["PageAppearance"] = pageStyle
@@ -728,7 +831,7 @@ func render(c *echo.Context, filter string) error {
 		showBookmarkWarnings = bookmarkModules.HasFavorites
 	}
 	renderWarnings = appendConfiguredIconWarningsForItems(locale, options.IconMode, options.ShowApps, applications.items, showBookmarkWarnings, bookmarkWarningItems, renderWarnings)
-	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options) || bookmarkModules.HasDescriptions)
+	scriptNonce, err := maybeMakeScriptNonce(options.ShowDateTime || assets.Enabled || hasAsyncSiteIconRefresh(options) || bookmarkModules.HasDescriptions || (options.ShowApps && applications.HasDirectories))
 	if err != nil {
 		return statuspage.HTML(c, http.StatusInternalServerError, statuspage.BuildHTTPErrorPage(locale, http.StatusInternalServerError, err.Error()))
 	}
@@ -755,6 +858,7 @@ func render(c *echo.Context, filter string) error {
 	m["Applications"] = applications.HTML
 	m["ApplicationSubdirectoryModals"] = applications.Modals
 	m["HasApplicationSubdirectories"] = applications.HasDirectories
+	m["InlineApplicationSubdirectoryModalScript"] = inlineApplicationSubdirectoryModalScript(applications.HasDirectories)
 	m["Bookmarks"] = bookmarkModules.Bookmarks
 	m["Favorites"] = bookmarkModules.Favorites
 	m["HasFavorites"] = bookmarkModules.HasFavorites
@@ -947,6 +1051,13 @@ func inlineBookmarkTooltipScript(enabled bool) template.JS {
 		return ""
 	}
 	return template.JS(_inlineBookmarkTooltipScript)
+}
+
+func inlineApplicationSubdirectoryModalScript(enabled bool) template.JS {
+	if !enabled {
+		return ""
+	}
+	return template.JS(_inlineApplicationSubdirectoryModalScript)
 }
 
 func hasAsyncSiteIconRefresh(options model.Application) bool {

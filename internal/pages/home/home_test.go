@@ -75,6 +75,7 @@ func usePrivateProjectionFixtures(t *testing.T) {
 		"ShowApps: true",
 		"ShowFavorites: true",
 		"ShowBookmarks: true",
+		"ShowDateTime: false",
 		"IconMode: NONE",
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "config.yml"), []byte(config), 0644); err != nil {
@@ -1143,7 +1144,7 @@ type applicationSubdirectoryRenderer struct {
 	wantModalApp string
 }
 
-func (r applicationSubdirectoryRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+func (r applicationSubdirectoryRenderer) Render(c *echo.Context, _ io.Writer, _ string, data any) error {
 	r.t.Helper()
 	m, ok := data.(map[string]any)
 	if !ok {
@@ -1157,14 +1158,48 @@ func (r applicationSubdirectoryRenderer) Render(_ *echo.Context, _ io.Writer, _ 
 	if !ok {
 		r.t.Fatalf("expected HasApplicationSubdirectories bool, got %T", m["HasApplicationSubdirectories"])
 	}
+	modalScript, ok := m["InlineApplicationSubdirectoryModalScript"].(template.JS)
+	if !ok {
+		r.t.Fatalf("expected InlineApplicationSubdirectoryModalScript JS, got %T", m["InlineApplicationSubdirectoryModalScript"])
+	}
+	nonce, ok := m["ScriptNonce"].(string)
+	if !ok {
+		r.t.Fatalf("expected ScriptNonce string, got %T", m["ScriptNonce"])
+	}
+	csp := c.Response().Header().Get("Content-Security-Policy")
 	if r.wantModalApp == "" {
-		if modals != "" || hasDirectories {
-			r.t.Fatalf("expected no application subdirectory modals, got hasDirectories=%v modals=%s", hasDirectories, modals)
+		if modals != "" || hasDirectories || modalScript != "" {
+			r.t.Fatalf("expected no application subdirectory modal behavior, got hasDirectories=%v modals=%s script=%s", hasDirectories, modals, modalScript)
+		}
+		if nonce != "" || csp != getCSPValue("") {
+			r.t.Fatalf("modal-free page nonce=%q CSP=%q, want no nonce and %q", nonce, csp, getCSPValue(""))
 		}
 		return nil
 	}
 	if !hasDirectories || !strings.Contains(string(modals), r.wantModalApp) {
 		r.t.Fatalf("expected application subdirectory modal for %q, got hasDirectories=%v modals=%s", r.wantModalApp, hasDirectories, modals)
+	}
+	for _, expected := range []string{
+		`window.addEventListener("hashchange"`,
+		`event.key==="Escape"`,
+		`event.key!=="Tab"`,
+		`origin.closest(closeSelector)`,
+		`event.preventDefault();closeActiveModal();return;`,
+		`window.location.hash=""`,
+		`window.setTimeout(function(){trigger.focus({preventScroll:true});},0)`,
+		`setAttribute("inert","")`,
+		`panel.focus({preventScroll:true})`,
+		`trigger.focus({preventScroll:true})`,
+	} {
+		if !strings.Contains(string(modalScript), expected) {
+			r.t.Fatalf("application subdirectory modal script missing %q: %s", expected, modalScript)
+		}
+	}
+	if strings.Contains(string(modalScript), `history.replaceState`) {
+		r.t.Fatalf("application subdirectory modal script must close through hash navigation so :target is cleared: %s", modalScript)
+	}
+	if nonce == "" || csp != getCSPValue(nonce) {
+		r.t.Fatalf("modal page nonce=%q CSP=%q, want a matching nonce CSP", nonce, csp)
 	}
 	return nil
 }
@@ -3208,6 +3243,8 @@ func TestApplicationProjectionEscapesDirectoryNamesAndUsesGeneratedIDs(t *testin
 		`id="application-subdir-modal-0"`,
 		`id="application-subdir-title-0"`,
 		`aria-labelledby="application-subdir-title-0"`,
+		`class="application-subdirectory-backdrop" aria-label="Close" tabindex="-1" aria-hidden="true"`,
+		`class="application-subdirectory-panel" tabindex="-1" role="dialog"`,
 	} {
 		if !strings.Contains(mainHTML+modalHTML, expected) {
 			t.Fatalf("expected generated modal reference %q: main=%s modals=%s", expected, mainHTML, modalHTML)

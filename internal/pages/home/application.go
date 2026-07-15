@@ -139,7 +139,7 @@ func renderApplicationDirectory(b *strings.Builder, directory applicationDirecto
 	b.WriteString(escapedModalID)
 	b.WriteString(`" class="app-item" title="`)
 	b.WriteString(escapedName)
-	b.WriteString(`" aria-haspopup="dialog" aria-controls="`)
+	b.WriteString(`" aria-haspopup="dialog" aria-expanded="false" aria-controls="`)
 	b.WriteString(escapedModalID)
 	b.WriteString(`"><div class="app-icon">`)
 	b.WriteString(mdi.GetIconByName("folder"))
@@ -156,7 +156,7 @@ func renderApplicationDirectoryModal(b *strings.Builder, directory applicationDi
 
 	b.WriteString(`<div id="`)
 	b.WriteString(modalID)
-	b.WriteString(`" class="application-subdirectory-modal"><a href="#" class="application-subdirectory-backdrop" aria-label="Close"></a><div class="application-subdirectory-panel" role="dialog" aria-modal="true" aria-labelledby="`)
+	b.WriteString(`" class="application-subdirectory-modal"><a href="#" class="application-subdirectory-backdrop" aria-label="Close" tabindex="-1" aria-hidden="true"></a><div class="application-subdirectory-panel" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="`)
 	b.WriteString(titleID)
 	b.WriteString(`"><div class="application-subdirectory-header"><h2 id="`)
 	b.WriteString(titleID)

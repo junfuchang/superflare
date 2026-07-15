@@ -4,7 +4,7 @@
 
 **Goal:** Group application rows with `subdir` into sorted folder cards at the front of the home application grid and open bounded, internally scrollable modals containing those applications.
 
-**Architecture:** Extend the existing single-load application projection to split visible filtered applications into sorted directory groups and ungrouped rows. Render folder triggers in the main application HTML and return modal markup separately for body-level template placement, while sharing application-card markup and responsive grid styles through `.apps-surface`.
+**Architecture:** Extend the existing single-load application projection to split visible filtered applications into sorted directory groups and ungrouped rows. Render folder triggers in the main application HTML and return modal markup separately for body-level template placement, while sharing application-card markup and responsive grid styles through `.apps-surface`. Keep CSS `:target` as the open/close state and add a nonce-protected focus-management enhancement for inert background content, focus containment, Escape, and trigger restoration.
 
 **Tech Stack:** Go 1.24, Echo v5, Go `html/template`, embedded HTML/CSS resources, CSS `:target` modals, existing MDI icon renderer.
 
@@ -18,7 +18,7 @@
 - Do not duplicate grouped applications in the main application list.
 - Put folder cards and ungrouped applications in one `.apps-surface` grid, with every folder card first.
 - Reuse application new-tab, local URL, encrypted-link, icon, dynamic URL, color, uppercase, and column behavior.
-- Use CSS hash-target modals without new JavaScript or CSP changes.
+- Use CSS hash-target modals with the existing CSP nonce path; do not change CSP policy or serialize application data to JavaScript.
 - Give the modal panel explicit min/max width and height; keep panel overflow hidden and content overflow automatic.
 - Apply the same projection on home, search results, and `/applications`.
 - Work on local `main`, commit locally, and do not push.
@@ -420,3 +420,40 @@ Use the in-app Browser at 1280x720 and 375x667. Verify:
 - [ ] **Step 5: Review and final commit state**
 
 Request one independent read-only review of the implementation range. Fix every Critical or Important finding with a failing regression test, rerun verification, confirm `git status --short` is clean, and keep all commits local on `main` without pushing.
+
+---
+
+### Task 5: Add modal keyboard focus management
+
+**Files:**
+- Modify: `internal/pages/home/application.go`
+- Modify: `internal/pages/home/home.go`
+- Modify: `embed/templates/home.html`
+- Modify generated: `internal/resources/templates/html/home.html`
+- Test: `internal/pages/home/home_test.go`
+- Test: `internal/resources/templates/home_template_test.go`
+
+**Interfaces:**
+- Keeps CSS `:target` as the modal open state.
+- Produces a nonce-protected `InlineApplicationSubdirectoryModalScript` only when folder modals exist.
+- Makes panels programmatically focusable and keeps backdrop links outside sequential focus.
+
+- [ ] **Step 1: Write failing handler, markup, and template tests**
+
+Require every relevant handler to bind a non-empty focus-management script only when visible folder modals exist. Require the script contract to handle hash changes, background `inert`, panel focus, Tab/Shift+Tab containment, Escape, and trigger focus restoration. Require panel `tabindex="-1"`, backdrop `tabindex="-1"`, and the nonce-protected template script.
+
+- [ ] **Step 2: Verify RED**
+
+Run focused handler, projection-markup, and template tests. Expected: FAIL because no modal focus script or focusable panel exists.
+
+- [ ] **Step 3: Implement focus management**
+
+Track the invoking trigger, synchronize `aria-expanded`, make body-level siblings outside the active modal inert, focus the panel after a hash target opens, contain Tab and Shift+Tab within the panel, close on Escape, and restore focus to the invoking trigger. Preserve close-link and backdrop hash behavior and use the existing page CSP nonce.
+
+- [ ] **Step 4: Regenerate and verify**
+
+Run focused tests, package/full tests, generator idempotence, build, script checks, and desktop keyboard Browser QA. Verify direct hash navigation, focus cycling, Escape, focus restoration, inert cleanup, and console health.
+
+- [ ] **Step 5: Commit and re-review**
+
+Commit locally, request read-only re-review of the final Important finding, fix any remaining Critical or Important issue, and do not push.
