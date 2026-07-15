@@ -12,8 +12,17 @@ log_and_fail() {
     exit 1
 }
 
+had_existing_config=false
+if has_existing_runtime_config; then
+    had_existing_config=true
+fi
+
 ensure_runtime_layout || log_and_fail "Failed to prepare runtime layout after install."
-reset_runtime_defaults_for_install || log_and_fail "Failed to reset runtime defaults during install."
+
+if [ "${had_existing_config}" = "true" ]; then
+    log_info "Existing SuperFlare configuration preserved during install callback."
+    exit 0
+fi
 
 user="$(printf '%s' "${wizard_install_login_user:-}" | tr -d '\r' | xargs)"
 pass="$(printf '%s' "${wizard_install_login_pass:-}" | tr -d '\r')"

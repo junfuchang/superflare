@@ -104,19 +104,20 @@ copy_default_file() {
     local src="${DEFAULTS_DIR}/${name}"
     local dst="${ETC_DIR}/${name}"
 
-    if [ ! -f "${dst}" ] && [ -f "${src}" ]; then
+    if [ ! -e "${dst}" ] && [ ! -L "${dst}" ] && [ -f "${src}" ]; then
         cp "${src}" "${dst}"
     fi
 }
 
-overwrite_default_file() {
-    local name="$1"
-    local src="${DEFAULTS_DIR}/${name}"
-    local dst="${ETC_DIR}/${name}"
-
-    if [ -f "${src}" ]; then
-        cp "${src}" "${dst}"
-    fi
+has_existing_runtime_config() {
+    local name
+    for name in .env config.yml apps.yml bookmarks.yml ports.yaml; do
+        if [ -e "${ETC_DIR}/${name}" ] || [ -L "${ETC_DIR}/${name}" ] ||
+           { [ -e "${LEGACY_RUNTIME_DIR}/${name}" ] && [ ! -L "${LEGACY_RUNTIME_DIR}/${name}" ]; }; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 with_config_lock() {
@@ -310,13 +311,13 @@ FLARE_COOKIE_SECRET=$(generate_secret)
 EOF
     fi
 
-    upsert_env_value "${env_file}" "FLARE_PORT" "${TRIM_SERVICE_PORT:-3636}"
+    ensure_env_key "${env_file}" "FLARE_PORT" "${TRIM_SERVICE_PORT:-3636}"
     ensure_env_key "${env_file}" "FLARE_DISABLE_LOGIN" "false"
     ensure_env_key "${env_file}" "FLARE_EDITOR" "true"
     ensure_env_key "${env_file}" "FLARE_GUIDE" "true"
     ensure_env_key "${env_file}" "FLARE_COOKIE_NAME" "superflare"
 
-    secret="$(awk -F= '/^FLARE_COOKIE_SECRET=/{print $2; exit}' "${env_file}")"
+    secret="$(read_env_value "${env_file}" "FLARE_COOKIE_SECRET")"
     if [ -z "${secret}" ]; then
         upsert_env_value "${env_file}" "FLARE_COOKIE_SECRET" "$(generate_secret)"
     fi
@@ -330,8 +331,10 @@ ensure_login_env_defaults() {
     user="$(read_env_value "${env_file}" "FLARE_USER")"
     pass="$(read_env_value "${env_file}" "FLARE_PASS")"
 
-    if [ -z "${user}" ] || [ -z "${pass}" ]; then
+    if [ -z "${user}" ]; then
         upsert_env_value "${env_file}" "FLARE_USER" "admin"
+    fi
+    if [ -z "${pass}" ]; then
         upsert_env_value "${env_file}" "FLARE_PASS" "admin"
     fi
 }
@@ -343,8 +346,10 @@ ensure_login_config_defaults() {
     user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")"
     pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
 
-    if [ -z "${user}" ] || [ -z "${pass}" ]; then
+    if [ -z "${user}" ]; then
         upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "admin"
+    fi
+    if [ -z "${pass}" ]; then
         upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "admin"
     fi
 }
@@ -391,27 +396,40 @@ migrate_legacy_runtime_file() {
     local runtime_path="${LEGACY_RUNTIME_DIR}/${name}"
     local etc_path="${ETC_DIR}/${name}"
 
-    if [ -e "${runtime_path}" ] && [ ! -L "${runtime_path}" ] && [ ! -e "${etc_path}" ]; then
-        mv "${runtime_path}" "${etc_path}"
+    if [ -L "${LEGACY_RUNTIME_DIR}" ] || [ ! -e "${runtime_path}" ] || [ -L "${runtime_path}" ]; then
+        return 0
     fi
+
+    if [ ! -e "${etc_path}" ] && [ ! -L "${etc_path}" ]; then
+        mv "${runtime_path}" "${etc_path}"
+        return $?
+    fi
+
+    log_lifecycle "Legacy runtime configuration conflicts with current configuration; preserving both: ${runtime_path}"
+    return 0
 }
 
 cleanup_legacy_runtime_layout() {
     local runtime_dir="${LEGACY_RUNTIME_DIR}"
+    local name
 
     if [ ! -d "${runtime_dir}" ] && [ ! -L "${runtime_dir}" ]; then
         return 0
     fi
 
-    rm -f "${runtime_dir}/.env"
-    rm -f "${runtime_dir}/config.yml"
-    rm -f "${runtime_dir}/apps.yml"
-    rm -f "${runtime_dir}/bookmarks.yml"
-    rm -f "${runtime_dir}/ports.yaml"
-    rm -f "${runtime_dir}/var"
+    if [ -L "${runtime_dir}" ]; then
+        log_lifecycle "Legacy runtime directory is a symbolic link; leaving it unchanged: ${runtime_dir}"
+        return 0
+    fi
+
+    for name in .env config.yml apps.yml bookmarks.yml ports.yaml var; do
+        if [ -L "${runtime_dir}/${name}" ]; then
+            rm -f "${runtime_dir}/${name}" || return 1
+        fi
+    done
 
     if [ -d "${runtime_dir}" ] && [ -z "$(ls -A "${runtime_dir}" 2>/dev/null)" ]; then
-        rmdir "${runtime_dir}" 2>/dev/null || true
+        rmdir "${runtime_dir}" 2>/dev/null || return 1
     fi
 }
 
@@ -419,16 +437,23 @@ relink_path() {
     local link_path="$1"
     local target_path="$2"
     local current=""
+    local preserved_base="${link_path}.pre-superflare-link"
+    local preserved_path="${preserved_base}"
+    local suffix=0
 
     if [ -L "${link_path}" ]; then
         current="$(readlink "${link_path}" 2>/dev/null || true)"
         if [ "${current}" = "${target_path}" ]; then
             return 0
         fi
-    fi
-
-    if [ -e "${link_path}" ] || [ -L "${link_path}" ]; then
-        rm -rf "${link_path}"
+        rm -f "${link_path}" || return 1
+    elif [ -e "${link_path}" ]; then
+        while [ -e "${preserved_path}" ] || [ -L "${preserved_path}" ]; do
+            suffix=$((suffix + 1))
+            preserved_path="${preserved_base}.${suffix}"
+        done
+        mv "${link_path}" "${preserved_path}" || return 1
+        log_lifecycle "Preserved existing path before creating managed link: ${preserved_path}"
     fi
 
     ln -s "${target_path}" "${link_path}"
@@ -465,24 +490,6 @@ ensure_runtime_layout() {
     require_path "${VAR_DIR}" "VAR_DIR" || return 1
 
     with_config_lock ensure_runtime_layout_locked
-}
-
-reset_runtime_defaults_for_install_locked() {
-    ensure_dir "${ETC_DIR}" &&
-    overwrite_default_file "config.yml" &&
-    overwrite_default_file "apps.yml" &&
-    overwrite_default_file "bookmarks.yml" &&
-    overwrite_default_file "ports.yaml" || return 1
-
-    if [ -f "${ETC_DIR}/.env" ]; then
-        rm -f "${ETC_DIR}/.env" || return 1
-    fi
-
-    ensure_env_file
-}
-
-reset_runtime_defaults_for_install() {
-    with_config_lock reset_runtime_defaults_for_install_locked
 }
 
 read_pid_file() {
