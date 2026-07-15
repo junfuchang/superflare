@@ -1562,11 +1562,51 @@ func TestAppendAdaptiveColumnStyleUsesDesktopWrapAndMobileWaterfall(t *testing.T
 	style := b.String()
 
 	assert.Contains(t, style, "@media (min-width:1201px){#page-home.pageview .container{padding-left:clamp(40px,4vw,250px);padding-right:clamp(40px,4vw,250px);}}")
-	assert.Contains(t, style, "#container-apps .apps-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-gap:18px;row-gap:0;align-items:start;}")
+	assert.Contains(t, style, ".apps-surface{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-gap:18px;row-gap:0;align-items:start;}")
+	assert.Contains(t, style, ".apps-surface .app-container{float:none;width:auto;min-width:0;}")
+	assert.NotContains(t, style, "#container-apps .apps-container{display:grid")
 	assert.Contains(t, style, ".bookmark-module .bookmark-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(180px,calc((100% - (4 - 1) * 18px) / 4)),1fr));column-count:auto;column-gap:18px;gap:18px;align-items:start;}")
 	assert.Contains(t, style, ".bookmark-module .bookmark-group-container{break-inside:auto;display:block;width:auto;max-width:none;min-width:0;")
 	assert.Contains(t, style, "@media (max-width:560px){.bookmark-module .bookmark-groups{display:block;column-count:2;column-gap:18px;}")
 	assert.NotContains(t, style, ";};}")
+}
+
+func TestApplicationSubdirectoryModalStyleContracts(t *testing.T) {
+	style := define.PAGE_INLINE_STYLE
+
+	for _, expected := range []string{
+		`.apps-surface {`,
+		`.apps-surface .app-container {`,
+		`.apps-surface .app-item {`,
+		`.app-content-uppercase .apps-surface .app-text {`,
+		`.application-subdirectory-modal {`,
+		`.application-subdirectory-modal:target {`,
+		`.application-subdirectory-backdrop {`,
+		`.application-subdirectory-panel {`,
+		`.application-subdirectory-header {`,
+		`.application-subdirectory-close {`,
+		`.application-subdirectory-content {`,
+		`body:has(.application-subdirectory-modal:target) {`,
+	} {
+		if !strings.Contains(style, expected) {
+			t.Errorf("generated home CSS missing %q", expected)
+		}
+	}
+
+	contracts := []struct {
+		name string
+		css  string
+	}{
+		{name: "overlay containment", css: `.application-subdirectory-modal {position: fixed;inset: 0;z-index: 40;display: flex;align-items: center;justify-content: center;padding: 16px;overflow: hidden;`},
+		{name: "bounded panel", css: `.application-subdirectory-panel {position: relative;z-index: 1;display: flex;flex-direction: column;width: min(760px, calc(100vw - 32px));min-width: min(420px, calc(100vw - 32px));max-width: min(760px, calc(100vw - 32px));height: min(68vh, 680px);min-height: min(320px, calc(100vh - 32px));max-height: min(82vh, 760px);overflow: hidden;`},
+		{name: "scrollable content", css: `.application-subdirectory-content {flex: 1 1 auto;min-height: 0;overflow: auto;overscroll-behavior: contain;}`},
+		{name: "body scroll lock", css: `body:has(.application-subdirectory-modal:target) {overflow: hidden;}`},
+	}
+	for _, contract := range contracts {
+		if !strings.Contains(style, contract.css) {
+			t.Errorf("generated home CSS missing %s contract %q", contract.name, contract.css)
+		}
+	}
 }
 
 func TestSplitGreetingOptions(t *testing.T) {
