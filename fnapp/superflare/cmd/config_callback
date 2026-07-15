@@ -18,8 +18,8 @@ login_enabled="$(printf '%s' "${wizard_login_enabled:-true}" | tr -d '\r' | xarg
 user="$(printf '%s' "${wizard_login_user:-}" | tr -d '\r' | xargs)"
 pass="$(printf '%s' "${wizard_login_pass:-}" | tr -d '\r')"
 confirm="$(printf '%s' "${wizard_login_pass_confirm:-}" | tr -d '\r')"
-current_user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")"
-current_pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
+current_user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")" || log_and_fail "Failed to read current login settings."
+current_pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")" || log_and_fail "Failed to read current login settings."
 
 if [ -z "${login_enabled}" ]; then
     login_enabled="true"

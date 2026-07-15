@@ -74,12 +74,17 @@ while true; do sleep 60; done
 CONFIG_FILE="${HARNESS_CONFIG_FILE:-}"
 ensure_runtime_layout() { return 0; }
 read_yaml_value() {
+    if [ "${HARNESS_READ_FAIL:-false}" = "true" ]; then
+        return 77
+    fi
     case "$2" in
         LoginUser) printf '%s\n' old-user ;;
         LoginPass) printf '%s\n' old-pass ;;
     esac
 }
-sync_login_config() { return 1; }
+sync_login_config() {
+    [ "${HARNESS_SYNC_FAIL:-true}" != "true" ]
+}
 sync_login_enabled_config() { return 0; }
 stop_app() { return 0; }
 start_app() { return 0; }
@@ -89,7 +94,7 @@ log_lifecycle() { printf '%s\n' "$*" >> "${HARNESS_LOG}"; }
     $callbackHarnessScriptSh = To-ShPath $callbackHarnessScript
     $callbackHarnessLogSh = To-ShPath $callbackHarnessLog
     & $bashPath -c "chmod +x '$callbackHarnessScriptSh'"
-    $callbackHarnessCommand = "HARNESS_LOG='$callbackHarnessLogSh' wizard_login_enabled='true' wizard_login_user='write-failure-user' wizard_login_pass='write-failure-pass' wizard_login_pass_confirm='write-failure-pass' '$callbackHarnessScriptSh'"
+    $callbackHarnessCommand = "HARNESS_LOG='$callbackHarnessLogSh' HARNESS_SYNC_FAIL='true' wizard_login_enabled='true' wizard_login_user='write-failure-user' wizard_login_pass='write-failure-pass' wizard_login_pass_confirm='write-failure-pass' '$callbackHarnessScriptSh'"
     $callbackHarnessOutput = @(& $bashPath -c $callbackHarnessCommand 2>&1)
     if ($LASTEXITCODE -eq 0) {
         throw "config_callback succeeded when credential synchronization failed.`n$($callbackHarnessOutput -join "`n")"
@@ -97,6 +102,17 @@ log_lifecycle() { printf '%s\n' "$*" >> "${HARNESS_LOG}"; }
     if (-not (Test-Path -LiteralPath $callbackHarnessLog -PathType Leaf) -or
         (Get-Content -Raw -LiteralPath $callbackHarnessLog) -notmatch [regex]::Escape("Failed to apply login settings.")) {
         throw "config_callback did not log the credential synchronization failure."
+    }
+
+    Remove-Item -LiteralPath $callbackHarnessLog -Force
+    $callbackHarnessCommand = "HARNESS_LOG='$callbackHarnessLogSh' HARNESS_READ_FAIL='true' HARNESS_SYNC_FAIL='false' wizard_login_enabled='true' wizard_login_user='read-failure-user' wizard_login_pass='read-failure-pass' wizard_login_pass_confirm='read-failure-pass' '$callbackHarnessScriptSh'"
+    $callbackHarnessOutput = @(& $bashPath -c $callbackHarnessCommand 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw "config_callback succeeded when current login settings could not be read.`n$($callbackHarnessOutput -join "`n")"
+    }
+    if (-not (Test-Path -LiteralPath $callbackHarnessLog -PathType Leaf) -or
+        (Get-Content -Raw -LiteralPath $callbackHarnessLog) -notmatch [regex]::Escape("Failed to read current login settings.")) {
+        throw "config_callback did not log the current-login read failure."
     }
 
     $command = "TRIM_APPDEST='$appSh' TRIM_PKGETC='$etcSh' TRIM_PKGVAR='$varSh' wizard_login_enabled='false' wizard_login_user='new-user' wizard_login_pass='new-pass' wizard_login_pass_confirm='new-pass' '$scriptSh'"

@@ -30,6 +30,15 @@ try {
     $bashPath = Resolve-GitBash
     $commonSh = To-ShPath $commonPath
     $tmpSh = To-ShPath $tmpRoot
+    $danglingReadTarget = Join-Path $tmpRoot "dangling-read-target"
+    $danglingReadPath = Join-Path $tmpRoot "dangling-read-link"
+    $null = [System.IO.Directory]::CreateDirectory($danglingReadTarget)
+    $danglingReadLink = New-Item -ItemType Junction -Path $danglingReadPath -Target $danglingReadTarget
+    if ($danglingReadLink.LinkType -ne "Junction") {
+        throw "Expected dangling reader test path to be a Junction, found '$($danglingReadLink.LinkType)'."
+    }
+    Remove-Item -LiteralPath $danglingReadTarget -Recurse -Force
+    $danglingReadSh = To-ShPath $danglingReadPath
     $testScriptPath = Join-Path $tmpRoot "common-test.sh"
     $testScriptSh = To-ShPath $testScriptPath
 
@@ -66,6 +75,49 @@ EOF
 [ "`$(read_yaml_value "`$yaml_file" LoginUser)" = "old user" ] || { echo "LoginUser yaml parse failed: `$(read_yaml_value "`$yaml_file" LoginUser)"; exit 1; }
 [ "`$(read_yaml_value "`$yaml_file" LoginPass)" = "abc#123:xyz" ] || { echo "LoginPass yaml parse failed: `$(read_yaml_value "`$yaml_file" LoginPass)"; exit 1; }
 
+missing_read_path="`$TRIM_PKGETC/missing-read-path"
+missing_value=""
+missing_value="`$(read_env_value "`$missing_read_path" FLARE_USER)" || { echo "read_env_value rejected a missing path"; exit 1; }
+[ -z "`$missing_value" ] || { echo "read_env_value returned data for a missing path"; exit 1; }
+missing_value="`$(read_yaml_value "`$missing_read_path" LoginUser)" || { echo "read_yaml_value rejected a missing path"; exit 1; }
+[ -z "`$missing_value" ] || { echo "read_yaml_value returned data for a missing path"; exit 1; }
+
+env_read_failure_path="`$TRIM_PKGETC/env-read-failure"
+yaml_read_failure_path="`$TRIM_PKGETC/yaml-read-failure"
+mkdir -p "`$env_read_failure_path" "`$yaml_read_failure_path"
+if read_env_value "`$env_read_failure_path" FLARE_USER >/dev/null 2>&1; then
+    echo "read_env_value accepted a directory path"
+    exit 1
+fi
+if read_yaml_value "`$yaml_read_failure_path" LoginUser >/dev/null 2>&1; then
+    echo "read_yaml_value accepted a directory path"
+    exit 1
+fi
+
+dangling_read_path='$danglingReadSh'
+if read_env_value "`$dangling_read_path" FLARE_USER >/dev/null 2>&1; then
+    echo "read_env_value accepted a dangling symbolic link"
+    exit 1
+fi
+if read_yaml_value "`$dangling_read_path" LoginUser >/dev/null 2>&1; then
+    echo "read_yaml_value accepted a dangling symbolic link"
+    exit 1
+fi
+
+env_parse_status=0
+(
+    parse_shell_value() { return 73; }
+    read_env_value "`$env_file" FLARE_USER >/dev/null
+) || env_parse_status=`$?
+[ "`$env_parse_status" -eq 73 ] || { echo "read_env_value masked parser status 73 as `$env_parse_status"; exit 1; }
+
+yaml_parse_status=0
+(
+    parse_shell_value() { return 74; }
+    read_yaml_value "`$yaml_file" LoginUser >/dev/null
+) || yaml_parse_status=`$?
+[ "`$yaml_parse_status" -eq 74 ] || { echo "read_yaml_value masked parser status 74 as `$yaml_parse_status"; exit 1; }
+
 upsert_yaml_value "`$yaml_file" LoginPass 'new: pass #1'
 grep -Eq "^LoginPass: 'new: pass #1'`$" "`$yaml_file" || { echo "yaml upsert failed"; cat "`$yaml_file"; exit 1; }
 
@@ -99,6 +151,55 @@ fi
 ETC_DIR="`$original_etc_dir"
 CONFIG_FILE="`$original_config_file"
 CONFIG_LOCK_FILE="`$original_config_lock_file"
+
+ensure_key_marker="`$TRIM_PKGETC/ensure-key-write-marker"
+(
+    read_env_value() { return 71; }
+    upsert_env_value() { : > "`$ensure_key_marker"; return 0; }
+    if ensure_env_key "`$env_file" FLARE_USER should-not-write; then
+        echo "ensure_env_key masked a required read failure"
+        exit 1
+    fi
+    [ ! -e "`$ensure_key_marker" ] || { echo "ensure_env_key wrote a default after a read failure"; exit 1; }
+)
+
+cookie_read_dir="`$TRIM_PKGETC/cookie-read-failure"
+cookie_read_marker="`$TRIM_PKGETC/cookie-read-write-marker"
+mkdir -p "`$cookie_read_dir"
+printf '%s\n' 'FLARE_COOKIE_SECRET=existing-secret' > "`$cookie_read_dir/.env"
+(
+    ETC_DIR="`$cookie_read_dir"
+    ensure_env_key() { return 0; }
+    read_env_value() { return 72; }
+    upsert_env_value() { : > "`$cookie_read_marker"; return 0; }
+    if ensure_env_file; then
+        echo "ensure_env_file masked the Cookie-secret read failure"
+        exit 1
+    fi
+    [ ! -e "`$cookie_read_marker" ] || { echo "ensure_env_file wrote a Cookie secret after a read failure"; exit 1; }
+)
+
+login_env_marker="`$TRIM_PKGETC/login-env-write-marker"
+(
+    read_env_value() { return 75; }
+    upsert_env_value() { : > "`$login_env_marker"; return 0; }
+    if ensure_login_env_defaults; then
+        echo "ensure_login_env_defaults masked a required read failure"
+        exit 1
+    fi
+    [ ! -e "`$login_env_marker" ] || { echo "ensure_login_env_defaults wrote defaults after a read failure"; exit 1; }
+)
+
+login_config_marker="`$TRIM_PKGETC/login-config-write-marker"
+(
+    read_yaml_value() { return 76; }
+    upsert_yaml_value() { : > "`$login_config_marker"; return 0; }
+    if ensure_login_config_defaults; then
+        echo "ensure_login_config_defaults masked a required read failure"
+        exit 1
+    fi
+    [ ! -e "`$login_config_marker" ] || { echo "ensure_login_config_defaults wrote defaults after a read failure"; exit 1; }
+)
 
 cat >"`$env_file" <<'EOF'
 FLARE_USER=custom-user

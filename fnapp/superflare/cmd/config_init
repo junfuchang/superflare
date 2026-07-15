@@ -20,7 +20,7 @@ emit_wizard_value() {
     printf '%s=%s\n' "${key}" "${value}"
 }
 
-disable_login="$(read_env_value "${ETC_DIR}/.env" "FLARE_DISABLE_LOGIN")"
+disable_login="$(read_env_value "${ETC_DIR}/.env" "FLARE_DISABLE_LOGIN")" || exit 1
 case "${disable_login}" in
     true|1|yes|on)
         emit_wizard_value "wizard_login_enabled" "false"

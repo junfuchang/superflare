@@ -201,10 +201,13 @@ ensure_env_key() {
     local file="$1"
     local key="$2"
     local value="$3"
+    local current=""
 
-    if [ -z "$(read_env_value "${file}" "${key}")" ]; then
-        upsert_env_value "${file}" "${key}" "${value}"
+    current="$(read_env_value "${file}" "${key}")" || return 1
+    if [ -z "${current}" ]; then
+        upsert_env_value "${file}" "${key}" "${value}" || return 1
     fi
+    return 0
 }
 
 read_env_value() {
@@ -213,18 +216,20 @@ read_env_value() {
     local line
     local value
 
-    if [ ! -r "${file}" ]; then
+    if [ ! -e "${file}" ] && [ ! -L "${file}" ]; then
         return 0
     fi
+    [ -f "${file}" ] && [ -r "${file}" ] || return 1
 
     while IFS= read -r line || [ -n "${line}" ]; do
         line="${line#$'\xef\xbb\xbf'}"
         if [[ "${line}" =~ ^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*= ]]; then
             value="${line#*=}"
             parse_shell_value "${value}"
-            return 0
+            return $?
         fi
-    done < "${file}"
+    done < "${file}" || return 1
+    return 0
 }
 
 yaml_escape() {
@@ -286,18 +291,20 @@ read_yaml_value() {
     local line
     local value
 
-    if [ ! -r "${file}" ]; then
+    if [ ! -e "${file}" ] && [ ! -L "${file}" ]; then
         return 0
     fi
+    [ -f "${file}" ] && [ -r "${file}" ] || return 1
 
     while IFS= read -r line || [ -n "${line}" ]; do
         line="${line#$'\xef\xbb\xbf'}"
         if [[ "${line}" =~ ^[[:space:]]*${key}[[:space:]]*: ]]; then
             value="${line#*:}"
             parse_shell_value "${value}"
-            return 0
+            return $?
         fi
-    done < "${file}"
+    done < "${file}" || return 1
+    return 0
 }
 
 upsert_yaml_value() {
@@ -360,7 +367,7 @@ EOF
     ensure_env_key "${env_file}" "FLARE_GUIDE" "true" || return 1
     ensure_env_key "${env_file}" "FLARE_COOKIE_NAME" "superflare" || return 1
 
-    secret="$(read_env_value "${env_file}" "FLARE_COOKIE_SECRET")"
+    secret="$(read_env_value "${env_file}" "FLARE_COOKIE_SECRET")" || return 1
     if [ -z "${secret}" ]; then
         upsert_env_value "${env_file}" "FLARE_COOKIE_SECRET" "$(generate_secret)" || return 1
     fi
@@ -372,8 +379,8 @@ ensure_login_env_defaults() {
     local user=""
     local pass=""
 
-    user="$(read_env_value "${env_file}" "FLARE_USER")"
-    pass="$(read_env_value "${env_file}" "FLARE_PASS")"
+    user="$(read_env_value "${env_file}" "FLARE_USER")" || return 1
+    pass="$(read_env_value "${env_file}" "FLARE_PASS")" || return 1
 
     if [ -z "${user}" ]; then
         upsert_env_value "${env_file}" "FLARE_USER" "admin" || return 1
@@ -388,8 +395,8 @@ ensure_login_config_defaults() {
     local user=""
     local pass=""
 
-    user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")"
-    pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
+    user="$(read_yaml_value "${CONFIG_FILE}" "LoginUser")" || return 1
+    pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")" || return 1
 
     if [ -z "${user}" ]; then
         upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "admin" || return 1

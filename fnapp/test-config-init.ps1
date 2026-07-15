@@ -72,6 +72,13 @@ FLARE_PASS=123456
         }
     }
 
+    Remove-Item -LiteralPath $envFile -Force
+    $null = New-Item -ItemType Directory -Path $envFile
+    $output = & $bashPath -c "TRIM_PKGETC='$trimPkgEtc' '$($scriptPath.Replace('\', '/'))'" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        throw "config_init succeeded when .env was an unreadable configuration path.`n$output"
+    }
+
     Write-Host "config_init output verified."
     Write-Host ($lines -join "`n")
 }
