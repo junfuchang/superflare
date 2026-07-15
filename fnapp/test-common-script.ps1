@@ -69,6 +69,37 @@ EOF
 upsert_yaml_value "`$yaml_file" LoginPass 'new: pass #1'
 grep -Eq "^LoginPass: 'new: pass #1'`$" "`$yaml_file" || { echo "yaml upsert failed"; cat "`$yaml_file"; exit 1; }
 
+env_failure_path="`$TRIM_PKGETC/env-write-failure"
+yaml_failure_path="`$TRIM_PKGETC/yaml-write-failure"
+mkdir -p "`$env_failure_path" "`$yaml_failure_path"
+if upsert_env_value "`$env_failure_path" FLARE_USER should-fail 2>/dev/null; then
+    echo "upsert_env_value masked a directory write failure"
+    exit 1
+fi
+if upsert_yaml_value "`$yaml_failure_path" LoginUser should-fail 2>/dev/null; then
+    echo "upsert_yaml_value masked a directory write failure"
+    exit 1
+fi
+
+original_etc_dir="`$ETC_DIR"
+original_config_file="`$CONFIG_FILE"
+original_config_lock_file="`$CONFIG_LOCK_FILE"
+ETC_DIR="`$TRIM_PKGETC/sync-write-failure"
+CONFIG_FILE="`$ETC_DIR/config.yml"
+CONFIG_LOCK_FILE="`$ETC_DIR/.superflare-config.lock"
+mkdir -p "`$ETC_DIR/.env"
+cat >"`$CONFIG_FILE" <<'EOF'
+LoginUser: 'old-user'
+LoginPass: 'old-pass'
+EOF
+if sync_login_config should-fail should-fail 2>/dev/null; then
+    echo "sync_login_config masked a required credential write failure"
+    exit 1
+fi
+ETC_DIR="`$original_etc_dir"
+CONFIG_FILE="`$original_config_file"
+CONFIG_LOCK_FILE="`$original_config_lock_file"
+
 cat >"`$env_file" <<'EOF'
 FLARE_USER=custom-user
 FLARE_PASS=

@@ -112,8 +112,17 @@ copy_default_file() {
 has_existing_runtime_config() {
     local name
     for name in .env config.yml apps.yml bookmarks.yml ports.yaml; do
-        if [ -e "${ETC_DIR}/${name}" ] || [ -L "${ETC_DIR}/${name}" ] ||
-           { [ -e "${LEGACY_RUNTIME_DIR}/${name}" ] && [ ! -L "${LEGACY_RUNTIME_DIR}/${name}" ]; }; then
+        if [ -e "${ETC_DIR}/${name}" ] || [ -L "${ETC_DIR}/${name}" ]; then
+            return 0
+        fi
+    done
+
+    if [ -L "${LEGACY_RUNTIME_DIR}" ]; then
+        return 1
+    fi
+
+    for name in .env config.yml apps.yml bookmarks.yml ports.yaml; do
+        if [ -e "${LEGACY_RUNTIME_DIR}/${name}" ] && [ ! -L "${LEGACY_RUNTIME_DIR}/${name}" ]; then
             return 0
         fi
     done
@@ -148,23 +157,44 @@ upsert_env_value() {
     local normalized
 
     ensure_dir "$(dirname "${file}")" || return 1
-    [ -f "${file}" ] || : > "${file}"
-    formatted="$(format_env_value "${value}")"
-    tmp="$(mktemp)"
+    if [ ! -f "${file}" ]; then
+        if [ -e "${file}" ] || [ -L "${file}" ]; then
+            return 1
+        fi
+        : > "${file}" || return 1
+    fi
+    formatted="$(format_env_value "${value}")" || return 1
+    tmp="$(mktemp)" || return 1
     while IFS= read -r line || [ -n "${line}" ]; do
         normalized="${line#$'\xef\xbb\xbf'}"
         if [[ "${normalized}" =~ ^([[:space:]]*)(export[[:space:]]+)?${key}[[:space:]]*= ]]; then
-            printf '%s%s%s=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${key}" "${formatted}" >> "${tmp}"
+            printf '%s%s%s=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${key}" "${formatted}" >> "${tmp}" || {
+                rm -f "${tmp}" 2>/dev/null || true
+                return 1
+            }
             updated=1
             continue
         fi
-        printf '%s\n' "${line}" >> "${tmp}"
-    done < "${file}"
+        printf '%s\n' "${line}" >> "${tmp}" || {
+            rm -f "${tmp}" 2>/dev/null || true
+            return 1
+        }
+    done < "${file}" || {
+        rm -f "${tmp}" 2>/dev/null || true
+        return 1
+    }
     if [ "${updated}" -eq 0 ]; then
-        printf '%s=%s\n' "${key}" "${formatted}" >> "${tmp}"
+        printf '%s=%s\n' "${key}" "${formatted}" >> "${tmp}" || {
+            rm -f "${tmp}" 2>/dev/null || true
+            return 1
+        }
     fi
-    cat "${tmp}" > "${file}"
-    rm -f "${tmp}"
+    if ! cat "${tmp}" > "${file}"; then
+        rm -f "${tmp}" 2>/dev/null || true
+        return 1
+    fi
+    rm -f "${tmp}" || return 1
+    return 0
 }
 
 ensure_env_key() {
@@ -277,9 +307,10 @@ upsert_yaml_value() {
     local tmp
     local escaped
 
-    escaped="$(yaml_escape "${value}")"
-    tmp="$(mktemp)"
-    awk -v key="${key}" -v value="${escaped}" '
+    [ -f "${file}" ] || return 1
+    escaped="$(yaml_escape "${value}")" || return 1
+    tmp="$(mktemp)" || return 1
+    if ! awk -v key="${key}" -v value="${escaped}" '
         BEGIN { updated = 0 }
         index($0, key ":") == 1 {
             print key ": '\''" value "'\''"
@@ -292,17 +323,29 @@ upsert_yaml_value() {
                 print key ": '\''" value "'\''"
             }
         }
-    ' "${file}" > "${tmp}"
-    cat "${tmp}" > "${file}"
-    rm -f "${tmp}"
+    ' "${file}" > "${tmp}"; then
+        rm -f "${tmp}" 2>/dev/null || true
+        return 1
+    fi
+    if ! cat "${tmp}" > "${file}"; then
+        rm -f "${tmp}" 2>/dev/null || true
+        return 1
+    fi
+    rm -f "${tmp}" || return 1
+    return 0
 }
 
 ensure_env_file() {
     local env_file="${ETC_DIR}/.env"
     local secret
 
+    if [ -L "${env_file}" ] && [ ! -e "${env_file}" ]; then
+        log_lifecycle "Refusing to initialize a dangling .env symbolic link: ${env_file}"
+        return 1
+    fi
+
     if [ ! -f "${env_file}" ]; then
-        cat > "${env_file}" <<EOF
+        cat > "${env_file}" <<EOF || return 1
 FLARE_DISABLE_LOGIN=false
 FLARE_EDITOR=true
 FLARE_GUIDE=true
@@ -311,16 +354,17 @@ FLARE_COOKIE_SECRET=$(generate_secret)
 EOF
     fi
 
-    ensure_env_key "${env_file}" "FLARE_PORT" "${TRIM_SERVICE_PORT:-3636}"
-    ensure_env_key "${env_file}" "FLARE_DISABLE_LOGIN" "false"
-    ensure_env_key "${env_file}" "FLARE_EDITOR" "true"
-    ensure_env_key "${env_file}" "FLARE_GUIDE" "true"
-    ensure_env_key "${env_file}" "FLARE_COOKIE_NAME" "superflare"
+    ensure_env_key "${env_file}" "FLARE_PORT" "${TRIM_SERVICE_PORT:-3636}" || return 1
+    ensure_env_key "${env_file}" "FLARE_DISABLE_LOGIN" "false" || return 1
+    ensure_env_key "${env_file}" "FLARE_EDITOR" "true" || return 1
+    ensure_env_key "${env_file}" "FLARE_GUIDE" "true" || return 1
+    ensure_env_key "${env_file}" "FLARE_COOKIE_NAME" "superflare" || return 1
 
     secret="$(read_env_value "${env_file}" "FLARE_COOKIE_SECRET")"
     if [ -z "${secret}" ]; then
-        upsert_env_value "${env_file}" "FLARE_COOKIE_SECRET" "$(generate_secret)"
+        upsert_env_value "${env_file}" "FLARE_COOKIE_SECRET" "$(generate_secret)" || return 1
     fi
+    return 0
 }
 
 ensure_login_env_defaults() {
@@ -332,11 +376,12 @@ ensure_login_env_defaults() {
     pass="$(read_env_value "${env_file}" "FLARE_PASS")"
 
     if [ -z "${user}" ]; then
-        upsert_env_value "${env_file}" "FLARE_USER" "admin"
+        upsert_env_value "${env_file}" "FLARE_USER" "admin" || return 1
     fi
     if [ -z "${pass}" ]; then
-        upsert_env_value "${env_file}" "FLARE_PASS" "admin"
+        upsert_env_value "${env_file}" "FLARE_PASS" "admin" || return 1
     fi
+    return 0
 }
 
 ensure_login_config_defaults() {
@@ -347,21 +392,23 @@ ensure_login_config_defaults() {
     pass="$(read_yaml_value "${CONFIG_FILE}" "LoginPass")"
 
     if [ -z "${user}" ]; then
-        upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "admin"
+        upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "admin" || return 1
     fi
     if [ -z "${pass}" ]; then
-        upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "admin"
+        upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "admin" || return 1
     fi
+    return 0
 }
 
 sync_login_config_locked() {
     local user="$1"
     local pass="$2"
 
-    upsert_env_value "${ETC_DIR}/.env" "FLARE_USER" "${user}"
-    upsert_env_value "${ETC_DIR}/.env" "FLARE_PASS" "${pass}"
-    upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "${user}"
-    upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "${pass}"
+    upsert_env_value "${ETC_DIR}/.env" "FLARE_USER" "${user}" || return 1
+    upsert_env_value "${ETC_DIR}/.env" "FLARE_PASS" "${pass}" || return 1
+    upsert_yaml_value "${CONFIG_FILE}" "LoginUser" "${user}" || return 1
+    upsert_yaml_value "${CONFIG_FILE}" "LoginPass" "${pass}" || return 1
+    return 0
 }
 
 sync_login_config() {

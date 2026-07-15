@@ -41,5 +41,5 @@ if [ "${pass}" != "${confirm}" ]; then
     log_and_fail "Install login password confirmation does not match."
 fi
 
-sync_login_config "${user}" "${pass}"
+sync_login_config "${user}" "${pass}" || log_and_fail "Failed to apply install login settings."
 exit 0

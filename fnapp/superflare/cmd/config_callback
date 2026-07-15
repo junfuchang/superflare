@@ -46,7 +46,7 @@ if [ -z "${pass}" ]; then
     log_and_fail "Login password cannot be empty."
 fi
 
-sync_login_config "${user}" "${pass}"
+sync_login_config "${user}" "${pass}" || log_and_fail "Failed to apply login settings."
 if ! sync_login_enabled_config "${login_enabled}"; then
     log_and_fail "Invalid login enabled option: ${login_enabled}"
 fi

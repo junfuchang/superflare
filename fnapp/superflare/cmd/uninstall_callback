@@ -7,7 +7,17 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 . "${SCRIPT_DIR}/common.sh"
 
 stop_app || true
-if [ -L "${ETC_DIR}/var" ]; then
-    rm -f "${ETC_DIR}/var" || exit 1
+managed_var_link="${ETC_DIR}/var"
+managed_var_target=""
+if [ -L "${managed_var_link}" ]; then
+    if managed_var_target="$(readlink "${managed_var_link}" 2>/dev/null)" &&
+       [ "${managed_var_target}" = "${VAR_DIR}" ]; then
+        rm -f "${managed_var_link}" || {
+            log_lifecycle "Failed to remove managed etc/var symbolic link during uninstall: ${managed_var_link}"
+            exit 1
+        }
+    else
+        log_lifecycle "Preserving unmanaged etc/var symbolic link during uninstall: ${managed_var_link} -> ${managed_var_target:-unreadable target}"
+    fi
 fi
 exit 0

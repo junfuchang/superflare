@@ -116,7 +116,7 @@ existing-port-${Name}: 9443
     }
 }
 
-function Invoke-LifecycleCallback([string]$ScriptPath, [string]$ScenarioRoot, [hashtable]$WizardValues) {
+function Invoke-LifecycleCallback([string]$ScriptPath, [string]$ScenarioRoot, [hashtable]$WizardValues, [bool]$ExpectFailure = $false) {
     $appRoot = Join-Path $ScenarioRoot "app"
     $etcRoot = Join-Path $ScenarioRoot "etc"
     $varRoot = Join-Path $ScenarioRoot "var"
@@ -155,6 +155,12 @@ function Invoke-LifecycleCallback([string]$ScriptPath, [string]$ScenarioRoot, [h
         $scriptSh = To-ShPath ([System.IO.Path]::GetFullPath($ScriptPath))
         $output = @(& $bashPath $scriptSh 2>&1)
         $exitCode = $LASTEXITCODE
+        if ($ExpectFailure) {
+            if ($exitCode -eq 0) {
+                throw "Lifecycle callback '$ScriptPath' unexpectedly succeeded."
+            }
+            return
+        }
         if ($exitCode -ne 0) {
             throw "Lifecycle callback '$ScriptPath' failed with code $exitCode`n$($output -join "`n")"
         }
@@ -289,6 +295,32 @@ try {
     $null = [System.IO.Directory]::CreateDirectory($tempRoot)
     $bashPath = Resolve-GitBash
 
+    $installHarnessRoot = Join-Path $tempRoot "install-write-failure-harness"
+    $installHarnessCallback = Join-Path $installHarnessRoot "install_callback"
+    $installHarnessCommon = Join-Path $installHarnessRoot "common.sh"
+    $installHarnessLog = Join-Path $installHarnessRoot "lifecycle.log"
+    $null = [System.IO.Directory]::CreateDirectory($installHarnessRoot)
+    Copy-Item -LiteralPath $installCallback -Destination $installHarnessCallback
+    Write-Utf8NoBom $installHarnessCommon @'
+has_existing_runtime_config() { return 1; }
+ensure_runtime_layout() { return 0; }
+sync_login_config() { return 1; }
+log_info() { :; }
+log_lifecycle() { printf '%s\n' "$*" >> "${HARNESS_LOG}"; }
+'@
+    $installHarnessCallbackSh = To-ShPath $installHarnessCallback
+    $installHarnessLogSh = To-ShPath $installHarnessLog
+    & $bashPath -c "chmod +x '$installHarnessCallbackSh'"
+    $installHarnessCommand = "HARNESS_LOG='$installHarnessLogSh' wizard_install_login_user='write-failure-user' wizard_install_login_pass='write-failure-pass' wizard_install_login_pass_confirm='write-failure-pass' '$installHarnessCallbackSh'"
+    $installHarnessOutput = @(& $bashPath -c $installHarnessCommand 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw "install_callback succeeded when credential synchronization failed.`n$($installHarnessOutput -join "`n")"
+    }
+    if (-not (Test-Path -LiteralPath $installHarnessLog -PathType Leaf) -or
+        (Get-Content -Raw -LiteralPath $installHarnessLog) -notmatch [regex]::Escape("Failed to apply install login settings.")) {
+        throw "install_callback did not log the credential synchronization failure."
+    }
+
     $existingInstall = New-LifecycleScenario "existing-install" $true
     $existingUpgrade = New-LifecycleScenario "existing-upgrade" $true
     $freshInstall = New-LifecycleScenario "fresh-install" $false
@@ -327,6 +359,33 @@ try {
     Assert-YamlValue (Join-Path $freshInstall.EtcRoot "apps.yml") "- name" $freshInstall.DefaultApplicationSentinel "fresh install application defaults"
     Assert-YamlValue (Join-Path $freshInstall.EtcRoot "bookmarks.yml") "- name" $freshInstall.DefaultBookmarkSentinel "fresh install bookmark defaults"
     Assert-YamlValue (Join-Path $freshInstall.EtcRoot "ports.yaml") $freshInstall.DefaultPortSentinel "7000" "fresh install port defaults"
+
+    $danglingEnv = New-LifecycleScenario "dangling-env-install" $false
+    $danglingEnvPath = Join-Path $danglingEnv.EtcRoot ".env"
+    $danglingEnvTarget = Join-Path $danglingEnv.Root "dangling-env-target"
+    $danglingEnvLog = Join-Path $danglingEnv.Root "lifecycle.log"
+    $null = [System.IO.Directory]::CreateDirectory($danglingEnvTarget)
+    $danglingJunction = New-Item -ItemType Junction -Path $danglingEnvPath -Target $danglingEnvTarget
+    if ($danglingJunction.LinkType -ne "Junction") {
+        throw "Expected dangling .env test path to begin as a Junction, found '$($danglingJunction.LinkType)'."
+    }
+    Remove-Item -LiteralPath $danglingEnvTarget
+    Invoke-LifecycleCallback $installCallback $danglingEnv.Root @{
+        wizard_install_login_user = "should-not-write"
+        wizard_install_login_pass = "should-not-write"
+        wizard_install_login_pass_confirm = "should-not-write"
+    } $true
+    if (Test-Path -LiteralPath $danglingEnvTarget) {
+        throw "Install recreated the target of a dangling .env Junction."
+    }
+    $danglingEnvItem = Get-Item -LiteralPath $danglingEnvPath -Force
+    if ($danglingEnvItem.LinkType -ne "Junction") {
+        throw "Install did not preserve the dangling .env Junction."
+    }
+    if (-not (Test-Path -LiteralPath $danglingEnvLog -PathType Leaf) -or
+        (Get-Content -Raw -LiteralPath $danglingEnvLog) -notmatch [regex]::Escape("Refusing to initialize a dangling .env symbolic link:")) {
+        throw "Install did not log rejection of the dangling .env Junction."
+    }
 
     $partialInstall = New-LifecycleScenario "partial-install" $false
     Write-Utf8NoBom (Join-Path $partialInstall.EtcRoot ".env") @"
@@ -466,6 +525,40 @@ LoginPass: 'legacy-pass'
     Assert-EnvValue (Join-Path $legacyOnly.EtcRoot ".env") "FLARE_USER" "legacy-user" "legacy-only install .env username"
     Assert-YamlValue (Join-Path $legacyOnly.EtcRoot "config.yml") "LoginUser" "legacy-user" "legacy-only install config username"
 
+    $junctionLegacy = New-LifecycleScenario "junction-legacy-install" $false
+    $junctionLegacyRoot = Join-Path $junctionLegacy.VarRoot "runtime"
+    $junctionLegacyTarget = Join-Path $junctionLegacy.Root "operator-legacy-target"
+    $junctionLegacyTargetConfig = Join-Path $junctionLegacyTarget "config.yml"
+    $null = [System.IO.Directory]::CreateDirectory($junctionLegacyTarget)
+    Write-Utf8NoBom $junctionLegacyTargetConfig @"
+Title: 'operator-junction-title'
+LoginUser: 'operator-junction-user'
+LoginPass: 'operator-junction-pass'
+"@
+    $junctionLegacyTargetHash = (Get-FileHash -LiteralPath $junctionLegacyTargetConfig -Algorithm SHA256).Hash
+    $junction = New-Item -ItemType Junction -Path $junctionLegacyRoot -Target $junctionLegacyTarget
+    if ($junction.LinkType -ne "Junction") {
+        throw "Expected legacy runtime test path to be a Junction, found '$($junction.LinkType)'."
+    }
+    Invoke-LifecycleCallback $installCallback $junctionLegacy.Root @{
+        wizard_install_login_user = "junction-fresh-user"
+        wizard_install_login_pass = "junction-fresh-pass"
+        wizard_install_login_pass_confirm = "junction-fresh-pass"
+    }
+    $null = Get-ConfigHashes $junctionLegacy.EtcRoot
+    Assert-EnvValue (Join-Path $junctionLegacy.EtcRoot ".env") "FLARE_USER" "junction-fresh-user" "junction-backed legacy install .env username"
+    Assert-EnvValue (Join-Path $junctionLegacy.EtcRoot ".env") "FLARE_PASS" "junction-fresh-pass" "junction-backed legacy install .env password"
+    Assert-YamlValue (Join-Path $junctionLegacy.EtcRoot "config.yml") "LoginUser" "junction-fresh-user" "junction-backed legacy install config username"
+    Assert-YamlValue (Join-Path $junctionLegacy.EtcRoot "config.yml") "LoginPass" "junction-fresh-pass" "junction-backed legacy install config password"
+    Assert-FileHashEqual $junctionLegacyTargetConfig $junctionLegacyTargetHash "junction-backed legacy target config"
+    if ((Get-Item -LiteralPath $junctionLegacyRoot).LinkType -ne "Junction") {
+        throw "Install did not preserve the legacy runtime Junction."
+    }
+    $junctionTargetEntries = @(Get-ChildItem -LiteralPath $junctionLegacyTarget -Force)
+    if ($junctionTargetEntries.Count -ne 1 -or $junctionTargetEntries[0].Name -ne "config.yml") {
+        throw "Install changed the legacy Junction target contents: $($junctionTargetEntries.Name -join ', ')."
+    }
+
     $legacyConflict = New-LifecycleScenario "legacy-conflict" $true
     $legacyConflictRoot = Join-Path $legacyConflict.VarRoot "runtime"
     $legacyConflictBookmark = Join-Path $legacyConflictRoot "bookmarks.yml"
@@ -525,6 +618,29 @@ LoginPass: 'legacy-pass'
     Invoke-LifecycleCallback $uninstallCallback $uninstall.Root @{}
     Assert-FileHashEqual $uninstallVarMarker $uninstallVarHash "uninstall real etc/var marker"
     Assert-FileHashEqual $uninstallLegacyMarker $uninstallLegacyHash "uninstall legacy runtime configuration"
+
+    $uninstallOperatorLink = New-LifecycleScenario "uninstall-operator-link" $false
+    $uninstallOperatorLinkPath = Join-Path $uninstallOperatorLink.EtcRoot "var"
+    $uninstallOperatorTarget = Join-Path $uninstallOperatorLink.Root "operator-var-target"
+    $uninstallOperatorMarker = Join-Path $uninstallOperatorTarget "operator-link-marker.txt"
+    $uninstallOperatorLog = Join-Path $uninstallOperatorLink.Root "lifecycle.log"
+    $null = [System.IO.Directory]::CreateDirectory($uninstallOperatorTarget)
+    Write-Utf8NoBom $uninstallOperatorMarker "operator-link-data-sentinel`n"
+    $uninstallOperatorMarkerHash = (Get-FileHash -LiteralPath $uninstallOperatorMarker -Algorithm SHA256).Hash
+    $operatorJunction = New-Item -ItemType Junction -Path $uninstallOperatorLinkPath -Target $uninstallOperatorTarget
+    if ($operatorJunction.LinkType -ne "Junction") {
+        throw "Expected uninstall operator path to be a Junction, found '$($operatorJunction.LinkType)'."
+    }
+    Invoke-LifecycleCallback $uninstallCallback $uninstallOperatorLink.Root @{}
+    if (-not (Test-Path -LiteralPath $uninstallOperatorLinkPath -PathType Container) -or
+        (Get-Item -LiteralPath $uninstallOperatorLinkPath).LinkType -ne "Junction") {
+        throw "Uninstall removed the operator-owned etc/var Junction."
+    }
+    Assert-FileHashEqual $uninstallOperatorMarker $uninstallOperatorMarkerHash "uninstall operator-owned link target marker"
+    if (-not (Test-Path -LiteralPath $uninstallOperatorLog -PathType Leaf) -or
+        (Get-Content -Raw -LiteralPath $uninstallOperatorLog) -notmatch [regex]::Escape("Preserving unmanaged etc/var symbolic link during uninstall:")) {
+        throw "Uninstall did not log preservation of the operator-owned etc/var Junction."
+    }
 
     Write-Host "fnapp lifecycle configuration preservation verified."
 }

@@ -64,6 +64,41 @@ while true; do sleep 60; done
     $varSh = To-ShPath $varRoot
     & $bashPath -c "chmod +x '$appSh/server/superflare'"
 
+    $callbackHarnessRoot = Join-Path $tmpRoot "write-failure-harness"
+    $callbackHarnessScript = Join-Path $callbackHarnessRoot "config_callback"
+    $callbackHarnessCommon = Join-Path $callbackHarnessRoot "common.sh"
+    $callbackHarnessLog = Join-Path $callbackHarnessRoot "lifecycle.log"
+    $null = [System.IO.Directory]::CreateDirectory($callbackHarnessRoot)
+    Copy-Item -LiteralPath $scriptPath -Destination $callbackHarnessScript
+    [System.IO.File]::WriteAllText($callbackHarnessCommon, @'
+CONFIG_FILE="${HARNESS_CONFIG_FILE:-}"
+ensure_runtime_layout() { return 0; }
+read_yaml_value() {
+    case "$2" in
+        LoginUser) printf '%s\n' old-user ;;
+        LoginPass) printf '%s\n' old-pass ;;
+    esac
+}
+sync_login_config() { return 1; }
+sync_login_enabled_config() { return 0; }
+stop_app() { return 0; }
+start_app() { return 0; }
+log_info() { :; }
+log_lifecycle() { printf '%s\n' "$*" >> "${HARNESS_LOG}"; }
+'@, [System.Text.UTF8Encoding]::new($false))
+    $callbackHarnessScriptSh = To-ShPath $callbackHarnessScript
+    $callbackHarnessLogSh = To-ShPath $callbackHarnessLog
+    & $bashPath -c "chmod +x '$callbackHarnessScriptSh'"
+    $callbackHarnessCommand = "HARNESS_LOG='$callbackHarnessLogSh' wizard_login_enabled='true' wizard_login_user='write-failure-user' wizard_login_pass='write-failure-pass' wizard_login_pass_confirm='write-failure-pass' '$callbackHarnessScriptSh'"
+    $callbackHarnessOutput = @(& $bashPath -c $callbackHarnessCommand 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw "config_callback succeeded when credential synchronization failed.`n$($callbackHarnessOutput -join "`n")"
+    }
+    if (-not (Test-Path -LiteralPath $callbackHarnessLog -PathType Leaf) -or
+        (Get-Content -Raw -LiteralPath $callbackHarnessLog) -notmatch [regex]::Escape("Failed to apply login settings.")) {
+        throw "config_callback did not log the credential synchronization failure."
+    }
+
     $command = "TRIM_APPDEST='$appSh' TRIM_PKGETC='$etcSh' TRIM_PKGVAR='$varSh' wizard_login_enabled='false' wizard_login_user='new-user' wizard_login_pass='new-pass' wizard_login_pass_confirm='new-pass' '$scriptSh'"
     $output = & $bashPath -c $command 2>&1
     if ($LASTEXITCODE -ne 0) {
