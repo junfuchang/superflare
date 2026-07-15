@@ -2,6 +2,7 @@ package templates
 
 import (
 	"bytes"
+	"html/template"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,7 @@ func TestHomeTemplateUsesAppsSurfaceAndBodyLevelApplicationSubdirectoryModals(t 
 
 	pageHomeStart := strings.Index(page, `<div class="pageview" id="page-home"`)
 	appsStart := strings.Index(page, `id="container-apps"`)
-	modalCondition := strings.Index(page, `{{ if .HasApplicationSubdirectories }}`)
+	modalCondition := strings.Index(page, `{{ if and .OptionShowApps .HasApplicationSubdirectories }}`)
 	modalPlaceholder := strings.Index(page, `{{.ApplicationSubdirectoryModals}}`)
 	warningsModal := strings.Index(page, `id="page-warnings-modal"`)
 	if pageHomeStart == -1 || appsStart == -1 || modalCondition == -1 || modalPlaceholder == -1 || warningsModal == -1 {
@@ -82,6 +83,47 @@ func TestHomeTemplateUsesAppsSurfaceAndBodyLevelApplicationSubdirectoryModals(t 
 	}
 	if !(pageHomeStart < appsStart && appsEnd < pageHomeEnd && pageHomeEnd < modalCondition && modalCondition < modalPlaceholder && modalPlaceholder < warningsModal) {
 		t.Fatalf("application modals must be body-level siblings after page-home and before warnings: page=%d apps=%d appsEnd=%d pageEnd=%d condition=%d modal=%d warnings=%d", pageHomeStart, appsStart, appsEnd, pageHomeEnd, modalCondition, modalPlaceholder, warningsModal)
+	}
+}
+
+func TestHomeTemplateDoesNotRenderApplicationSubdirectoryModalsWhenAppsAreHidden(t *testing.T) {
+	tmpl, err := template.New("").Funcs(templateFuncMap).ParseFS(TPL, "html/home.html")
+	if err != nil {
+		t.Fatalf("parse home template: %v", err)
+	}
+
+	const modalMarker = `<div id="application-subdir-modal-test"></div>`
+	for _, test := range []struct {
+		name     string
+		showApps bool
+		want     bool
+	}{
+		{name: "applications visible", showApps: true, want: true},
+		{name: "applications hidden", showApps: false, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var rendered bytes.Buffer
+			if err := tmpl.ExecuteTemplate(&rendered, "home.html", map[string]any{
+				"Locale":                           "zh",
+				"OptionSiteIcon":                   "",
+				"OptionShowApps":                   test.showApps,
+				"HasApplicationSubdirectories":    true,
+				"ApplicationSubdirectoryModals":   template.HTML(modalMarker),
+				"OptionHideSettingsButton":         true,
+				"OptionHideHelpButton":             true,
+				"OptionHideWarningsButton":         true,
+				"HasRenderWarnings":                false,
+				"HasBackgroundAssets":              false,
+				"OptionShowDateTime":               false,
+				"HasBookmarkDescriptions":          false,
+				"HasApplicationSubdirectoryModals": true,
+			}); err != nil {
+				t.Fatalf("render home template: %v", err)
+			}
+			if got := strings.Contains(rendered.String(), modalMarker); got != test.want {
+				t.Fatalf("modal rendered=%v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

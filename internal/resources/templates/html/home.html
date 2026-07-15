@@ -22,7 +22,7 @@
 {{ else }}<div class="toolbar-btn-bg toolbar-btn-help"><a href="/help" id="btn-open-help" class="toolbar-btn-link" aria-label="{{ T .Locale "toolbar_help" }}"><span>{{ T .Locale "toolbar_help" }}</span>
 <svg viewBox="0 0 24 24" width="24"><path d="M15.07 11.25l-.9.92C13.45 12.89 13 13.5 13 15H11v-.5C11 13.39 11.45 12.39 12.17 11.67l1.24-1.26C13.78 10.05 14 9.55 14 9c0-1.11-.9-2-2-2A2 2 0 0010 9H8a4 4 0 014-4 4 4 0 014 4C16 9.88 15.64 10.67 15.07 11.25M13 19H11V17h2M12 2A10 10 0 002 12 10 10 0 0012 22 10 10 0 0022 12C22 6.47 17.5 2 12 2z" style="fill:var(--color-background)"/></svg></a></div>{{ end }}</div><div class="footer-container">{{ if .RenderedFooter }}
 {{.RenderedFooter}}
-{{ end }}</div></div></div>{{ if .HasApplicationSubdirectories }}
+{{ end }}</div></div></div>{{ if and .OptionShowApps .HasApplicationSubdirectories }}
 {{.ApplicationSubdirectoryModals}}
 {{ end }}
 {{ if and .HasRenderWarnings (not .OptionHideWarningsButton) }}<div id="page-warnings-modal" class="page-warnings-modal"><a href="#" class="page-warnings-backdrop" aria-label="Close"></a><div class="page-warnings-panel"><div class="page-warnings-header"><h2>{{ T .Locale "warnings_title" }}</h2><a href="#" class="page-warnings-close" aria-label="Close">&#215;</a></div>{{ if .RenderWarnings }}<div class="page-warnings-list">{{ range .RenderWarnings }}<div class="page-warnings-item">{{ . }}</div>{{ end }}</div>{{ else }}<p class="page-warnings-empty">{{ T .Locale "warnings_empty" }}</p>{{ end }}</div></div>{{ end }}

@@ -246,7 +246,7 @@
 
     </div>
   </div>
-  {{ if .HasApplicationSubdirectories }}
+  {{ if and .OptionShowApps .HasApplicationSubdirectories }}
   {{.ApplicationSubdirectoryModals}}
   {{ end }}
   {{ if and .HasRenderWarnings (not .OptionHideWarningsButton) }}
