@@ -483,12 +483,15 @@ LoginPass: 'legacy-pass'
     $collisionPath = Join-Path $realVar.EtcRoot "var.pre-superflare-link"
     $realVarMarker = Join-Path $realVarPath "operator-var-marker.txt"
     $collisionMarker = Join-Path $collisionPath "collision-marker.txt"
+    $runtimeMarker = Join-Path $realVar.VarRoot "managed-runtime-marker.txt"
     $null = [System.IO.Directory]::CreateDirectory($realVarPath)
     $null = [System.IO.Directory]::CreateDirectory($collisionPath)
     Write-Utf8NoBom $realVarMarker "operator-var-data-sentinel`n"
     Write-Utf8NoBom $collisionMarker "preexisting-backup-collision-sentinel`n"
+    Write-Utf8NoBom $runtimeMarker "managed-runtime-data-sentinel`n"
     $realVarMarkerHash = (Get-FileHash -LiteralPath $realVarMarker -Algorithm SHA256).Hash
     $collisionMarkerHash = (Get-FileHash -LiteralPath $collisionMarker -Algorithm SHA256).Hash
+    $runtimeMarkerHash = (Get-FileHash -LiteralPath $runtimeMarker -Algorithm SHA256).Hash
     Invoke-LifecycleCallback $upgradeCallback $realVar.Root @{}
     Assert-FileHashEqual $collisionMarker $collisionMarkerHash "upgrade existing var preservation collision"
     $preservedVarPath = Find-PreservedLinkPath $realVar.EtcRoot
@@ -502,6 +505,10 @@ LoginPass: 'legacy-pass'
     Assert-FileHashEqual (Join-Path $preservedVarPath "operator-var-marker.txt") $realVarMarkerHash "upgrade displaced real etc/var marker"
     if (-not (Test-Path -LiteralPath $realVarPath -PathType Container)) {
         throw "upgrade did not recreate etc/var as the managed runtime container after preserving operator data."
+    }
+    Assert-FileHashEqual (Join-Path $realVarPath "managed-runtime-marker.txt") $runtimeMarkerHash "upgrade managed runtime projection"
+    if (Test-Path -LiteralPath $realVarMarker) {
+        throw "upgrade left displaced operator data under the managed etc/var runtime path."
     }
 
     $uninstall = New-LifecycleScenario "uninstall" $false
