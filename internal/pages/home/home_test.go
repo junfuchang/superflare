@@ -1181,6 +1181,9 @@ func (r applicationSubdirectoryRenderer) Render(c *echo.Context, _ io.Writer, _ 
 	}
 	for _, expected := range []string{
 		`window.addEventListener("hashchange"`,
+		`/^application-subdir-modal-\d+$/`,
+		`var id=window.location.hash.slice(1)`,
+		`document.getElementById(id)`,
 		`event.key==="Escape"`,
 		`event.key!=="Tab"`,
 		`origin.closest(closeSelector)`,
@@ -1195,8 +1198,10 @@ func (r applicationSubdirectoryRenderer) Render(c *echo.Context, _ io.Writer, _ 
 			r.t.Fatalf("application subdirectory modal script missing %q: %s", expected, modalScript)
 		}
 	}
-	if strings.Contains(string(modalScript), `history.replaceState`) {
-		r.t.Fatalf("application subdirectory modal script must close through hash navigation so :target is cleared: %s", modalScript)
+	for _, unexpected := range []string{`history.replaceState`, `querySelector(window.location.hash)`} {
+		if strings.Contains(string(modalScript), unexpected) {
+			r.t.Fatalf("application subdirectory modal script must not contain %q: %s", unexpected, modalScript)
+		}
 	}
 	if nonce == "" || csp != getCSPValue(nonce) {
 		r.t.Fatalf("modal page nonce=%q CSP=%q, want a matching nonce CSP", nonce, csp)

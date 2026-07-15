@@ -81,7 +81,7 @@ When a folder opens, every body-level sibling outside the active modal becomes i
 
 Private applications are removed before grouping. Anonymous users therefore cannot infer a hidden subdirectory from a folder card, modal title, modal markup, search result, or icon diagnostic. If all applications in a subdirectory are filtered out, neither its folder nor its modal is rendered.
 
-Names, descriptions, IDs, URLs, and attributes are escaped with `html/template` helpers. The feature uses no inline script and does not change CSP behavior.
+Names, descriptions, IDs, URLs, and attributes are escaped with `html/template` helpers. The feature uses one constant nonce-protected focus-management script, serializes no application data to JavaScript, and leaves the existing CSP policy unchanged.
 
 ## Error Handling
 

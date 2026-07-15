@@ -106,18 +106,18 @@ func TestHomeTemplateDoesNotRenderApplicationSubdirectoryModalsWhenAppsAreHidden
 		t.Run(test.name, func(t *testing.T) {
 			var rendered bytes.Buffer
 			if err := tmpl.ExecuteTemplate(&rendered, "home.html", map[string]any{
-				"Locale":                           "zh",
-				"OptionSiteIcon":                   "",
-				"OptionShowApps":                   test.showApps,
-				"HasApplicationSubdirectories":     true,
-				"ApplicationSubdirectoryModals":    template.HTML(modalMarker),
-				"OptionHideSettingsButton":         true,
-				"OptionHideHelpButton":             true,
-				"OptionHideWarningsButton":         true,
-				"HasRenderWarnings":                false,
-				"HasBackgroundAssets":              false,
-				"OptionShowDateTime":               false,
-				"HasBookmarkDescriptions":          false,
+				"Locale":                        "zh",
+				"OptionSiteIcon":                "",
+				"OptionShowApps":                test.showApps,
+				"HasApplicationSubdirectories":  true,
+				"ApplicationSubdirectoryModals": template.HTML(modalMarker),
+				"OptionHideSettingsButton":      true,
+				"OptionHideHelpButton":          true,
+				"OptionHideWarningsButton":      true,
+				"HasRenderWarnings":             false,
+				"HasBackgroundAssets":           false,
+				"OptionShowDateTime":            false,
+				"HasBookmarkDescriptions":       false,
 			}); err != nil {
 				t.Fatalf("render home template: %v", err)
 			}

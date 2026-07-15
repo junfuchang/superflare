@@ -105,8 +105,9 @@ var lastTrigger=null;
 function triggers(){return Array.prototype.slice.call(document.querySelectorAll(triggerSelector));}
 function modalFromHash(){
 if(!window.location.hash||window.location.hash==="#"){return null;}
-var candidate=null;
-try{candidate=document.querySelector(window.location.hash);}catch(error){return null;}
+var id=window.location.hash.slice(1);
+if(!/^application-subdir-modal-\d+$/.test(id)){return null;}
+var candidate=document.getElementById(id);
 return candidate&&candidate.matches(modalSelector)?candidate:null;
 }
 function panelFor(modal){return modal?modal.querySelector(panelSelector):null;}
