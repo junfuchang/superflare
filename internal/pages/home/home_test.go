@@ -1597,7 +1597,8 @@ func TestApplicationSubdirectoryModalStyleContracts(t *testing.T) {
 		name string
 		css  string
 	}{
-		{name: "overlay containment", css: `.application-subdirectory-modal {position: fixed;inset: 0;z-index: 40;display: flex;align-items: center;justify-content: center;padding: 16px;overflow: hidden;`},
+		{name: "overlay containment", css: `.application-subdirectory-modal {position: fixed;inset: 0;z-index: 40;display: flex;align-items: center;justify-content: center;padding: 16px;overflow: hidden;visibility: hidden;`},
+		{name: "target visibility", css: `.application-subdirectory-modal:target {visibility: visible;opacity: 1;pointer-events: auto;`},
 		{name: "bounded panel", css: `.application-subdirectory-panel {position: relative;z-index: 1;display: flex;flex-direction: column;width: min(760px, calc(100vw - 32px));min-width: min(420px, calc(100vw - 32px));max-width: min(760px, calc(100vw - 32px));height: min(68vh, 680px);min-height: min(320px, calc(100vh - 32px));max-height: min(82vh, 760px);overflow: hidden;`},
 		{name: "scrollable content", css: `.application-subdirectory-content {flex: 1 1 auto;min-height: 0;overflow: auto;overscroll-behavior: contain;}`},
 		{name: "body scroll lock", css: `body:has(.application-subdirectory-modal:target) {overflow: hidden;}`},
