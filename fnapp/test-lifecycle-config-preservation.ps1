@@ -47,6 +47,7 @@ function New-LifecycleScenario([string]$Name, [bool]$WithExistingConfig) {
     $etcRoot = Join-Path $root "etc"
     $varRoot = Join-Path $root "var"
     $defaultsRoot = Join-Path $appRoot "server\defaults"
+    $defaultTitle = "default-title-$Name"
     $defaultApplicationSentinel = "default-application-$Name"
     $defaultBookmarkSentinel = "default-bookmark-$Name"
     $defaultPortSentinel = "default-port-$Name"
@@ -56,7 +57,7 @@ function New-LifecycleScenario([string]$Name, [bool]$WithExistingConfig) {
     $null = [System.IO.Directory]::CreateDirectory($varRoot)
 
     Write-Utf8NoBom (Join-Path $defaultsRoot "config.yml") @"
-Title: 'default-title-$Name'
+Title: '$defaultTitle'
 LoginUser: 'default-user'
 LoginPass: 'default-pass'
 "@
@@ -108,6 +109,7 @@ existing-port-${Name}: 9443
         AppRoot = $appRoot
         EtcRoot = $etcRoot
         VarRoot = $varRoot
+        DefaultTitle = $defaultTitle
         DefaultApplicationSentinel = $defaultApplicationSentinel
         DefaultBookmarkSentinel = $defaultBookmarkSentinel
         DefaultPortSentinel = $defaultPortSentinel
@@ -210,10 +212,59 @@ function Find-PreservedLinkPath([string]$EtcRoot) {
     return $null
 }
 
-function Assert-Contains([string]$Path, [string]$Expected, [string]$Context) {
+function ConvertFrom-SimpleQuotedValue([string]$Value) {
+    if ($Value.Length -ge 2 -and $Value[0] -eq "'" -and $Value[$Value.Length - 1] -eq "'") {
+        return $Value.Substring(1, $Value.Length - 2).Replace("''", "'")
+    }
+    if ($Value.Length -ge 2 -and $Value[0] -eq '"' -and $Value[$Value.Length - 1] -eq '"') {
+        return $Value.Substring(1, $Value.Length - 2)
+    }
+    return $Value
+}
+
+function Get-UniqueEnvValue([string]$Path, [string]$Key, [string]$Context) {
     $content = Get-Content -Raw -LiteralPath $Path
-    if ($content.IndexOf($Expected, [System.StringComparison]::Ordinal) -lt 0) {
-        throw "$Context did not contain '$Expected'. Actual content:`n$content"
+    $keyPattern = [System.Text.RegularExpressions.Regex]::Escape($Key)
+    $pattern = "(?m)^[\t ]*(?:export[\t ]+)?${keyPattern}[\t ]*=[\t ]*(?<value>[^\r\n]*?)[\t ]*\r?$"
+    $matches = [System.Text.RegularExpressions.Regex]::Matches($content, $pattern)
+    if ($matches.Count -ne 1) {
+        throw "$Context expected exactly one active '$Key' assignment, found $($matches.Count). Actual content:`n$content"
+    }
+    $value = $matches[0].Groups["value"].Value
+    return (ConvertFrom-SimpleQuotedValue $value)
+}
+
+function Assert-EnvValue([string]$Path, [string]$Key, [string]$Expected, [string]$Context) {
+    $actual = Get-UniqueEnvValue $Path $Key $Context
+    if ($actual -cne $Expected) {
+        throw "$Context expected '$Key=$Expected', found '$Key=$actual'."
+    }
+}
+
+function Assert-EnvValueNonEmpty([string]$Path, [string]$Key, [string]$Context) {
+    $actual = Get-UniqueEnvValue $Path $Key $Context
+    if ([string]::IsNullOrWhiteSpace($actual)) {
+        throw "$Context expected '$Key' to have a non-empty value."
+    }
+}
+
+function Get-UniqueYamlValue([string]$Path, [string]$Key, [string]$Context) {
+    $content = Get-Content -Raw -LiteralPath $Path
+    $keyPattern = [System.Text.RegularExpressions.Regex]::Escape($Key)
+    $pattern = "(?m)^[\t ]*${keyPattern}[\t ]*:[\t ]*(?<value>[^\r\n]*?)[\t ]*\r?$"
+    $matches = [System.Text.RegularExpressions.Regex]::Matches($content, $pattern)
+    if ($matches.Count -ne 1) {
+        throw "$Context expected exactly one active '$Key' mapping, found $($matches.Count). Actual content:`n$content"
+    }
+
+    $value = $matches[0].Groups["value"].Value
+    return (ConvertFrom-SimpleQuotedValue $value)
+}
+
+function Assert-YamlValue([string]$Path, [string]$Key, [string]$Expected, [string]$Context) {
+    $actual = Get-UniqueYamlValue $Path $Key $Context
+    if ($actual -cne $Expected) {
+        throw "$Context expected '$Key' to equal '$Expected', found '$actual'."
     }
 }
 
@@ -260,29 +311,123 @@ try {
         wizard_install_login_pass_confirm = "fresh-pass"
     }
     $null = Get-ConfigHashes $freshInstall.EtcRoot
-    Assert-Contains (Join-Path $freshInstall.EtcRoot ".env") "FLARE_USER=fresh-user" "fresh install .env username"
-    Assert-Contains (Join-Path $freshInstall.EtcRoot ".env") "FLARE_PASS=fresh-pass" "fresh install .env password"
-    Assert-Contains (Join-Path $freshInstall.EtcRoot "config.yml") "LoginUser: 'fresh-user'" "fresh install config username"
-    Assert-Contains (Join-Path $freshInstall.EtcRoot "config.yml") "LoginPass: 'fresh-pass'" "fresh install config password"
-    Assert-Contains (Join-Path $freshInstall.EtcRoot "apps.yml") $freshInstall.DefaultApplicationSentinel "fresh install application defaults"
-    Assert-Contains (Join-Path $freshInstall.EtcRoot "bookmarks.yml") $freshInstall.DefaultBookmarkSentinel "fresh install bookmark defaults"
-    Assert-Contains (Join-Path $freshInstall.EtcRoot "ports.yaml") $freshInstall.DefaultPortSentinel "fresh install port defaults"
+    $freshEnv = Join-Path $freshInstall.EtcRoot ".env"
+    $freshConfig = Join-Path $freshInstall.EtcRoot "config.yml"
+    Assert-EnvValue $freshEnv "FLARE_PORT" "3636" "fresh install service port"
+    Assert-EnvValue $freshEnv "FLARE_DISABLE_LOGIN" "false" "fresh install login flag"
+    Assert-EnvValue $freshEnv "FLARE_EDITOR" "true" "fresh install editor flag"
+    Assert-EnvValue $freshEnv "FLARE_GUIDE" "true" "fresh install guide flag"
+    Assert-EnvValue $freshEnv "FLARE_COOKIE_NAME" "superflare" "fresh install cookie name"
+    Assert-EnvValueNonEmpty $freshEnv "FLARE_COOKIE_SECRET" "fresh install cookie secret"
+    Assert-EnvValue $freshEnv "FLARE_USER" "fresh-user" "fresh install .env username"
+    Assert-EnvValue $freshEnv "FLARE_PASS" "fresh-pass" "fresh install .env password"
+    Assert-YamlValue $freshConfig "Title" $freshInstall.DefaultTitle "fresh install config title"
+    Assert-YamlValue $freshConfig "LoginUser" "fresh-user" "fresh install config username"
+    Assert-YamlValue $freshConfig "LoginPass" "fresh-pass" "fresh install config password"
+    Assert-YamlValue (Join-Path $freshInstall.EtcRoot "apps.yml") "- name" $freshInstall.DefaultApplicationSentinel "fresh install application defaults"
+    Assert-YamlValue (Join-Path $freshInstall.EtcRoot "bookmarks.yml") "- name" $freshInstall.DefaultBookmarkSentinel "fresh install bookmark defaults"
+    Assert-YamlValue (Join-Path $freshInstall.EtcRoot "ports.yaml") $freshInstall.DefaultPortSentinel "7000" "fresh install port defaults"
 
-    $partialUpgrade = New-LifecycleScenario "partial-upgrade" $false
-    Write-Utf8NoBom (Join-Path $partialUpgrade.EtcRoot ".env") @"
+    $partialInstall = New-LifecycleScenario "partial-install" $false
+    Write-Utf8NoBom (Join-Path $partialInstall.EtcRoot ".env") @"
 # partial-env-sentinel
 FLARE_PORT=9443
 FLARE_COOKIE_SECRET=partial-secret
 FLARE_USER=partial-custom-user
 "@
-    Write-Utf8NoBom (Join-Path $partialUpgrade.EtcRoot "config.yml") @"
+    Write-Utf8NoBom (Join-Path $partialInstall.EtcRoot "config.yml") @"
 # partial-config-sentinel
 Title: 'partial-title'
 LoginUser: 'partial-custom-user'
 "@
+    Invoke-LifecycleCallback $installCallback $partialInstall.Root @{
+        wizard_install_login_user = "replacement-user"
+        wizard_install_login_pass = "replacement-pass"
+        wizard_install_login_pass_confirm = "replacement-pass"
+    }
+    $partialEnv = Join-Path $partialInstall.EtcRoot ".env"
+    $partialConfig = Join-Path $partialInstall.EtcRoot "config.yml"
+    Assert-EnvValue $partialEnv "FLARE_PORT" "9443" "partial install service port"
+    Assert-EnvValue $partialEnv "FLARE_DISABLE_LOGIN" "false" "partial install login flag repair"
+    Assert-EnvValue $partialEnv "FLARE_EDITOR" "true" "partial install editor flag repair"
+    Assert-EnvValue $partialEnv "FLARE_GUIDE" "true" "partial install guide flag repair"
+    Assert-EnvValue $partialEnv "FLARE_COOKIE_NAME" "superflare" "partial install cookie name repair"
+    Assert-EnvValue $partialEnv "FLARE_COOKIE_SECRET" "partial-secret" "partial install cookie secret"
+    Assert-EnvValue $partialEnv "FLARE_USER" "partial-custom-user" "partial install .env username"
+    Assert-EnvValue $partialEnv "FLARE_PASS" "admin" "partial install .env password repair"
+    Assert-YamlValue $partialConfig "Title" "partial-title" "partial install config title"
+    Assert-YamlValue $partialConfig "LoginUser" "partial-custom-user" "partial install config username"
+    Assert-YamlValue $partialConfig "LoginPass" "admin" "partial install config password repair"
+    Assert-YamlValue (Join-Path $partialInstall.EtcRoot "apps.yml") "- name" $partialInstall.DefaultApplicationSentinel "partial install application defaults"
+    Assert-YamlValue (Join-Path $partialInstall.EtcRoot "bookmarks.yml") "- name" $partialInstall.DefaultBookmarkSentinel "partial install bookmark defaults"
+    Assert-YamlValue (Join-Path $partialInstall.EtcRoot "ports.yaml") $partialInstall.DefaultPortSentinel "7000" "partial install port defaults"
+
+    $partialUpgrade = New-LifecycleScenario "partial-upgrade" $false
+    Write-Utf8NoBom (Join-Path $partialUpgrade.EtcRoot ".env") @"
+# partial-upgrade-env-sentinel
+FLARE_PORT=9443
+FLARE_COOKIE_SECRET=partial-upgrade-secret
+FLARE_USER=partial-upgrade-user
+"@
+    Write-Utf8NoBom (Join-Path $partialUpgrade.EtcRoot "config.yml") @"
+# partial-upgrade-config-sentinel
+Title: 'partial-upgrade-title'
+LoginUser: 'partial-upgrade-user'
+"@
     Invoke-LifecycleCallback $upgradeCallback $partialUpgrade.Root @{}
-    Assert-Contains (Join-Path $partialUpgrade.EtcRoot ".env") "FLARE_USER=partial-custom-user" "partial upgrade .env username"
-    Assert-Contains (Join-Path $partialUpgrade.EtcRoot "config.yml") "LoginUser: 'partial-custom-user'" "partial upgrade config username"
+    $partialUpgradeEnv = Join-Path $partialUpgrade.EtcRoot ".env"
+    $partialUpgradeConfig = Join-Path $partialUpgrade.EtcRoot "config.yml"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_PORT" "9443" "partial upgrade service port"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_DISABLE_LOGIN" "false" "partial upgrade login flag repair"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_EDITOR" "true" "partial upgrade editor flag repair"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_GUIDE" "true" "partial upgrade guide flag repair"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_COOKIE_NAME" "superflare" "partial upgrade cookie name repair"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_COOKIE_SECRET" "partial-upgrade-secret" "partial upgrade cookie secret"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_USER" "partial-upgrade-user" "partial upgrade .env username"
+    Assert-EnvValue $partialUpgradeEnv "FLARE_PASS" "admin" "partial upgrade .env password repair"
+    Assert-YamlValue $partialUpgradeConfig "Title" "partial-upgrade-title" "partial upgrade config title"
+    Assert-YamlValue $partialUpgradeConfig "LoginUser" "partial-upgrade-user" "partial upgrade config username"
+    Assert-YamlValue $partialUpgradeConfig "LoginPass" "admin" "partial upgrade config password repair"
+    Assert-YamlValue (Join-Path $partialUpgrade.EtcRoot "apps.yml") "- name" $partialUpgrade.DefaultApplicationSentinel "partial upgrade application defaults"
+    Assert-YamlValue (Join-Path $partialUpgrade.EtcRoot "bookmarks.yml") "- name" $partialUpgrade.DefaultBookmarkSentinel "partial upgrade bookmark defaults"
+    Assert-YamlValue (Join-Path $partialUpgrade.EtcRoot "ports.yaml") $partialUpgrade.DefaultPortSentinel "7000" "partial upgrade port defaults"
+
+    $partialLegacy = New-LifecycleScenario "partial-legacy-install" $false
+    $partialLegacyRoot = Join-Path $partialLegacy.VarRoot "runtime"
+    $partialLegacyConfig = Join-Path $partialLegacyRoot "config.yml"
+    $null = [System.IO.Directory]::CreateDirectory($partialLegacyRoot)
+    Write-Utf8NoBom $partialLegacyConfig @"
+Title: 'partial-legacy-title'
+LoginUser: 'partial-legacy-user'
+LoginPass: 'partial-legacy-pass'
+"@
+    $partialLegacyConfigHash = (Get-FileHash -LiteralPath $partialLegacyConfig -Algorithm SHA256).Hash
+    Invoke-LifecycleCallback $installCallback $partialLegacy.Root @{
+        wizard_install_login_user = "replacement-user"
+        wizard_install_login_pass = "replacement-pass"
+        wizard_install_login_pass_confirm = "replacement-pass"
+    }
+    $partialLegacyEnv = Join-Path $partialLegacy.EtcRoot ".env"
+    $migratedPartialLegacyConfig = Join-Path $partialLegacy.EtcRoot "config.yml"
+    $null = Get-ConfigHashes $partialLegacy.EtcRoot
+    Assert-FileHashEqual $migratedPartialLegacyConfig $partialLegacyConfigHash "partial legacy config migration"
+    if (Test-Path -LiteralPath $partialLegacyConfig) {
+        throw "partial legacy install did not move config.yml into etc."
+    }
+    Assert-EnvValue $partialLegacyEnv "FLARE_PORT" "3636" "partial legacy install service port repair"
+    Assert-EnvValue $partialLegacyEnv "FLARE_DISABLE_LOGIN" "false" "partial legacy install login flag repair"
+    Assert-EnvValue $partialLegacyEnv "FLARE_EDITOR" "true" "partial legacy install editor flag repair"
+    Assert-EnvValue $partialLegacyEnv "FLARE_GUIDE" "true" "partial legacy install guide flag repair"
+    Assert-EnvValue $partialLegacyEnv "FLARE_COOKIE_NAME" "superflare" "partial legacy install cookie name repair"
+    Assert-EnvValueNonEmpty $partialLegacyEnv "FLARE_COOKIE_SECRET" "partial legacy install cookie secret repair"
+    Assert-EnvValue $partialLegacyEnv "FLARE_USER" "admin" "partial legacy install .env username repair"
+    Assert-EnvValue $partialLegacyEnv "FLARE_PASS" "admin" "partial legacy install .env password repair"
+    Assert-YamlValue $migratedPartialLegacyConfig "Title" "partial-legacy-title" "partial legacy config title"
+    Assert-YamlValue $migratedPartialLegacyConfig "LoginUser" "partial-legacy-user" "partial legacy config username"
+    Assert-YamlValue $migratedPartialLegacyConfig "LoginPass" "partial-legacy-pass" "partial legacy config password"
+    Assert-YamlValue (Join-Path $partialLegacy.EtcRoot "apps.yml") "- name" $partialLegacy.DefaultApplicationSentinel "partial legacy application defaults"
+    Assert-YamlValue (Join-Path $partialLegacy.EtcRoot "bookmarks.yml") "- name" $partialLegacy.DefaultBookmarkSentinel "partial legacy bookmark defaults"
+    Assert-YamlValue (Join-Path $partialLegacy.EtcRoot "ports.yaml") $partialLegacy.DefaultPortSentinel "7000" "partial legacy port defaults"
 
     $legacyOnly = New-LifecycleScenario "legacy-only" $false
     $legacyRoot = Join-Path $legacyOnly.VarRoot "runtime"
@@ -318,8 +463,8 @@ LoginPass: 'legacy-pass'
             throw "legacy-only install did not move '$name' into etc."
         }
     }
-    Assert-Contains (Join-Path $legacyOnly.EtcRoot ".env") "FLARE_USER=legacy-user" "legacy-only install .env username"
-    Assert-Contains (Join-Path $legacyOnly.EtcRoot "config.yml") "LoginUser: 'legacy-user'" "legacy-only install config username"
+    Assert-EnvValue (Join-Path $legacyOnly.EtcRoot ".env") "FLARE_USER" "legacy-user" "legacy-only install .env username"
+    Assert-YamlValue (Join-Path $legacyOnly.EtcRoot "config.yml") "LoginUser" "legacy-user" "legacy-only install config username"
 
     $legacyConflict = New-LifecycleScenario "legacy-conflict" $true
     $legacyConflictRoot = Join-Path $legacyConflict.VarRoot "runtime"
@@ -355,6 +500,9 @@ LoginPass: 'legacy-pass'
         throw "upgrade preserved real etc/var at '$preservedVarPath'; expected first free collision suffix '$expectedPreservedVarPath'."
     }
     Assert-FileHashEqual (Join-Path $preservedVarPath "operator-var-marker.txt") $realVarMarkerHash "upgrade displaced real etc/var marker"
+    if (-not (Test-Path -LiteralPath $realVarPath -PathType Container)) {
+        throw "upgrade did not recreate etc/var as the managed runtime container after preserving operator data."
+    }
 
     $uninstall = New-LifecycleScenario "uninstall" $false
     $uninstallVarPath = Join-Path $uninstall.EtcRoot "var"
