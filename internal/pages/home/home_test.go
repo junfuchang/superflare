@@ -2932,6 +2932,169 @@ func TestBookmarkTooltipIsNotAddedToApplicationCards(t *testing.T) {
 	}
 }
 
+func generateApplicationProjectionForItems(t *testing.T, items []model.Bookmark, filter string, canViewPrivate bool) applicationProjection {
+	t.Helper()
+	originalLoader := loadFavoriteBookmarks
+	loadFavoriteBookmarks = func() (model.Bookmarks, error) {
+		return model.Bookmarks{Items: items}, nil
+	}
+	t.Cleanup(func() { loadFavoriteBookmarks = originalLoader })
+
+	projection, err := generateApplicationProjectionWithLocalAndURLErr(filter, &model.Application{IconMode: define.IconModeHidden}, false, nil, canViewPrivate)
+	if err != nil {
+		t.Fatalf("generate application projection: %v", err)
+	}
+	return projection
+}
+
+func TestApplicationProjectionRendersSortedDirectoriesBeforeUngroupedApps(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{
+		{Name: "Zulu One", URL: "https://zulu-one.example", Subdir: "zeta"},
+		{Name: "Plain", URL: "https://plain.example"},
+		{Name: "Alpha Two", URL: "https://alpha-two.example", Subdir: " Alpha "},
+		{Name: "Alpha One", URL: "https://alpha-one.example", Subdir: "Alpha"},
+	}, "", true)
+
+	mainHTML := string(projection.HTML)
+	modalHTML := string(projection.Modals)
+	alpha := strings.Index(mainHTML, `data-application-subdirectory="Alpha"`)
+	zeta := strings.Index(mainHTML, `data-application-subdirectory="zeta"`)
+	plain := strings.Index(mainHTML, `title="Plain"`)
+	if alpha < 0 || zeta < 0 || plain < 0 || !(alpha < zeta && zeta < plain) {
+		t.Fatalf("unexpected main application order: %s", mainHTML)
+	}
+	if !projection.HasDirectories {
+		t.Fatal("expected directory projection flag")
+	}
+	for _, name := range []string{"Alpha One", "Alpha Two", "Zulu One"} {
+		if strings.Contains(mainHTML, name) {
+			t.Fatalf("grouped application %q must not be duplicated in the main list: %s", name, mainHTML)
+		}
+		if strings.Count(modalHTML, `title="`+name+`"`) != 1 {
+			t.Fatalf("expected one modal item %q: %s", name, modalHTML)
+		}
+	}
+	if strings.Index(modalHTML, `title="Alpha Two"`) > strings.Index(modalHTML, `title="Alpha One"`) {
+		t.Fatalf("modal applications must keep source order: %s", modalHTML)
+	}
+}
+
+func TestApplicationProjectionTreatsWhitespaceSubdirAsUngrouped(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{{
+		Name: "Loose", URL: "https://loose.example", Subdir: " \t\r\n ",
+	}}, "", true)
+
+	mainHTML := string(projection.HTML)
+	if !strings.Contains(mainHTML, `title="Loose"`) {
+		t.Fatalf("whitespace-only subdirectory must remain an ordinary card: %s", mainHTML)
+	}
+	if strings.Contains(mainHTML, "data-application-subdirectory") || projection.HasDirectories || projection.Modals != "" {
+		t.Fatalf("whitespace-only subdirectory must not create directory markup: main=%s modals=%s", mainHTML, projection.Modals)
+	}
+}
+
+func TestApplicationProjectionOmitsPrivateOnlyDirectoryForAnonymous(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{
+		{Name: "Visible App", URL: "https://visible.example", Subdir: "Visible"},
+		{Name: "Secret App", URL: "https://secret.example", Subdir: "Secret", Private: true},
+	}, "", false)
+
+	mainHTML := string(projection.HTML)
+	modalHTML := string(projection.Modals)
+	if !projection.HasDirectories || !strings.Contains(mainHTML, `data-application-subdirectory="Visible"`) {
+		t.Fatalf("expected visible directory trigger: %s", mainHTML)
+	}
+	for _, html := range []string{mainHTML, modalHTML} {
+		if strings.Contains(html, "Secret") {
+			t.Fatalf("private-only directory leaked into anonymous projection: %s", html)
+		}
+	}
+	if strings.Count(modalHTML, `class="application-subdirectory-modal"`) != 1 {
+		t.Fatalf("expected only the visible directory modal: %s", modalHTML)
+	}
+}
+
+func TestApplicationProjectionDirectorySearchIncludesAllVisibleItems(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{
+		{Name: "First Tool", URL: "https://first.example", Subdir: "Operations"},
+		{Name: "Second Tool", URL: "https://second.example", Subdir: "Operations"},
+		{Name: "Private Tool", URL: "https://private.example", Subdir: "Operations", Private: true},
+		{Name: "Unrelated", URL: "https://unrelated.example"},
+	}, "operations", false)
+
+	modalHTML := string(projection.Modals)
+	for _, name := range []string{"First Tool", "Second Tool"} {
+		if !strings.Contains(modalHTML, `title="`+name+`"`) {
+			t.Fatalf("directory search must include visible item %q: %s", name, modalHTML)
+		}
+	}
+	for _, name := range []string{"Private Tool", "Unrelated"} {
+		if strings.Contains(modalHTML, name) {
+			t.Fatalf("directory search included unavailable item %q: %s", name, modalHTML)
+		}
+	}
+	if len(projection.items) != 2 {
+		t.Fatalf("expected two visible directory matches, got %#v", projection.items)
+	}
+}
+
+func TestApplicationProjectionItemSearchNarrowsDirectoryModal(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{
+		{Name: "Needle Tool", URL: "https://needle.example", Subdir: "Utilities"},
+		{Name: "Haystack Tool", URL: "https://haystack.example", Subdir: "Utilities"},
+	}, "needle", true)
+
+	modalHTML := string(projection.Modals)
+	if !strings.Contains(modalHTML, `title="Needle Tool"`) || strings.Contains(modalHTML, "Haystack Tool") {
+		t.Fatalf("application search must narrow directory modal items: %s", modalHTML)
+	}
+	if len(projection.items) != 1 || projection.items[0].Name != "Needle Tool" {
+		t.Fatalf("unexpected filtered diagnostic items: %#v", projection.items)
+	}
+}
+
+func TestApplicationProjectionEscapesDirectoryNamesAndUsesGeneratedIDs(t *testing.T) {
+	folderName := `Team <Ops> & "Admin"`
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{{
+		Name: "Sensitive", URL: "https://sensitive.example", Subdir: folderName,
+	}}, "", true)
+
+	mainHTML := string(projection.HTML)
+	modalHTML := string(projection.Modals)
+	escapedName := template.HTMLEscapeString(folderName)
+	if !strings.Contains(mainHTML, `data-application-subdirectory="`+escapedName+`"`) {
+		t.Fatalf("expected escaped folder data attribute: %s", mainHTML)
+	}
+	for _, expected := range []string{
+		`href="#application-subdir-modal-0"`,
+		`id="application-subdir-modal-0"`,
+		`id="application-subdir-title-0"`,
+		`aria-labelledby="application-subdir-title-0"`,
+	} {
+		if !strings.Contains(mainHTML+modalHTML, expected) {
+			t.Fatalf("expected generated modal reference %q: main=%s modals=%s", expected, mainHTML, modalHTML)
+		}
+	}
+	if strings.Contains(mainHTML+modalHTML, folderName) || strings.Contains(mainHTML+modalHTML, `id="Team`) || strings.Contains(mainHTML+modalHTML, `href="#Team`) {
+		t.Fatalf("raw directory name must be escaped and must not become an ID: main=%s modals=%s", mainHTML, modalHTML)
+	}
+}
+
+func TestApplicationProjectionItemsRetainDirectoryAndUngroupedApps(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{
+		{Name: "Grouped", URL: "https://grouped.example", Subdir: " Folder "},
+		{Name: "Plain", URL: "https://plain.example"},
+		{Name: "Private", URL: "https://private.example", Subdir: "Folder", Private: true},
+	}, "", false)
+
+	if len(projection.items) != 2 {
+		t.Fatalf("expected grouped and ungrouped visible diagnostics, got %#v", projection.items)
+	}
+	if projection.items[0].Name != "Grouped" || projection.items[0].Subdir != " Folder " || projection.items[1].Name != "Plain" {
+		t.Fatalf("diagnostic items must retain visible filtered source order: %#v", projection.items)
+	}
+}
+
 func TestBookmarkStylesDynamicSelectorsUseSharedModuleClass(t *testing.T) {
 	style := string(customHomeStyle(model.Application{
 		BookmarkCategoryColor: "#123456",
