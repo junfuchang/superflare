@@ -1619,6 +1619,8 @@ func TestApplicationSubdirectoryModalStyleContracts(t *testing.T) {
 		`.apps-surface .app-container {`,
 		`.apps-surface .app-item {`,
 		`.app-content-uppercase .apps-surface .app-text {`,
+		`.application-subdirectory-trigger .app-text {`,
+		`.application-subdirectory-trigger .app-title {`,
 		`.application-subdirectory-modal {`,
 		`.application-subdirectory-modal:target {`,
 		`.application-subdirectory-backdrop {`,
@@ -1632,11 +1634,18 @@ func TestApplicationSubdirectoryModalStyleContracts(t *testing.T) {
 			t.Errorf("generated home CSS missing %q", expected)
 		}
 	}
+	baseTitleIndex := strings.Index(style, `.apps-surface .app-title {`)
+	folderTitleIndex := strings.Index(style, `.application-subdirectory-trigger .app-title {`)
+	if baseTitleIndex < 0 || folderTitleIndex < baseTitleIndex {
+		t.Errorf("folder title override must follow the base application title rule")
+	}
 
 	contracts := []struct {
 		name string
 		css  string
 	}{
+		{name: "folder text fills card", css: `.application-subdirectory-trigger .app-text {display: flex;align-items: center;height: 100%;}`},
+		{name: "folder title fills text width", css: `.application-subdirectory-trigger .app-title {width: 100%;margin: 0;}`},
 		{name: "overlay containment", css: `.application-subdirectory-modal {position: fixed;inset: 0;z-index: 40;display: flex;align-items: center;justify-content: center;padding: 16px;overflow: hidden;visibility: hidden;`},
 		{name: "target visibility", css: `.application-subdirectory-modal:target {visibility: visible;opacity: 1;pointer-events: auto;`},
 		{name: "bounded panel", css: `.application-subdirectory-panel {position: relative;z-index: 1;display: flex;flex-direction: column;width: min(760px, calc(100vw - 32px));min-width: min(420px, calc(100vw - 32px));max-width: min(760px, calc(100vw - 32px));height: min(68vh, 680px);min-height: min(320px, calc(100vh - 32px));max-height: min(82vh, 760px);overflow: hidden;`},
@@ -3154,6 +3163,25 @@ func TestApplicationProjectionRendersSortedDirectoriesBeforeUngroupedApps(t *tes
 	}
 	if strings.Index(modalHTML, `title="Alpha Two"`) > strings.Index(modalHTML, `title="Alpha One"`) {
 		t.Fatalf("modal applications must keep source order: %s", modalHTML)
+	}
+}
+
+func TestApplicationDirectoryTriggerUsesFullHeightSingleLineMarkup(t *testing.T) {
+	projection := generateApplicationProjectionForItems(t, []model.Bookmark{{
+		Name: "Folder App", URL: "https://folder.example", Subdir: "Operations",
+	}}, "", true)
+
+	mainHTML := string(projection.HTML)
+	triggerEnd := strings.Index(mainHTML, `</a></div>`)
+	if triggerEnd < 0 {
+		t.Fatalf("directory trigger closing markup missing: %s", mainHTML)
+	}
+	triggerHTML := mainHTML[:triggerEnd+len(`</a></div>`)]
+	if strings.Contains(triggerHTML, `class="app-desc"`) {
+		t.Fatalf("directory trigger must not reserve a description row: %s", triggerHTML)
+	}
+	if strings.Count(triggerHTML, `class="app-title"`) != 1 {
+		t.Fatalf("directory trigger must contain exactly one title: %s", triggerHTML)
 	}
 }
 

@@ -77,6 +77,17 @@
   text-overflow: ellipsis;
 }
 
+.application-subdirectory-trigger .app-text {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.application-subdirectory-trigger .app-title {
+  width: 100%;
+  margin: 0;
+}
+
 .application-subdirectory-modal {
   position: fixed;
   inset: 0;

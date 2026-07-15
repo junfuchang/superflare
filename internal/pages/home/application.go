@@ -145,7 +145,7 @@ func renderApplicationDirectory(b *strings.Builder, directory applicationDirecto
 	b.WriteString(mdi.GetIconByName("folder"))
 	b.WriteString(`</div><div class="app-text has-icon"><p class="app-title">`)
 	b.WriteString(escapedName)
-	b.WriteString(`</p><p class="app-desc"></p></div></a></div>`)
+	b.WriteString(`</p></div></a></div>`)
 }
 
 func renderApplicationDirectoryModal(b *strings.Builder, directory applicationDirectory, index int, options *model.Application, preferLocal bool, requestURL *fn.DynamicURL) {
