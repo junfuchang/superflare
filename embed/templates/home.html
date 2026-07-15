@@ -178,7 +178,7 @@
       {{ if .OptionShowApps }}
       <div class="plugin-container" id="container-apps">
         <h2><a href="{{.ApplicationsURI}}">{{.AppsTitle}}</a></h2>
-        <div class="apps-container clearfix">
+        <div class="apps-container clearfix apps-surface">
           {{.Applications}}
         </div>
       </div>
@@ -246,6 +246,9 @@
 
     </div>
   </div>
+  {{ if .HasApplicationSubdirectories }}
+  {{.ApplicationSubdirectoryModals}}
+  {{ end }}
   {{ if and .HasRenderWarnings (not .OptionHideWarningsButton) }}
   <div id="page-warnings-modal" class="page-warnings-modal">
     <a href="#" class="page-warnings-backdrop" aria-label="Close"></a>

@@ -1138,6 +1138,103 @@ func (r sourceLoadRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data 
 	return nil
 }
 
+type applicationSubdirectoryRenderer struct {
+	t            *testing.T
+	wantModalApp string
+}
+
+func (r applicationSubdirectoryRenderer) Render(_ *echo.Context, _ io.Writer, _ string, data any) error {
+	r.t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		r.t.Fatalf("unexpected template data type %T", data)
+	}
+	modals, ok := m["ApplicationSubdirectoryModals"].(template.HTML)
+	if !ok {
+		r.t.Fatalf("expected ApplicationSubdirectoryModals HTML, got %T", m["ApplicationSubdirectoryModals"])
+	}
+	hasDirectories, ok := m["HasApplicationSubdirectories"].(bool)
+	if !ok {
+		r.t.Fatalf("expected HasApplicationSubdirectories bool, got %T", m["HasApplicationSubdirectories"])
+	}
+	if r.wantModalApp == "" {
+		if modals != "" || hasDirectories {
+			r.t.Fatalf("expected no application subdirectory modals, got hasDirectories=%v modals=%s", hasDirectories, modals)
+		}
+		return nil
+	}
+	if !hasDirectories || !strings.Contains(string(modals), r.wantModalApp) {
+		r.t.Fatalf("expected application subdirectory modal for %q, got hasDirectories=%v modals=%s", r.wantModalApp, hasDirectories, modals)
+	}
+	return nil
+}
+
+func TestApplicationSubdirectoryHandlerBindings(t *testing.T) {
+	usePrivateProjectionFixtures(t)
+	originalRuntime := auth.SnapshotAuthRuntimeConfig()
+	originalLoader := loadFavoriteBookmarks
+	t.Cleanup(func() {
+		auth.StoreAuthRuntimeConfig(originalRuntime)
+		loadFavoriteBookmarks = originalLoader
+	})
+
+	handlers := []struct {
+		name    string
+		path    string
+		handler echo.HandlerFunc
+	}{
+		{name: "home", path: "/", handler: func(c *echo.Context) error { return render(c, "") }},
+		{name: "search", path: "/search", handler: func(c *echo.Context) error { return render(c, "Operations") }},
+		{name: "applications", path: define.RegularPages.Applications.Path, handler: pageApplication},
+	}
+	scenarios := []struct {
+		name         string
+		items        []model.Bookmark
+		wantModalApp string
+	}{
+		{
+			name: "visible directory",
+			items: []model.Bookmark{{
+				Name: "Operations Tool", URL: "https://operations.example", Subdir: "Operations",
+			}},
+			wantModalApp: "Operations Tool",
+		},
+		{
+			name: "only ungrouped or filtered private matches",
+			items: []model.Bookmark{
+				{Name: "Operations Plain", URL: "https://plain.example"},
+				{Name: "Operations Secret", URL: "https://secret.example", Subdir: "Operations", Private: true},
+			},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			loadFavoriteBookmarks = func() (model.Bookmarks, error) {
+				return model.Bookmarks{Items: scenario.items}, nil
+			}
+			for _, handler := range handlers {
+				t.Run(handler.name, func(t *testing.T) {
+					e := echo.New()
+					e.Renderer = applicationSubdirectoryRenderer{t: t, wantModalApp: scenario.wantModalApp}
+					auth.RequestHandleWithFlags(e, model.Flags{
+						CookieName:   "application-subdirectory-handler",
+						CookieSecret: "application-subdirectory-handler-secret",
+						Port:         3636,
+					})
+					e.GET(handler.path, handler.handler)
+					req := httptest.NewRequest(http.MethodGet, handler.path, nil)
+					rec := httptest.NewRecorder()
+					e.ServeHTTP(rec, req)
+					if rec.Code != http.StatusOK {
+						t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestPrivateHandlersLoadEachVisibleSourceOnce(t *testing.T) {
 	usePrivateProjectionFixtures(t)
 	config := strings.Join([]string{

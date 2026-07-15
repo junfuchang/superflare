@@ -656,6 +656,8 @@ func pageApplication(c *echo.Context) error {
 	m["AppsTitle"] = resolveAppsTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	m["Applications"] = applications.HTML
+	m["ApplicationSubdirectoryModals"] = applications.Modals
+	m["HasApplicationSubdirectories"] = applications.HasDirectories
 	m["PageName"] = i18n.T(locale, "page_apps")
 	m["SubPage"] = true
 	m["PageAppearance"] = pageStyle
@@ -751,6 +753,8 @@ func render(c *echo.Context, filter string) error {
 	m["FavoritesTitle"] = resolveFavoritesTitle(options, locale)
 	m["BookmarksTitle"] = resolveBookmarksTitle(options, locale)
 	m["Applications"] = applications.HTML
+	m["ApplicationSubdirectoryModals"] = applications.Modals
+	m["HasApplicationSubdirectories"] = applications.HasDirectories
 	m["Bookmarks"] = bookmarkModules.Bookmarks
 	m["Favorites"] = bookmarkModules.Favorites
 	m["HasFavorites"] = bookmarkModules.HasFavorites

@@ -44,6 +44,47 @@ func TestHomeTemplateUsesWarningsModalInsteadOfStandalonePage(t *testing.T) {
 	}
 }
 
+func TestHomeTemplateUsesAppsSurfaceAndBodyLevelApplicationSubdirectoryModals(t *testing.T) {
+	raw, err := TPL.ReadFile("html/home.html")
+	if err != nil {
+		t.Fatalf("read home template: %v", err)
+	}
+	page := string(raw)
+	for _, expected := range []string{
+		`class="apps-container clearfix apps-surface"`,
+		`{{.ApplicationSubdirectoryModals}}`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("home template missing %q", expected)
+		}
+	}
+
+	pageHomeStart := strings.Index(page, `<div class="pageview" id="page-home"`)
+	appsStart := strings.Index(page, `id="container-apps"`)
+	modalCondition := strings.Index(page, `{{ if .HasApplicationSubdirectories }}`)
+	modalPlaceholder := strings.Index(page, `{{.ApplicationSubdirectoryModals}}`)
+	warningsModal := strings.Index(page, `id="page-warnings-modal"`)
+	if pageHomeStart == -1 || appsStart == -1 || modalCondition == -1 || modalPlaceholder == -1 || warningsModal == -1 {
+		t.Fatalf("expected page, apps, application modal, and warnings markers, got page=%d apps=%d condition=%d modal=%d warnings=%d", pageHomeStart, appsStart, modalCondition, modalPlaceholder, warningsModal)
+	}
+	appsEndOffset := strings.Index(page[appsStart:], `{{ end }}`)
+	if appsEndOffset == -1 {
+		t.Fatal("expected applications module conditional to close")
+	}
+	appsEnd := appsStart + appsEndOffset
+	pageHomeEnd := strings.LastIndex(page[:modalCondition], `</div>`)
+	if pageHomeEnd == -1 {
+		t.Fatal("expected page-home content to close before application modals")
+	}
+	pageHome := page[pageHomeStart : pageHomeEnd+len(`</div>`)]
+	if opens, closes := strings.Count(pageHome, `<div`), strings.Count(pageHome, `</div>`); opens != closes {
+		t.Fatalf("application modal placeholder occurs before page-home closes: div opens=%d closes=%d", opens, closes)
+	}
+	if !(pageHomeStart < appsStart && appsEnd < pageHomeEnd && pageHomeEnd < modalCondition && modalCondition < modalPlaceholder && modalPlaceholder < warningsModal) {
+		t.Fatalf("application modals must be body-level siblings after page-home and before warnings: page=%d apps=%d appsEnd=%d pageEnd=%d condition=%d modal=%d warnings=%d", pageHomeStart, appsStart, appsEnd, pageHomeEnd, modalCondition, modalPlaceholder, warningsModal)
+	}
+}
+
 func TestHomeTemplatePlacesWarningsButtonAboveSettingsWithoutVisibleText(t *testing.T) {
 	raw, err := TPL.ReadFile("html/home.html")
 	if err != nil {
