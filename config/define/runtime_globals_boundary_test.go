@@ -22,12 +22,40 @@ func TestProductionCodeDoesNotReachIntoLegacyThemeGlobals(t *testing.T) {
 	}
 }
 
+func TestProductionGlobalScanIgnoresOnlyMissingNonGoFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		err  error
+		want bool
+	}{
+		{name: "runtime config disappeared", path: filepath.Join("config", "data", "bookmarks.yml"), err: os.ErrNotExist, want: true},
+		{name: "Go source disappeared", path: filepath.Join("internal", "server", "server.go"), err: os.ErrNotExist, want: false},
+		{name: "runtime config permission error", path: filepath.Join("config", "data", "bookmarks.yml"), err: os.ErrPermission, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldIgnoreProductionWalkError(tt.path, tt.err); got != tt.want {
+				t.Fatalf("shouldIgnoreProductionWalkError(%q, %v) = %v, want %v", tt.path, tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func shouldIgnoreProductionWalkError(path string, err error) bool {
+	return os.IsNotExist(err) && !strings.HasSuffix(path, ".go")
+}
+
 func findProductionGlobalReferences(t *testing.T, pattern *regexp.Regexp) []string {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	var offenders []string
 	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
+			if shouldIgnoreProductionWalkError(path, err) {
+				return nil
+			}
 			return err
 		}
 		if entry.IsDir() {
