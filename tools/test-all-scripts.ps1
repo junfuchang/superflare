@@ -214,6 +214,17 @@ function Test-JsonAndTextFixtures {
     Write-Host "JSON/text fixture checks passed: $($jsonFiles.Count)"
 }
 
+function Test-FnappLifecycleConfigPreservation {
+    $testScript = Join-Path $repoRoot "fnapp/test-lifecycle-config-preservation.ps1"
+    Assert-True -Condition (Test-Path $testScript -PathType Leaf) -Message "Missing fnapp lifecycle configuration preservation test: $testScript"
+
+    Write-Host "Testing fnapp lifecycle configuration preservation..."
+    & $testScript
+    if (-not $?) {
+        throw "fnapp lifecycle configuration preservation test failed."
+    }
+}
+
 Test-PowerShellScripts
 Test-ShellScripts
 Test-ShellScriptTextFormat
@@ -222,4 +233,5 @@ Test-CmdWrappers
 Test-DockerComposeFiles
 Test-WindowsRuntimeCompatibility
 Test-JsonAndTextFixtures
+Test-FnappLifecycleConfigPreservation
 Write-Host "All script checks passed."

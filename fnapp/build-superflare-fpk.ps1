@@ -139,6 +139,12 @@ try {
         throw "go test failed with exit code $LASTEXITCODE."
     }
 
+    Write-Host "Testing fnapp configuration preservation..."
+    & (Join-Path $repoRoot "fnapp\test-lifecycle-config-preservation.ps1")
+    if (-not $?) {
+        throw "fnapp configuration preservation test failed."
+    }
+
     Write-Host "Syncing package defaults..."
     Copy-DefaultConfigFiles -RepoRoot $repoRoot -DefaultsDir $defaultsDir
 
