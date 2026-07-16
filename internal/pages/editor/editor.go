@@ -748,7 +748,7 @@ func parseLinksForCheck(input string) (parsedLinkCheckPayload, error) {
 			return parsedLinkCheckPayload{}, fmt.Errorf("link check row %d is incomplete", rowIndex)
 		}
 		switch len(record) {
-		case 6, 7, 8:
+		case 6, 7, 8, 10:
 		default:
 			return parsedLinkCheckPayload{}, fmt.Errorf("link check row %d has unsupported field count: %d", rowIndex, len(record))
 		}

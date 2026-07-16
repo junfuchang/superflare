@@ -727,6 +727,24 @@ func TestCheckLinksReturnsImmediateInvalidResultForMalformedPublicURL(t *testing
 	}
 }
 
+func TestCheckLinksAcceptsCurrentTenFieldEditorRows(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/editor/check-links", strings.NewReader(`{"bookmarks":"1,Bookmark A,http://,,Links,,icon,desc,true,false"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := checkLinks(c); err != nil {
+		t.Fatalf("checkLinks: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected current editor row to be accepted, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"invalid"`) {
+		t.Fatalf("expected malformed public URL result, got %s", rec.Body.String())
+	}
+}
+
 func TestParseLinksForCheckRejectsIncompleteNonBlankRow(t *testing.T) {
 	_, err := parseLinksForCheck("1,Bookmark A")
 	if err == nil {
