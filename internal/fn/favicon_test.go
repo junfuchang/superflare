@@ -1,6 +1,8 @@
 package fn
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -655,6 +657,228 @@ func TestFetchPublicSiteFaviconDiscoversIconBeforeLargeHTMLBodyLimit(t *testing.
 	}
 	if got := htmlReader.bytesRead; got > siteIconHTMLBytes {
 		t.Fatalf("favicon HTML discovery read %d bytes, want <= %d", got, siteIconHTMLBytes)
+	}
+}
+
+func TestCollectFaviconHrefsSupportsReportedDeclarations(t *testing.T) {
+	tests := []struct {
+		name string
+		link string
+		want string
+	}{
+		{
+			name: "absolute icon",
+			link: `<link rel="icon" href="https://picx.zhimg.com/80/v2-5393cb76a824b11d7771ecdce592c87d.png">`,
+			want: "https://picx.zhimg.com/80/v2-5393cb76a824b11d7771ecdce592c87d.png",
+		},
+		{
+			name: "absolute shortcut icon",
+			link: `<link rel="shortcut icon" href="https://wallhaven.cc/favicon.ico">`,
+			want: "https://wallhaven.cc/favicon.ico",
+		},
+		{
+			name: "relative typed shortcut icon",
+			link: `<link rel="shortcut icon" type="image/ico" href="/img/favicon.ico">`,
+			want: "/img/favicon.ico",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hrefs, err := collectFaviconHrefs(strings.NewReader("<html><head>" + tt.link + "</head><body></body></html>"))
+			if err != nil {
+				t.Fatalf("collectFaviconHrefs: %v", err)
+			}
+			if len(hrefs) != 1 || hrefs[0] != tt.want {
+				t.Fatalf("favicon hrefs = %#v, want %#v", hrefs, []string{tt.want})
+			}
+		})
+	}
+}
+
+func TestFetchPublicSiteFaviconResolvesRelativeHTMLIconAgainstRedirectedPage(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case "https://redirect.example/favicon.ico":
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"text/plain"}},
+					Body:       io.NopCloser(strings.NewReader("not found")),
+					Request:    req,
+				}, nil
+			case "https://redirect.example/":
+				return &http.Response{
+					StatusCode: http.StatusFound,
+					Header:     http.Header{"Location": []string{"https://www.redirect.example/app/"}},
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			case "https://www.redirect.example/app/":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html"}},
+					Body:       io.NopCloser(strings.NewReader(`<html><head><link rel="shortcut icon" href="icons/favicon.svg"></head></html>`)),
+					Request:    req,
+				}, nil
+			case "https://www.redirect.example/app/icons/favicon.svg":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+					Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+					Request:    req,
+				}, nil
+			default:
+				t.Fatalf("unexpected favicon request URL: %s", req.URL)
+				return nil, nil
+			}
+		}),
+	}
+
+	data, contentType, err := FetchPublicSiteFavicon("https://redirect.example/favicon.ico")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon: %v", err)
+	}
+	if contentType != "image/svg+xml" || !strings.Contains(string(data), "<svg") {
+		t.Fatalf("redirected relative favicon type=%q data=%q", contentType, data)
+	}
+}
+
+func TestHostedSiteFaviconURLUsesOnlyPublicDomainNames(t *testing.T) {
+	if got := hostedSiteFaviconURL("https://wallroom.io/favicon.ico"); got != "https://icon.horse/icon/wallroom.io" {
+		t.Fatalf("public fallback URL = %q", got)
+	}
+	for _, input := range []string{
+		"http://192.168.1.20/favicon.ico",
+		"https://localhost/favicon.ico",
+		"https://nas.local/favicon.ico",
+		"https://intranet/favicon.ico",
+		"https://example.invalid/favicon.ico",
+		"https://service.test/favicon.ico",
+		"https://icon.example/favicon.ico",
+		"https://service.internal/favicon.ico",
+		"https://hidden.onion/favicon.ico",
+		"https://preview.alt/favicon.ico",
+	} {
+		if got := hostedSiteFaviconURL(input); got != "" {
+			t.Fatalf("local fallback URL for %q = %q, want empty", input, got)
+		}
+	}
+}
+
+func TestFetchPublicSiteFaviconUsesHostedFallbackWhenOriginUnavailable(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+
+	var providerRequests int32
+	pngData := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00}
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch {
+			case req.URL.Host == "blocked-favicon.test-domain.com" && req.URL.Path == "/favicon.ico":
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"text/plain"}},
+					Body:       io.NopCloser(strings.NewReader("not found")),
+					Request:    req,
+				}, nil
+			case req.URL.Host == "blocked-favicon.test-domain.com" && req.URL.Path == "/":
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     http.Header{"Content-Type": []string{"text/plain"}},
+					Body:       io.NopCloser(strings.NewReader("unavailable")),
+					Request:    req,
+				}, nil
+			case req.URL.Host == "icon.horse" && req.URL.Path == "/icon/blocked-favicon.test-domain.com":
+				atomic.AddInt32(&providerRequests, 1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"image/png"}},
+					Body:       io.NopCloser(bytes.NewReader(pngData)),
+					Request:    req,
+				}, nil
+			default:
+				t.Fatalf("unexpected favicon request URL: %s", req.URL)
+				return nil, nil
+			}
+		}),
+	}
+
+	iconURL := "https://blocked-favicon.test-domain.com/favicon.ico"
+	for attempt := 0; attempt < 2; attempt++ {
+		data, contentType, err := FetchPublicSiteFavicon(iconURL)
+		if err != nil {
+			t.Fatalf("FetchPublicSiteFavicon attempt %d: %v", attempt+1, err)
+		}
+		if contentType != "image/png" || !bytes.Equal(data, pngData) {
+			t.Fatalf("hosted fallback attempt %d type=%q data=%v", attempt+1, contentType, data)
+		}
+	}
+	if got := atomic.LoadInt32(&providerRequests); got != 1 {
+		t.Fatalf("hosted fallback requests = %d, want 1", got)
+	}
+}
+
+func TestFetchPublicSiteFaviconBoundsWholeFallbackChain(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	requests := make([]string, 0, 2)
+	siteIconHTTPClient = &http.Client{
+		Timeout: 4 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host == "slow.test-domain.com" || req.URL.Host == siteIconFallbackHost {
+				requests = append(requests, req.URL.Host+req.URL.Path)
+			}
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}),
+	}
+
+	started := time.Now()
+	_, _, err = FetchPublicSiteFavicon("https://slow.test-domain.com/favicon.ico")
+	elapsed := time.Since(started)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected overall deadline error, got %v", err)
+	}
+	if elapsed > 9*time.Second {
+		t.Fatalf("fallback chain took %v, want less than 9s", elapsed)
+	}
+	if got := strings.Join(requests, ","); got != "slow.test-domain.com/favicon.ico,icon.horse/icon/slow.test-domain.com" {
+		t.Fatalf("timeout fallback request order = %q", got)
 	}
 }
 
