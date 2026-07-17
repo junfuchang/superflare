@@ -4,7 +4,7 @@
 
 **Goal:** Keep Handsontable row numbers aligned with variable-height editor rows, map public-link results across empty rows correctly, refit the bookmark table after checks, and align cell content left and vertically centered.
 
-**Architecture:** Extend the existing rendered-height pass so it also copies each master data cell's computed content height to the matching left-clone row header before measuring the table. Map compact exported check rows back through the ordered non-empty visual rows, schedule the same height pass after link-check batch updates, and add scoped editor-table alignment CSS without changing data or request formats.
+**Architecture:** Extend the existing rendered-height pass so it also copies each master data cell's computed content height to the matching left-clone row header before measuring the table. Map compact exported check rows back through the ordered non-empty visual rows, lock bookmark edits and structure until the request settles, schedule the same height pass after link-check batch updates, and add scoped editor-table alignment CSS without changing data or request formats.
 
 **Tech Stack:** Go 1.x, Go templates, Handsontable 6.2.2, embedded assets, repository build generator, Browser runtime.
 
@@ -15,6 +15,7 @@
 - Keep data cells left aligned and vertically centered; keep headers horizontally centered and vertically centered.
 - Do not change bookmark/category configuration, CSV, JSON, or link-check request formats.
 - Map returned link-check row numbers with the same `isDeletedBookmarkRow` filter used by CSV export.
+- Disable bookmark editing, row movement, and context-menu structure changes while a public-link check is pending, then restore them in `finally`.
 - Leave `fnapp/superflare/manifest` untouched.
 - Commit locally on `main`; do not push.
 
@@ -60,6 +61,14 @@ func TestEditorTemplateSynchronizesRowHeadersAndRefitsLinkChecks(t *testing.T) {
 		`checkedVisualRows.push(visualRow);`,
 		`const checkedRow = Math.max(0, Number(result.row || 1) - 1);`,
 		`const visualRow = checkedVisualRows[checkedRow];`,
+		`const BOOKMARK_CONTEXT_MENU_ITEMS = [`,
+		`function setBookmarkTableLinkCheckLocked(locked) {`,
+		`readOnly: locked,`,
+		`manualRowMove: !locked,`,
+		`contextMenu: locked ? false : BOOKMARK_CONTEXT_MENU_ITEMS`,
+		`setBookmarkTableLinkCheckLocked(true);`,
+		`}).finally(function () {`,
+		`setBookmarkTableLinkCheckLocked(false);`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("editor template missing row-header synchronization %q", expected)
@@ -120,7 +129,8 @@ Run:
 ```
 
 Expected: FAIL because the row-header helper, compact-to-visual result mapping,
-link-check schedule, and alignment rules are absent.
+request-lifetime table lock, link-check schedule, and alignment rules are
+absent.
 
 - [ ] **Step 4: Add scoped cell alignment**
 
@@ -205,6 +215,34 @@ instanceBookmarks.render();
 scheduleTableLayoutSync();
 ```
 
+Define the reusable bookmark context-menu items and use them in the bookmark
+Handsontable configuration:
+
+```javascript
+const BOOKMARK_CONTEXT_MENU_ITEMS = ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"];
+```
+
+Add a request-lifetime lock helper:
+
+```javascript
+function setBookmarkTableLinkCheckLocked(locked) {
+    instanceBookmarks.updateSettings({
+        readOnly: locked,
+        manualRowMove: !locked,
+        contextMenu: locked ? false : BOOKMARK_CONTEXT_MENU_ITEMS
+    });
+}
+```
+
+Call `setBookmarkTableLinkCheckLocked(true)` after `bindData()` and restore in
+all settled paths:
+
+```javascript
+}).finally(function () {
+    setBookmarkTableLinkCheckLocked(false);
+});
+```
+
 - [ ] **Step 7: Regenerate the embedded template and verify GREEN**
 
 Run:
@@ -256,12 +294,15 @@ At `http://127.0.0.1:3649/editor` with a 1280 by 720 viewport:
    holder has `scrollHeight - clientHeight == 0` and its last row is inside the
    container. Assert every non-empty result is attached to the matching
    bookmark and no result is attached to an empty row.
-4. Assert bookmark data cells compute to `text-align: left` and
+4. While the request is pending, assert a bookmark cell does not enter edit
+   mode and the context menu cannot insert/remove rows. After completion,
+   assert editing and the normal context menu are restored.
+5. Assert bookmark data cells compute to `text-align: left` and
    `vertical-align: middle`; assert header cells compute to
    `vertical-align: middle`.
-5. Repeat the alignment and no-vertical-scroll checks for the category table.
-6. Reload without saving and verify original data is restored.
-7. Check page identity, meaningful DOM, framework overlays, and console errors.
+6. Repeat the alignment and no-vertical-scroll checks for the category table.
+7. Reload without saving and verify original data is restored.
+8. Check page identity, meaningful DOM, framework overlays, and console errors.
 
 Expected: all assertions pass; the Browser screenshot command may be reported
 as unavailable if the selected in-app Browser does not expose it.

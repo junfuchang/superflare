@@ -56,6 +56,11 @@ the numeric Handsontable container height.
 into the unfiltered visual table. Any empty row before a checked bookmark shifts
 the result onto the wrong row.
 
+Even with a compact-to-visual map, rebuilding that map only when the response
+arrives is unsafe if users can edit, insert, remove, or move bookmark rows while
+the request is running. The result row numbers describe the submitted snapshot,
+not a later table state.
+
 ### Cell alignment
 
 The editor table CSS defines wrapping and colors but does not define horizontal
@@ -95,6 +100,19 @@ returned `result.row` as an index into that compact array, then apply the status
 to the resolved visual row. This mirrors the export order without changing the
 backend payload or writing cells one by one.
 
+### Lock bookmark structure during a check
+
+Immediately after validation and CSV binding, temporarily update the bookmark
+Handsontable settings to `readOnly: true`, disable manual row movement, and
+disable its context menu. Restore the normal settings in the request promise's
+`finally` handler so success, HTTP errors, JSON errors, and network failures all
+unlock the table.
+
+The table remains visible and scrollable while the check runs. Locking only the
+bookmark editor is preferred over introducing persistent client row IDs or
+changing the backend payload, and it guarantees that the compact-to-visual map
+describes the same row order for the request and response.
+
 ### Align cells
 
 Apply `text-align: left !important` and `vertical-align: middle !important` to
@@ -110,6 +128,8 @@ data `td` cells in both editor tables. Apply only vertical centering to table
 - Row-header synchronization exits safely when an instance, clone, row, or cell
   is unavailable.
 - The link-check request and result schema are unchanged.
+- Bookmark editing and structural operations are restored after every settled
+  link-check request, including failures.
 - No development, Docker, Linux, Windows, or fnapp-specific behavior is added.
 
 ## Verification
@@ -122,6 +142,8 @@ Automated template coverage will verify:
 - batched link-check results schedule another table layout pass;
 - compact link-check result rows map back to their matching non-empty visual
   rows when empty rows are present;
+- the bookmark table is locked before the request and always unlocked in a
+  promise `finally` handler;
 - data cells are left aligned and vertically centered, while header cells are
   vertically centered;
 - the generated embedded editor template matches the source template.
@@ -133,6 +155,8 @@ Browser QA will verify at DPR 1.5:
 - row numbers remain consecutive and existing bookmark content stays on the
   expected row;
 - returned results appear on the matching bookmark rows, never on empty rows;
+- bookmark cells cannot be edited or structurally changed while a link check is
+  pending and become editable again after it settles;
 - public-link check results leave `scrollHeight - clientHeight == 0` while the
   container grows to the full rendered height;
 - both tables report the required computed cell alignment;
