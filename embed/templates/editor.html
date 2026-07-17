@@ -657,6 +657,13 @@
             white-space: pre-wrap !important;
             overflow-wrap: anywhere;
             word-break: normal;
+            text-align: left !important;
+            vertical-align: middle !important;
+        }
+
+        #container-category .handsontable th,
+        #container-bookmarks .handsontable th {
+            vertical-align: middle !important;
         }
 
         #container-category .handsontable input,
@@ -1102,6 +1109,9 @@
             afterInit: function () {
                 enforceEditorColumnWidthLimit(this);
             },
+            afterRender: function () {
+                syncEditorRowHeaderHeights(this);
+            },
             afterColumnResize: function () {
                 scheduleTableLayoutSync();
             },
@@ -1200,6 +1210,9 @@
             beforeStretchingColumnWidth: clampEditorColumnWidth,
             afterInit: function () {
                 enforceEditorColumnWidthLimit(this);
+            },
+            afterRender: function () {
+                syncEditorRowHeaderHeights(this);
             },
             afterColumnResize: function () {
                 scheduleTableLayoutSync();
@@ -1309,9 +1322,26 @@
             moveBookmarkSearch(1);
         });
 
+        function syncEditorRowHeaderHeights(instance) {
+            if (!instance || !instance.rootElement) { return; }
+            const masterRows = instance.rootElement.querySelectorAll('.ht_master .htCore tbody tr');
+            const headerRows = instance.rootElement.querySelectorAll('.ht_clone_left .htCore tbody tr');
+            const rowCount = Math.min(masterRows.length, headerRows.length);
+            for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+                const masterCell = masterRows[rowIndex].querySelector('td');
+                const headerCell = headerRows[rowIndex].querySelector('th');
+                if (!masterCell || !headerCell) { continue; }
+                const masterHeight = window.getComputedStyle(masterCell).height;
+                if (masterHeight && headerCell.style.height !== masterHeight) {
+                    headerCell.style.height = masterHeight;
+                }
+            }
+        }
+
         function fitEditorTableHeight(instance) {
             if (!instance || !instance.rootElement) { return; }
             instance.render();
+            syncEditorRowHeaderHeights(instance);
             const holder = instance.rootElement.querySelector('.ht_master .wtHolder');
             if (!holder) { return; }
             const table = holder.querySelector('.htCore');
@@ -2072,23 +2102,28 @@
 
         function applyLinkCheckResults(results) {
             const nextRows = getVisualBookmarkRows();
+            const checkedVisualRows = [];
             let unstableCount = 0;
             let restrictedCount = 0;
             let invalidCount = 0;
 
-            nextRows.forEach(function (item) {
+            nextRows.forEach(function (item, visualRow) {
                 item.CheckResult = '';
                 item.CheckStatus = '';
+                if (!isDeletedBookmarkRow(item)) {
+                    checkedVisualRows.push(visualRow);
+                }
             });
 
             (results || []).forEach(function (result) {
                 if (!result) {
                     return;
                 }
-                const visualRow = Math.max(0, Number(result.row || 1) - 1);
-                if (!Number.isFinite(visualRow) || visualRow >= nextRows.length) {
+                const checkedRow = Math.max(0, Number(result.row || 1) - 1);
+                if (!Number.isFinite(checkedRow) || checkedRow >= checkedVisualRows.length) {
                     return;
                 }
+                const visualRow = checkedVisualRows[checkedRow];
 
                 const rowData = nextRows[visualRow];
                 rowData.CheckResult = summarizeLinkCheckReason(result);
@@ -2108,6 +2143,7 @@
             rebuildBookmarkSearchIndex();
             runBookmarkSearch(searchField.value, false);
             instanceBookmarks.render();
+            scheduleTableLayoutSync();
 
             return {
                 unstableCount: unstableCount,

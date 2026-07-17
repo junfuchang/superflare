@@ -265,6 +265,81 @@ func TestEditorTemplateTablesGrowToRenderedHeight(t *testing.T) {
 	}
 }
 
+func TestEditorTemplateSynchronizesRowHeadersAndRefitsLinkChecks(t *testing.T) {
+	raw, err := TPL.ReadFile("html/editor.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, expected := range []string{
+		`function syncEditorRowHeaderHeights(instance) {`,
+		`const masterRows = instance.rootElement.querySelectorAll('.ht_master .htCore tbody tr');`,
+		`const headerRows = instance.rootElement.querySelectorAll('.ht_clone_left .htCore tbody tr');`,
+		`const rowCount = Math.min(masterRows.length, headerRows.length);`,
+		`const masterCell = masterRows[rowIndex].querySelector('td');`,
+		`const headerCell = headerRows[rowIndex].querySelector('th');`,
+		`const masterHeight = window.getComputedStyle(masterCell).height;`,
+		`if (masterHeight && headerCell.style.height !== masterHeight) {`,
+		`headerCell.style.height = masterHeight;`,
+		`syncEditorRowHeaderHeights(instance);`,
+		`const checkedVisualRows = [];`,
+		`nextRows.forEach(function (item, visualRow) {`,
+		`if (!isDeletedBookmarkRow(item)) {`,
+		`checkedVisualRows.push(visualRow);`,
+		`const checkedRow = Math.max(0, Number(result.row || 1) - 1);`,
+		`const visualRow = checkedVisualRows[checkedRow];`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor template missing row-header synchronization %q", expected)
+		}
+	}
+
+	linkCheckStart := strings.Index(page, `function applyLinkCheckResults(results) {`)
+	linkCheckEnd := strings.Index(page, `document.getElementById('back-home').addEventListener`)
+	if linkCheckStart == -1 || linkCheckEnd == -1 || linkCheckEnd <= linkCheckStart {
+		t.Fatal("editor template missing link-check result block")
+	}
+	if !strings.Contains(page[linkCheckStart:linkCheckEnd], `scheduleTableLayoutSync();`) {
+		t.Fatal("link-check results must schedule a full-content height update")
+	}
+	if got := strings.Count(page, `afterRender: function () {
+                syncEditorRowHeaderHeights(this);
+            },`); got != 2 {
+		t.Fatalf("expected both editor tables to synchronize row headers after renders, got %d hooks", got)
+	}
+}
+
+func TestEditorTemplateAlignsCellsLeftAndMiddle(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", "editor.html")))
+	if err != nil {
+		t.Fatalf("read source editor template: %v", err)
+	}
+	page := string(raw)
+	requireBlock := func(selector string, properties ...string) {
+		t.Helper()
+		start := strings.Index(page, selector+" {")
+		if start == -1 {
+			t.Fatalf("editor template missing CSS selector %q", selector)
+		}
+		end := strings.Index(page[start:], "}")
+		if end == -1 {
+			t.Fatalf("editor template CSS selector %q has no closing brace", selector)
+		}
+		block := page[start : start+end]
+		for _, property := range properties {
+			if !strings.Contains(block, property) {
+				t.Fatalf("editor template CSS selector %q missing %q: %s", selector, property, block)
+			}
+		}
+	}
+
+	requireBlock(`#container-category .handsontable td,
+        #container-bookmarks .handsontable td`, `text-align: left !important;`, `vertical-align: middle !important;`)
+	requireBlock(`#container-category .handsontable th,
+        #container-bookmarks .handsontable th`, `vertical-align: middle !important;`)
+}
+
 func TestEditorTemplateSupportsPrivateAndNormalBookmarkFavorites(t *testing.T) {
 	raw, err := TPL.ReadFile("html/editor.html")
 	if err != nil {
