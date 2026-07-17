@@ -107,7 +107,7 @@ func TestRenderBookmarkIcon_CacheHitRendersDirectlyWithoutAsyncFallback(t *testi
 	}
 
 	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
-	if !strings.Contains(out, `src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico&amp;v=2"`) {
+	if !strings.Contains(out, `src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
 		t.Fatalf("cached favicon should render directly from the validated cache, got %q", out)
 	}
 	if strings.Contains(out, `data-site-icon-src=`) {
@@ -148,7 +148,7 @@ func TestRenderBookmarkIcon_InvalidCacheKeepsAsyncFallback(t *testing.T) {
 	}
 
 	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
-	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico&amp;v=2"`) {
+	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
 		t.Fatalf("invalid cache should keep the asynchronous favicon path, got %q", out)
 	}
 	if !strings.Contains(out, `src="/assets/mdi/blackboard-bookmark.svg"`) {

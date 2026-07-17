@@ -3,6 +3,7 @@ package fn
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -44,7 +45,7 @@ func TestGetSiteFaviconURL_InvalidOrUnsupportedURL(t *testing.T) {
 
 func TestGetSiteFavicon_ValidURL(t *testing.T) {
 	out := GetSiteFavicon("http://example.com:8080/a/b", "fallback")
-	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2Fexample.com%3A8080%2Ffavicon.ico&amp;v=2"`) {
+	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2Fexample.com%3A8080%2Ffavicon.ico"`) {
 		t.Fatalf("GetSiteFavicon should proxy public site favicon through local route, got %q", out)
 	}
 	if !strings.Contains(out, `referrerpolicy="no-referrer"`) {
@@ -54,16 +55,46 @@ func TestGetSiteFavicon_ValidURL(t *testing.T) {
 
 func TestGetSiteFavicon_LocalURLUsesProxyFallbackRoute(t *testing.T) {
 	out := GetSiteFavicon("http://192.168.1.20:8080/a/b", "fallback")
-	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2F192.168.1.20%3A8080%2Ffavicon.ico&amp;v=2"`) {
+	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2F192.168.1.20%3A8080%2Ffavicon.ico"`) {
 		t.Fatalf("GetSiteFavicon should use proxy fallback route for local-network favicon, got %q", out)
 	}
 }
 
 func TestGetSiteFaviconAssetURL_PublicUsesProxy(t *testing.T) {
 	out := GetSiteFaviconAssetURL("https://github.com/junfuchang/superflare")
-	const expected = `/assets/site-icons?src=https%3A%2F%2Fgithub.com%2Ffavicon.ico&v=2`
+	const expected = `/assets/site-icons?src=https%3A%2F%2Fgithub.com%2Ffavicon.ico`
 	if out != expected {
 		t.Fatalf("GetSiteFaviconAssetURL public: expected %q, got %q", expected, out)
+	}
+}
+
+func TestReadCachedSiteFaviconIgnoresLegacyCacheKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	iconURL := "https://invalid-letter-cache.example/favicon.ico"
+	legacySum := sha256.Sum256([]byte(strings.TrimSpace(iconURL)))
+	legacyKey := fmt.Sprintf("%x", legacySum)
+	legacyPath := filepath.Join(tmpDir, "var", "cache", "site-icons", legacyKey+".bin")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), 0644); err != nil {
+		t.Fatalf("WriteFile legacy cache: %v", err)
+	}
+
+	if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
+		t.Fatal("legacy favicon cache entry should be ignored")
+	}
+	if got := SiteFaviconCacheKeyForTest(iconURL); got == legacyKey {
+		t.Fatal("current favicon cache key should differ from the legacy URL-only key")
 	}
 }
 
@@ -276,7 +307,7 @@ func TestGetSiteFaviconAssetURLFastDoesNotStartDuplicateBackgroundFetch(t *testi
 
 func TestGetSiteFaviconAssetURL_LocalUsesProxyFallbackRoute(t *testing.T) {
 	out := GetSiteFaviconAssetURL("https://nas.local/apps")
-	const expected = `/assets/site-icons?src=https%3A%2F%2Fnas.local%2Ffavicon.ico&v=2`
+	const expected = `/assets/site-icons?src=https%3A%2F%2Fnas.local%2Ffavicon.ico`
 	if out != expected {
 		t.Fatalf("GetSiteFaviconAssetURL local: expected %q, got %q", expected, out)
 	}

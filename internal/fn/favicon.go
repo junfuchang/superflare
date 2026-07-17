@@ -30,17 +30,17 @@ import (
 )
 
 const (
-	siteIconProxyPath           = "/assets/site-icons"
-	siteIconBrowserCacheVersion = "2"
-	siteIconCacheDir            = "var/cache/site-icons"
-	siteIconFallbackHost        = "icon.horse"
-	siteIconMaxBytes            = 4 * 1024 * 1024
-	siteIconMaxDecodedPixels    = 4 * 1024 * 1024
-	siteIconHTMLBytes           = 512 * 1024
-	siteIconWarmLimit           = 8
-	siteIconDecodeLimit         = 2
-	siteIconRequestTimeout      = 4 * time.Second
-	siteIconOverallTimeout      = 8 * time.Second
+	siteIconProxyPath        = "/assets/site-icons"
+	siteIconCacheGeneration  = "2026-07-nxdomain"
+	siteIconCacheDir         = "var/cache/site-icons"
+	siteIconFallbackHost     = "icon.horse"
+	siteIconMaxBytes         = 4 * 1024 * 1024
+	siteIconMaxDecodedPixels = 4 * 1024 * 1024
+	siteIconHTMLBytes        = 512 * 1024
+	siteIconWarmLimit        = 8
+	siteIconDecodeLimit      = 2
+	siteIconRequestTimeout   = 4 * time.Second
+	siteIconOverallTimeout   = 8 * time.Second
 )
 
 var (
@@ -157,10 +157,7 @@ func hasValidatedSiteFaviconFast(iconURL string) bool {
 }
 
 func siteIconProxyURL(iconURL string) string {
-	query := url.Values{
-		"src": {iconURL},
-		"v":   {siteIconBrowserCacheVersion},
-	}
+	query := url.Values{"src": {iconURL}}
 	return siteIconProxyPath + "?" + query.Encode()
 }
 
@@ -843,7 +840,8 @@ func siteFaviconCachePath(iconURL string) (string, error) {
 }
 
 func siteFaviconCacheKey(iconURL string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(iconURL)))
+	normalizedURL := strings.TrimSpace(iconURL)
+	sum := sha256.Sum256([]byte(siteIconCacheGeneration + "\x00" + normalizedURL))
 	return fmt.Sprintf("%x", sum)
 }
 
