@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v5"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
 	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
@@ -340,7 +341,9 @@ func TestSiteIconProxyFallsBackToBuiltinBookmarkIconWithoutMDICache(t *testing.T
 func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	setupAssetsConfigDir(t)
 	define.Init()
-	define.AppFlags.DebugMode = true
+	previousRuntime := assetsRuntimeFlags.Load()
+	SetRuntimeFlags(model.Flags{DebugMode: false})
+	t.Cleanup(func() { assetsRuntimeFlags.Store(previousRuntime) })
 	define.StoreThemeRuntimeSnapshot(define.ThemeRuntimeSnapshot{
 		Name:    "blackboard",
 		Primary: "rgba(255, 253, 234, 1)",
@@ -391,6 +394,16 @@ func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	if got := rec.Header().Get(siteIconStateHeader); got != "cached" {
 		t.Fatalf("site icon proxy cache-hit state header = %q", got)
 	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("site icon proxy cache hit should include an ETag")
+	}
+	if !strings.HasPrefix(etag, `W/"`) {
+		t.Fatalf("site icon proxy should use a weak ETag across content encodings, got %q", etag)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=604800, immutable" {
+		t.Fatalf("site icon proxy cache-control = %q", got)
+	}
 	contentSecurityPolicy := rec.Header().Get("Content-Security-Policy")
 	for _, expected := range []string{"default-src 'none'", "script-src 'none'", "style-src 'unsafe-inline'", "img-src data:", "sandbox"} {
 		if !strings.Contains(contentSecurityPolicy, expected) {
@@ -402,6 +415,23 @@ func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	}
 	if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
 		t.Fatalf("site icon proxy Referrer-Policy = %q", got)
+	}
+
+	conditionalReq := httptest.NewRequest(http.MethodGet, "/assets/site-icons?src=https://example.com/favicon.ico", nil)
+	conditionalReq.Header.Set("If-None-Match", etag)
+	conditionalRec := httptest.NewRecorder()
+	e.ServeHTTP(conditionalRec, conditionalReq)
+	if conditionalRec.Code != http.StatusNotModified {
+		t.Fatalf("conditional site icon status = %d, want %d", conditionalRec.Code, http.StatusNotModified)
+	}
+	if conditionalRec.Body.Len() != 0 {
+		t.Fatalf("conditional site icon response should not resend the body, got %d bytes", conditionalRec.Body.Len())
+	}
+	if got := conditionalRec.Header().Get("ETag"); got != etag {
+		t.Fatalf("conditional site icon ETag = %q, want %q", got, etag)
+	}
+	if got := conditionalRec.Header().Get(siteIconStateHeader); got != "cached" {
+		t.Fatalf("conditional site icon state = %q, want cached", got)
 	}
 }
 

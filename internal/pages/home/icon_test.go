@@ -113,6 +113,9 @@ func TestRenderBookmarkIcon_CacheHitRendersDirectlyWithoutAsyncFallback(t *testi
 	if strings.Contains(out, `data-site-icon-src=`) {
 		t.Fatalf("cached favicon should not use the asynchronous fallback path, got %q", out)
 	}
+	if !strings.Contains(out, `decoding="sync"`) || strings.Contains(out, `decoding="async"`) {
+		t.Fatalf("cached favicon should decode synchronously before the first paint, got %q", out)
+	}
 	for _, expected := range []string{
 		`data-site-icon-direct="1"`,
 		`data-site-icon-fallback-src="/assets/mdi/blackboard-bookmark.svg"`,

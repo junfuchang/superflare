@@ -177,7 +177,7 @@ func GetSiteFaviconFast(bookmarkLink string, fallback string) string {
 	if iconURL == "" {
 		return fallback
 	}
-	return `<img src="` + html.EscapeString(iconURL) + `" referrerpolicy="no-referrer" decoding="async" alt="">`
+	return `<img src="` + html.EscapeString(iconURL) + `" referrerpolicy="no-referrer" decoding="sync" alt="">`
 }
 
 func GetYandexFavicon(bookmarkLink string, fallback string) string {

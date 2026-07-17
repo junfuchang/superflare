@@ -221,13 +221,19 @@ func serveSiteFavicon(c *echo.Context) error {
 
 	data, contentType, err := fn.FetchPublicSiteFavicon(iconURL)
 	if err == nil {
+		etag := ""
 		if currentAssetsRuntime().DebugMode {
 			c.Response().Header().Set("Cache-Control", "no-store")
+			c.Response().Header().Del("ETag")
 		} else {
-			c.Response().Header().Set("Cache-Control", "public, max-age=604800")
+			c.Response().Header().Set("Cache-Control", "public, max-age=604800, immutable")
+			etag = siteIconETag(data)
+			c.Response().Header().Set("ETag", etag)
 		}
 		c.Response().Header().Set(siteIconStateHeader, "cached")
-		c.Response().Header().Del("ETag")
+		if etag != "" && siteIconETagMatches(c.Request().Header.Get("If-None-Match"), etag) {
+			return c.NoContent(http.StatusNotModified)
+		}
 		return c.Blob(http.StatusOK, contentType, data)
 	}
 
@@ -239,6 +245,25 @@ func serveSiteFavicon(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadGateway, "site favicon fetch failed")
 	}
 	return c.Blob(http.StatusOK, fallbackContentType, fallback)
+}
+
+func siteIconETag(data []byte) string {
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf(`W/"%x"`, sum[:])
+}
+
+func siteIconETagMatches(headerValue string, etag string) bool {
+	if etag == "" {
+		return false
+	}
+	wanted := strings.TrimPrefix(etag, "W/")
+	for _, candidate := range strings.Split(headerValue, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func readBuiltinBookmarkIcon() ([]byte, string, error) {
