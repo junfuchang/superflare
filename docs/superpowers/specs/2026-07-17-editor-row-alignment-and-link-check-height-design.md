@@ -6,7 +6,8 @@ This change fixes three related `/editor` table regressions without changing
 bookmark data or configuration formats:
 
 1. Inserting many empty bookmark rows must not make row numbers drift away from
-   their corresponding row content.
+   their corresponding row content or make link-check results attach to the
+   wrong visual row.
 2. Applying public-link check results must grow the bookmark table container
    instead of reintroducing an internal vertical scrollbar.
 3. Data-cell content must be left aligned and vertically centered. Row and
@@ -25,6 +26,10 @@ At a 1280 by 720 viewport with `devicePixelRatio == 1.5`:
 - A public-link check added wrapped status text and increased the rendered
   master table from about 690 pixels to 750 pixels. The container stayed at 706
   pixels and exposed 59 pixels of internal vertical scrolling.
+- Empty rows were removed and reindexed for the submitted CSV, but returned
+  result row numbers were applied directly to unfiltered visual rows. A result
+  for `wallroom` at compact row 9 was written to an empty visual row 9 instead
+  of the bookmark's visual row 21.
 - Data cells computed to `text-align: start` and `vertical-align: top`.
 
 ## Root Causes
@@ -43,6 +48,13 @@ the issue especially visible but do not corrupt or reorder bookmark data.
 instance, but it does not call the existing scheduled layout synchronizer.
 Wrapped error details therefore change the master table height without updating
 the numeric Handsontable container height.
+
+### Link-check row mapping
+
+`exportBookmarksCSV` filters deleted/empty rows and assigns compact row numbers.
+`applyLinkCheckResults` instead interprets each returned row number as an index
+into the unfiltered visual table. Any empty row before a checked bookmark shifts
+the result onto the wrong row.
 
 ### Cell alignment
 
@@ -75,6 +87,14 @@ After `applyLinkCheckResults` updates and renders the bookmark table, call
 unchanged-height guard handle the asynchronous batch without introducing an
 update loop.
 
+### Map compact check rows back to visual rows
+
+While clearing prior results, build an ordered array of visual row indexes for
+rows that pass the existing `isDeletedBookmarkRow` filter. Interpret each
+returned `result.row` as an index into that compact array, then apply the status
+to the resolved visual row. This mirrors the export order without changing the
+backend payload or writing cells one by one.
+
 ### Align cells
 
 Apply `text-align: left !important` and `vertical-align: middle !important` to
@@ -86,6 +106,7 @@ data `td` cells in both editor tables. Apply only vertical centering to table
 - No bookmark, category, YAML, JSON, or CSV schema changes.
 - Empty rows remain editable and continue to be excluded by existing save/check
   validation rules when they contain no bookmark data.
+- Link-check results use the same empty-row filter and ordering as CSV export.
 - Row-header synchronization exits safely when an instance, clone, row, or cell
   is unavailable.
 - The link-check request and result schema are unchanged.
@@ -99,6 +120,8 @@ Automated template coverage will verify:
 - the helper maps master data cells to left-clone row-header cells and guards
   unchanged assignments;
 - batched link-check results schedule another table layout pass;
+- compact link-check result rows map back to their matching non-empty visual
+  rows when empty rows are present;
 - data cells are left aligned and vertically centered, while header cells are
   vertically centered;
 - the generated embedded editor template matches the source template.
@@ -109,6 +132,7 @@ Browser QA will verify at DPR 1.5:
   aligned with no cumulative drift;
 - row numbers remain consecutive and existing bookmark content stays on the
   expected row;
+- returned results appear on the matching bookmark rows, never on empty rows;
 - public-link check results leave `scrollHeight - clientHeight == 0` while the
   container grows to the full rendered height;
 - both tables report the required computed cell alignment;

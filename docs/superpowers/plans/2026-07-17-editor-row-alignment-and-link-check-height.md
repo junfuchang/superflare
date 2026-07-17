@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Keep Handsontable row numbers aligned with variable-height editor rows, refit the bookmark table after public-link checks, and align cell content left and vertically centered.
+**Goal:** Keep Handsontable row numbers aligned with variable-height editor rows, map public-link results across empty rows correctly, refit the bookmark table after checks, and align cell content left and vertically centered.
 
-**Architecture:** Extend the existing rendered-height pass so it also copies each master data cell's computed content height to the matching left-clone row header before measuring the table. Schedule that same pass after link-check batch updates, and add scoped editor-table alignment CSS without changing data or request formats.
+**Architecture:** Extend the existing rendered-height pass so it also copies each master data cell's computed content height to the matching left-clone row header before measuring the table. Map compact exported check rows back through the ordered non-empty visual rows, schedule the same height pass after link-check batch updates, and add scoped editor-table alignment CSS without changing data or request formats.
 
 **Tech Stack:** Go 1.x, Go templates, Handsontable 6.2.2, embedded assets, repository build generator, Browser runtime.
 
@@ -14,6 +14,7 @@
 - Preserve variable wrapped row heights, full-content container growth, and horizontal scrolling.
 - Keep data cells left aligned and vertically centered; keep headers horizontally centered and vertically centered.
 - Do not change bookmark/category configuration, CSV, JSON, or link-check request formats.
+- Map returned link-check row numbers with the same `isDeletedBookmarkRow` filter used by CSV export.
 - Leave `fnapp/superflare/manifest` untouched.
 - Commit locally on `main`; do not push.
 
@@ -53,6 +54,12 @@ func TestEditorTemplateSynchronizesRowHeadersAndRefitsLinkChecks(t *testing.T) {
 		`if (masterHeight && headerCell.style.height !== masterHeight) {`,
 		`headerCell.style.height = masterHeight;`,
 		`syncEditorRowHeaderHeights(instance);`,
+		`const checkedVisualRows = [];`,
+		`nextRows.forEach(function (item, visualRow) {`,
+		`if (!isDeletedBookmarkRow(item)) {`,
+		`checkedVisualRows.push(visualRow);`,
+		`const checkedRow = Math.max(0, Number(result.row || 1) - 1);`,
+		`const visualRow = checkedVisualRows[checkedRow];`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("editor template missing row-header synchronization %q", expected)
@@ -112,7 +119,8 @@ Run:
 .\.tools\go\bin\go.exe test ./internal/resources/templates -run 'TestEditorTemplateSynchronizesRowHeadersAndRefitsLinkChecks|TestEditorTemplateAlignsCellsLeftAndMiddle' -count=1
 ```
 
-Expected: FAIL because the row-header helper, link-check schedule, and alignment rules are absent.
+Expected: FAIL because the row-header helper, compact-to-visual result mapping,
+link-check schedule, and alignment rules are absent.
 
 - [ ] **Step 4: Add scoped cell alignment**
 
@@ -164,7 +172,31 @@ instance.render();
 syncEditorRowHeaderHeights(instance);
 ```
 
-- [ ] **Step 6: Refit after batched link-check updates**
+- [ ] **Step 6: Map and refit batched link-check updates**
+
+Build the compact-to-visual row map while clearing old results:
+
+```javascript
+const checkedVisualRows = [];
+nextRows.forEach(function (item, visualRow) {
+    item.CheckResult = '';
+    item.CheckStatus = '';
+    if (!isDeletedBookmarkRow(item)) {
+        checkedVisualRows.push(visualRow);
+    }
+});
+```
+
+Resolve each backend row through that map:
+
+```javascript
+const checkedRow = Math.max(0, Number(result.row || 1) - 1);
+if (!Number.isFinite(checkedRow) || checkedRow >= checkedVisualRows.length) {
+    return;
+}
+const visualRow = checkedVisualRows[checkedRow];
+const rowData = nextRows[visualRow];
+```
 
 At the end of `applyLinkCheckResults`, after rendering, add:
 
@@ -222,7 +254,8 @@ At `http://127.0.0.1:3649/editor` with a 1280 by 720 viewport:
    accumulate, and existing bookmark names remain on the expected rows.
 3. Click `检查公网链接状态`, wait for completion, and assert the bookmark
    holder has `scrollHeight - clientHeight == 0` and its last row is inside the
-   container.
+   container. Assert every non-empty result is attached to the matching
+   bookmark and no result is attached to an empty row.
 4. Assert bookmark data cells compute to `text-align: left` and
    `vertical-align: middle`; assert header cells compute to
    `vertical-align: middle`.
