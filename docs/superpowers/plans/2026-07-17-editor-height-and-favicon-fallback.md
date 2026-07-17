@@ -4,13 +4,13 @@
 
 **Goal:** Make both editor tables expand to their full rendered height, remove the public favicon `v=2` marker, and keep the built-in bookmark icon for definitively nonexistent domains.
 
-**Architecture:** Omit Handsontable's explicit `height` setting instead of using fixed row arithmetic or `height: 'auto'`. Keep browser URLs stable with only `src`, invalidate unsafe legacy disk entries through an internal cache generation, and stop the hosted favicon fallback only when the direct error chain contains a definitive DNS NXDOMAIN.
+**Architecture:** Measure each Handsontable master table after rendering, round its real content height upward, add any horizontal scrollbar thickness, and apply the resulting numeric height only when it changes. Keep browser URLs stable with only `src`, invalidate unsafe legacy disk entries through an internal cache generation, and stop the hosted favicon fallback only when the direct error chain contains a definitive DNS NXDOMAIN.
 
 **Tech Stack:** Go 1.x, Go templates, Handsontable 6.2.2, embedded assets, Go `net`/`net/http`, repository build generator.
 
 ## Global Constraints
 
-- Omit explicit Handsontable height from both the category table and the application/bookmark table.
+- Apply rendered-content height fitting to both the category table and the application/bookmark table.
 - Preserve horizontal table scrolling and the existing 320-pixel maximum column width.
 - Do not add any browser-visible favicon cache-version parameter.
 - Do not special-case development, Docker, Linux, Windows, or fnapp environments.
@@ -20,7 +20,7 @@
 
 ---
 
-### Task 1: Omit Explicit Height From Both Editor Tables
+### Task 1: Fit Both Editor Tables to Their Rendered Content
 
 **Files:**
 - Modify: `internal/resources/templates/editor_template_test.go`
@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: existing Handsontable instances and `scheduleTableLayoutSync()` calls.
-- Produces: both tables with no explicit `height`, `renderAllRows: true`, and no fixed-height updates.
+- Produces: both tables with `renderAllRows: true` and a shared dynamic height helper that preserves horizontal scrolling.
 
 - [ ] **Step 1: Write the failing template contract test**
 
@@ -64,9 +64,10 @@ func TestEditorTemplateTablesGrowToRenderedHeight(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Count(page, `renderAllRows: true,`); got != 2 {
-		t.Fatalf("expected both editor tables to render all rows, got %d settings", got)
-	}
+	// Assert the helper measures the master table, rounds upward, compensates
+	// for a horizontal scrollbar, guards unchanged updates, and is called for
+	// both Handsontable instances. Also assert bookmark edits and both tables'
+	// column-resize hooks schedule another fit.
 	for _, unexpected := range []string{
 		`TABLE_ROW_HEIGHT`,
 		`TABLE_HEADER_HEIGHT`,
@@ -90,9 +91,9 @@ Run:
 .\.tools\go\bin\go.exe test ./internal/resources/templates -run '^TestEditorTemplateTablesGrowToRenderedHeight$' -count=1
 ```
 
-Expected: FAIL because both table constructors currently declare `height: 'auto'`.
+Expected: FAIL because the rendered-height helper is not present.
 
-- [ ] **Step 3: Omit explicit height and retain native content sizing**
+- [ ] **Step 3: Measure and apply the rendered content height**
 
 In `embed/templates/editor.html`:
 
@@ -107,16 +108,28 @@ wordWrap: true,
 ```
 
 - remove `lastCategoryTableHeight` and `lastBookmarkTableHeight`;
-- replace `syncTableLayouts` with:
+- add a shared helper and call it for both instances from `syncTableLayouts`:
 
 ```javascript
-function syncTableLayouts() {
-    instanceCategories.render();
-    instanceBookmarks.render();
+function fitEditorTableHeight(instance) {
+    if (!instance || !instance.rootElement) { return; }
+    instance.render();
+    const holder = instance.rootElement.querySelector('.ht_master .wtHolder');
+    if (!holder) { return; }
+    const table = holder.querySelector('.htCore');
+    if (!table) { return; }
+    const contentHeight = Math.ceil(table.getBoundingClientRect().height);
+    const horizontalScrollbarHeight = Math.max(0, holder.offsetHeight - holder.clientHeight);
+    const requiredHeight = contentHeight + horizontalScrollbarHeight;
+    if (requiredHeight <= 0) { return; }
+    if (instance.getSettings().height === requiredHeight) { return; }
+    instance.updateSettings({ height: requiredHeight });
 }
 ```
 
 - keep `scheduleTableLayoutSync` unchanged;
+- schedule another layout sync from bookmark `afterChange` and both tables'
+  `afterColumnResize` hooks so edited or newly wrapped content is remeasured;
 - remove the `height` property from `updateDataTable`:
 
 ```javascript
@@ -127,8 +140,9 @@ instanceBookmarks.updateSettings({
 
 At devicePixelRatio 1.5, browser QA found that Handsontable 6.2.2 treats
 `height: 'auto'` as a defined inline height and rounds its holder 3-5 pixels
-below the rendered table. Omitting the setting prevents that internal vertical
-scroll path while preserving rendered rows and horizontal overflow.
+below the rendered table. Omitting height entirely collapses both holders to
+about 29 pixels. Measuring the rendered master table and adding the actual
+horizontal scrollbar thickness avoids both failure modes.
 
 - [ ] **Step 4: Regenerate templates and verify GREEN**
 
@@ -136,16 +150,16 @@ Run:
 
 ```powershell
 .\.tools\go\bin\go.exe run ./build
-.\.tools\go\bin\go.exe test ./internal/resources/templates -run 'TestEditorTemplateTablesGrowToRenderedHeight|TestEditorTemplateConstrainsTableCellWidths' -count=1
+.\.tools\go\bin\go.exe test ./internal/resources/templates -run 'TestEditorTemplateTablesGrowToRenderedHeight|TestEditorTemplateConstrainsHandsontableCellWidths' -count=1
 ```
 
-Expected: PASS. The generated template is synchronized and both the height and width contracts remain enforced.
+Expected: PASS. The generated template is synchronized and both tables use the dynamic height contract.
 
 - [ ] **Step 5: Commit the editor change**
 
 ```powershell
 git add -- embed/templates/editor.html internal/resources/templates/editor_template_test.go internal/resources/templates/html/editor.html
-git commit -m "fix: let editor tables grow to full height"
+git commit -m "fix: fit editor tables to rendered content"
 ```
 
 ---

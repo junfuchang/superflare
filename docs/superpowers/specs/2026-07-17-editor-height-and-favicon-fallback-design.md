@@ -48,22 +48,28 @@ reliably after the fact.
 
 ### Handsontable sizing
 
-Both category and bookmark tables leave the Handsontable `height` setting omitted:
+Both category and bookmark tables use the same rendered-content sizing helper:
 
-- omit any explicit `height` setting so Handsontable derives the holder height from rendered content;
-- set `renderAllRows: true` so the complete dataset contributes to height;
+- leave `height` out of both initial Handsontable configurations;
+- set `renderAllRows: true` so the complete dataset is present for measurement;
 - retain `autoRowSize: true` and `wordWrap: true`;
-- remove fixed row/header/frame height constants and `tableHeightForRows`;
-- remove all `updateSettings({height: ...})` calls and remembered table-height
-  state;
-- retain the scheduled render helper for theme changes, data changes, and row
-  operations, but make it render only.
+- render the instance, then measure the master `.htCore` table with
+  `getBoundingClientRect().height`;
+- round the measured content height upward and add the holder's horizontal
+  scrollbar thickness (`offsetHeight - clientHeight`);
+- apply the resulting numeric height only when it is positive and differs from
+  the current setting, preventing resize/update loops;
+- trigger scheduled layout synchronization for bookmark cell edits and manual
+  column resizing as well as theme changes, data changes, row operations, page
+  load, and viewport resize.
 
-Browser QA at devicePixelRatio 1.5 found that Handsontable 6.2.2 still treats
-`height: 'auto'` as an explicit height. It writes inline holder height and
-overflow styles, then rounds the holder 3-5 pixels below the rendered table,
-leaving an internal vertical scrollbar. Omitting the setting avoids that
-defined-height path while retaining full-row rendering.
+Browser QA at devicePixelRatio 1.5 showed that neither native shortcut is
+reliable in Handsontable 6.2.2. `height: 'auto'` rounds the holder 3-5 pixels
+below the rendered table, while omitting height entirely collapses both holders
+to about 29 pixels and makes their content scroll internally. Measuring the
+rendered master table avoids fixed row assumptions, includes wrapped row
+heights, and preserves the extra space needed for the bookmark table's
+horizontal scrollbar.
 
 The surrounding panel remains width-bounded. Handsontable continues to own
 horizontal overflow; no CSS override is added to its internal holder layers.
@@ -121,8 +127,12 @@ SuperFlare runtime.
 
 Automated coverage will verify:
 
-- both editor tables omit explicit height and render all rows;
-- no fixed-height calculation or height update remains in the template;
+- both editor tables omit an initial height, render all rows, and use the same
+  rendered-content height helper;
+- the helper rounds the real table height upward, compensates for a horizontal
+  scrollbar, and avoids unchanged height updates;
+- bookmark cell edits and manual column resizing refit the affected rendered
+  row heights;
 - generated site-icon URLs contain only `src` and never `v=2`;
 - legacy disk cache filenames are ignored;
 - NXDOMAIN never reaches Icon Horse and returns an error;

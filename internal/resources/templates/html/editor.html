@@ -133,6 +133,9 @@ instance.render();
             afterInit: function () {
                 enforceEditorColumnWidthLimit(this);
             },
+            afterColumnResize: function () {
+                scheduleTableLayoutSync();
+            },
             afterChange: (changes, source) => {
                 if (!changes || source === 'loadData' || source === 'category-duplicate-revert') { return }
                 clearEditorValidationState(false);
@@ -228,6 +231,9 @@ instance.render();
             beforeStretchingColumnWidth: clampEditorColumnWidth,
             afterInit: function () {
                 enforceEditorColumnWidthLimit(this);
+            },
+            afterColumnResize: function () {
+                scheduleTableLayoutSync();
             },
             cells: function (row, col, prop) {
                 const cellProperties = {};
@@ -334,9 +340,24 @@ instance.render();
             moveBookmarkSearch(1);
         });
 
+        function fitEditorTableHeight(instance) {
+            if (!instance || !instance.rootElement) { return; }
+            instance.render();
+            const holder = instance.rootElement.querySelector('.ht_master .wtHolder');
+            if (!holder) { return; }
+            const table = holder.querySelector('.htCore');
+            if (!table) { return; }
+            const contentHeight = Math.ceil(table.getBoundingClientRect().height);
+            const horizontalScrollbarHeight = Math.max(0, holder.offsetHeight - holder.clientHeight);
+            const requiredHeight = contentHeight + horizontalScrollbarHeight;
+            if (requiredHeight <= 0) { return; }
+            if (instance.getSettings().height === requiredHeight) { return; }
+            instance.updateSettings({ height: requiredHeight });
+        }
+
         function syncTableLayouts() {
-            instanceCategories.render();
-            instanceBookmarks.render();
+            fitEditorTableHeight(instanceCategories);
+            fitEditorTableHeight(instanceBookmarks);
         }
 
         function scheduleTableLayoutSync() {
@@ -1239,6 +1260,7 @@ instance.render();
                 updateBookmarkSearchIndexRow(rowIndex);
             });
             refreshBookmarkSearchAfterDataChange();
+            scheduleTableLayoutSync();
         });
 
         instanceBookmarks.addHook('afterCreateRow', function () {

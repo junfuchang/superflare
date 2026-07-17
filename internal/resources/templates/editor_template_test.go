@@ -220,6 +220,37 @@ func TestEditorTemplateTablesGrowToRenderedHeight(t *testing.T) {
 	if got := strings.Count(page, `renderAllRows: true,`); got != 2 {
 		t.Fatalf("expected both editor tables to render all rows, got %d settings", got)
 	}
+	for _, expected := range []string{
+		`function fitEditorTableHeight(instance) {`,
+		`const holder = instance.rootElement.querySelector('.ht_master .wtHolder');`,
+		`const table = holder.querySelector('.htCore');`,
+		`const contentHeight = Math.ceil(table.getBoundingClientRect().height);`,
+		`const horizontalScrollbarHeight = Math.max(0, holder.offsetHeight - holder.clientHeight);`,
+		`const requiredHeight = contentHeight + horizontalScrollbarHeight;`,
+		`instance.updateSettings({ height: requiredHeight });`,
+		`fitEditorTableHeight(instanceCategories);`,
+		`fitEditorTableHeight(instanceBookmarks);`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor template missing rendered-height behavior %q", expected)
+		}
+	}
+	if !strings.Contains(page, `if (instance.getSettings().height === requiredHeight) { return; }`) {
+		t.Fatal("editor template must avoid repeated height updates when the measured height is unchanged")
+	}
+	bookmarkChangeStart := strings.Index(page, `instanceBookmarks.addHook('afterChange', function (changes, source) {`)
+	bookmarkCreateStart := strings.Index(page, `instanceBookmarks.addHook('afterCreateRow', function () {`)
+	if bookmarkChangeStart == -1 || bookmarkCreateStart == -1 || bookmarkCreateStart <= bookmarkChangeStart {
+		t.Fatal("editor template missing bookmark change hooks")
+	}
+	if !strings.Contains(page[bookmarkChangeStart:bookmarkCreateStart], `scheduleTableLayoutSync();`) {
+		t.Fatal("bookmark cell edits must schedule a rendered-height update")
+	}
+	if got := strings.Count(page, `afterColumnResize: function () {
+                scheduleTableLayoutSync();
+            },`); got != 2 {
+		t.Fatalf("expected both editor tables to refit after column resizing, got %d hooks", got)
+	}
 	for _, unexpected := range []string{
 		`TABLE_ROW_HEIGHT`,
 		`TABLE_HEADER_HEIGHT`,
