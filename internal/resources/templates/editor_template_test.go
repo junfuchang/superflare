@@ -289,6 +289,14 @@ func TestEditorTemplateSynchronizesRowHeadersAndRefitsLinkChecks(t *testing.T) {
 		`checkedVisualRows.push(visualRow);`,
 		`const checkedRow = Math.max(0, Number(result.row || 1) - 1);`,
 		`const visualRow = checkedVisualRows[checkedRow];`,
+		`const BOOKMARK_CONTEXT_MENU_ITEMS = [`,
+		`function setBookmarkTableLinkCheckLocked(locked) {`,
+		`readOnly: locked,`,
+		`manualRowMove: !locked,`,
+		`contextMenu: locked ? false : BOOKMARK_CONTEXT_MENU_ITEMS`,
+		`setBookmarkTableLinkCheckLocked(true);`,
+		`}).finally(function () {`,
+		`setBookmarkTableLinkCheckLocked(false);`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("editor template missing row-header synchronization %q", expected)

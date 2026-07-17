@@ -217,13 +217,14 @@ instance.render();
         const bookmarkSearchIndexProps = ['Name', 'URL', 'LocalURL', 'Category', 'Subdir', 'Desc', 'CheckResult'];
         let bookmarkSearchRows = [];
         const editorThemeStorageKey = 'superflare-editor-theme';
+        const BOOKMARK_CONTEXT_MENU_ITEMS = ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"];
         let instanceBookmarks = new Handsontable(container, {
             language: tableLocale,
             data: Array.from(bookmarks),
             colHeaders: ['\u4e66\u7b7e\u540d\u79f0', '\u4e66\u7b7e\u5730\u5740', '\u5185\u7f51\u5730\u5740', '\u7c7b\u578b', '\u5b50\u76ee\u5f55', '\u56fe\u6807', '\u63cf\u8ff0', '\u672a\u767b\u5f55\u9690\u85cf', '\u6536\u85cf', '\u68c0\u67e5\u7ed3\u679c'],
             rowHeaders: true,
             manualRowMove: true,
-            contextMenu: ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"],
+            contextMenu: BOOKMARK_CONTEXT_MENU_ITEMS,
             columns: dataTableColumns,
             stretchH: 'all',
             renderAllRows: true,
@@ -259,6 +260,14 @@ instance.render();
             },
             licenseKey: 'non-commercial-and-evaluation'
         });
+
+        function setBookmarkTableLinkCheckLocked(locked) {
+            instanceBookmarks.updateSettings({
+                readOnly: locked,
+                manualRowMove: !locked,
+                contextMenu: locked ? false : BOOKMARK_CONTEXT_MENU_ITEMS
+            });
+        }
 
         function getCurrentEditorTheme() {
             return document.documentElement.getAttribute('data-editor-theme') === 'light' ? 'light' : 'dark';
@@ -1193,6 +1202,7 @@ instance.render();
                 return;
             }
             bindData();
+            setBookmarkTableLinkCheckLocked(true);
             const btn = this;
             btn.disabled = true;
             setButtonState(btn, '', '\u68c0\u67e5\u4e2d...');
@@ -1239,6 +1249,8 @@ instance.render();
                     btn.title = '';
                     btn.disabled = false;
                 }, 2500);
+            }).finally(function () {
+                setBookmarkTableLinkCheckLocked(false);
             });
         });
 
