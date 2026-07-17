@@ -1,4 +1,4 @@
-# Editor Auto Height and Favicon Fallback Design
+# Editor Runtime Height and Favicon Fallback Design
 
 ## Scope
 
@@ -48,9 +48,9 @@ reliably after the fact.
 
 ### Handsontable sizing
 
-Both category and bookmark tables use Handsontable's native auto-height mode:
+Both category and bookmark tables leave the Handsontable `height` setting omitted:
 
-- set `height: 'auto'`;
+- omit any explicit `height` setting so Handsontable derives the holder height from rendered content;
 - set `renderAllRows: true` so the complete dataset contributes to height;
 - retain `autoRowSize: true` and `wordWrap: true`;
 - remove fixed row/header/frame height constants and `tableHeightForRows`;
@@ -58,6 +58,12 @@ Both category and bookmark tables use Handsontable's native auto-height mode:
   state;
 - retain the scheduled render helper for theme changes, data changes, and row
   operations, but make it render only.
+
+Browser QA at devicePixelRatio 1.5 found that Handsontable 6.2.2 still treats
+`height: 'auto'` as an explicit height. It writes inline holder height and
+overflow styles, then rounds the holder 3-5 pixels below the rendered table,
+leaving an internal vertical scrollbar. Omitting the setting avoids that
+defined-height path while retaining full-row rendering.
 
 The surrounding panel remains width-bounded. Handsontable continues to own
 horizontal overflow; no CSS override is added to its internal holder layers.
@@ -115,7 +121,7 @@ SuperFlare runtime.
 
 Automated coverage will verify:
 
-- both editor tables use auto height and render all rows;
+- both editor tables omit explicit height and render all rows;
 - no fixed-height calculation or height update remains in the template;
 - generated site-icon URLs contain only `src` and never `v=2`;
 - legacy disk cache filenames are ignored;

@@ -196,8 +196,26 @@ func TestEditorTemplateTablesGrowToRenderedHeight(t *testing.T) {
 	}
 	page := string(raw)
 
-	if got := strings.Count(page, `height: 'auto',`); got != 2 {
-		t.Fatalf("expected both editor tables to use auto height, got %d settings", got)
+	for _, table := range []struct {
+		name   string
+		marker string
+	}{
+		{"category", `const instanceCategories = new Handsontable(document.getElementById('container-category'), {`},
+		{"bookmark", `let instanceBookmarks = new Handsontable(container, {`},
+	} {
+		start := strings.Index(page, table.marker)
+		if start == -1 {
+			t.Fatalf("editor template missing %s Handsontable constructor", table.name)
+		}
+		end := strings.Index(page[start:], `licenseKey: 'non-commercial-and-evaluation'`)
+		if end == -1 {
+			t.Fatalf("editor template missing %s Handsontable license key", table.name)
+		}
+		for _, line := range strings.Split(page[start:start+end], "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "height:") {
+				t.Fatalf("%s Handsontable constructor must omit an explicit height setting: %s", table.name, strings.TrimSpace(line))
+			}
+		}
 	}
 	if got := strings.Count(page, `renderAllRows: true,`); got != 2 {
 		t.Fatalf("expected both editor tables to render all rows, got %d settings", got)

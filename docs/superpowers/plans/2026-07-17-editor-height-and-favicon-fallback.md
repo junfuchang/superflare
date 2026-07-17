@@ -1,16 +1,16 @@
-# Editor Auto Height and Favicon Fallback Implementation Plan
+# Editor Runtime Height and Favicon Fallback Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make both editor tables expand to their full rendered height, remove the public favicon `v=2` marker, and keep the built-in bookmark icon for definitively nonexistent domains.
 
-**Architecture:** Use Handsontable's native auto-height mode instead of fixed row arithmetic. Keep browser URLs stable with only `src`, invalidate unsafe legacy disk entries through an internal cache generation, and stop the hosted favicon fallback only when the direct error chain contains a definitive DNS NXDOMAIN.
+**Architecture:** Omit Handsontable's explicit `height` setting instead of using fixed row arithmetic or `height: 'auto'`. Keep browser URLs stable with only `src`, invalidate unsafe legacy disk entries through an internal cache generation, and stop the hosted favicon fallback only when the direct error chain contains a definitive DNS NXDOMAIN.
 
 **Tech Stack:** Go 1.x, Go templates, Handsontable 6.2.2, embedded assets, Go `net`/`net/http`, repository build generator.
 
 ## Global Constraints
 
-- Apply auto height to both the category table and the application/bookmark table.
+- Omit explicit Handsontable height from both the category table and the application/bookmark table.
 - Preserve horizontal table scrolling and the existing 320-pixel maximum column width.
 - Do not add any browser-visible favicon cache-version parameter.
 - Do not special-case development, Docker, Linux, Windows, or fnapp environments.
@@ -20,7 +20,7 @@
 
 ---
 
-### Task 1: Make Both Editor Tables Auto Height
+### Task 1: Omit Explicit Height From Both Editor Tables
 
 **Files:**
 - Modify: `internal/resources/templates/editor_template_test.go`
@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: existing Handsontable instances and `scheduleTableLayoutSync()` calls.
-- Produces: both tables configured with `height: 'auto'`, `renderAllRows: true`, and no fixed-height updates.
+- Produces: both tables with no explicit `height`, `renderAllRows: true`, and no fixed-height updates.
 
 - [ ] **Step 1: Write the failing template contract test**
 
@@ -43,8 +43,26 @@ func TestEditorTemplateTablesGrowToRenderedHeight(t *testing.T) {
 	}
 	page := string(raw)
 
-	if got := strings.Count(page, `height: 'auto',`); got != 2 {
-		t.Fatalf("expected both editor tables to use auto height, got %d settings", got)
+	for _, table := range []struct {
+		name   string
+		marker string
+	}{
+		{"category", `const instanceCategories = new Handsontable(document.getElementById('container-category'), {`},
+		{"bookmark", `let instanceBookmarks = new Handsontable(container, {`},
+	} {
+		start := strings.Index(page, table.marker)
+		if start == -1 {
+			t.Fatalf("editor template missing %s Handsontable constructor", table.name)
+		}
+		end := strings.Index(page[start:], `licenseKey: 'non-commercial-and-evaluation'`)
+		if end == -1 {
+			t.Fatalf("editor template missing %s Handsontable license key", table.name)
+		}
+		for _, line := range strings.Split(page[start:start+end], "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "height:") {
+				t.Fatalf("%s Handsontable constructor must omit an explicit height setting: %s", table.name, strings.TrimSpace(line))
+			}
+		}
 	}
 	if got := strings.Count(page, `renderAllRows: true,`); got != 2 {
 		t.Fatalf("expected both editor tables to render all rows, got %d settings", got)
@@ -72,18 +90,17 @@ Run:
 .\.tools\go\bin\go.exe test ./internal/resources/templates -run '^TestEditorTemplateTablesGrowToRenderedHeight$' -count=1
 ```
 
-Expected: FAIL because neither table currently has `height: 'auto'` and the fixed-height constants remain.
+Expected: FAIL because both table constructors currently declare `height: 'auto'`.
 
-- [ ] **Step 3: Replace fixed sizing with native auto height**
+- [ ] **Step 3: Omit explicit height and retain native content sizing**
 
 In `embed/templates/editor.html`:
 
 - remove `TABLE_ROW_HEIGHT`, `TABLE_HEADER_HEIGHT`, and `TABLE_FRAME_HEIGHT`;
 - remove `tableHeightForRows`;
-- set both table configurations to:
+- omit `height` from both table configurations and retain:
 
 ```javascript
-height: 'auto',
 renderAllRows: true,
 autoRowSize: true,
 wordWrap: true,
@@ -107,6 +124,11 @@ instanceBookmarks.updateSettings({
     columns: buildDataTableColumns()
 })
 ```
+
+At devicePixelRatio 1.5, browser QA found that Handsontable 6.2.2 treats
+`height: 'auto'` as a defined inline height and rounds its holder 3-5 pixels
+below the rendered table. Omitting the setting prevents that internal vertical
+scroll path while preserving rendered rows and horizontal overflow.
 
 - [ ] **Step 4: Regenerate templates and verify GREEN**
 
