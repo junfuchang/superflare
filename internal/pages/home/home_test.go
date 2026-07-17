@@ -726,6 +726,19 @@ func TestBookmarkTooltipScriptCleansDisconnectedTargets(t *testing.T) {
 	}
 }
 
+func TestBookmarkTooltipScriptResetsOnBookmarkActivation(t *testing.T) {
+	script := _inlineBookmarkTooltipScript
+	for _, expected := range []string{
+		`function resetOnActivation(event){if(findTarget(event)){reset();}}`,
+		`document.addEventListener("click",resetOnActivation,true)`,
+		`document.addEventListener("auxclick",resetOnActivation,true)`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("tooltip script should reset on bookmark activation with %q: %s", expected, script)
+		}
+	}
+}
+
 type favoritesModuleRenderer struct {
 	t         *testing.T
 	wantTitle string
