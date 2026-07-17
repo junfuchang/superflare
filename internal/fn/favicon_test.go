@@ -13,6 +13,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1335,6 +1336,54 @@ func TestFetchPublicSiteFaviconUsesHostedFallbackWhenOriginUnavailable(t *testin
 	}
 	if got := atomic.LoadInt32(&providerRequests); got != 1 {
 		t.Fatalf("hosted fallback requests = %d, want 1", got)
+	}
+}
+
+func TestFetchPublicSiteFaviconSkipsHostedFallbackForNXDOMAIN(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	var providerRequests int32
+	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == siteIconFallbackHost {
+			atomic.AddInt32(&providerRequests, 1)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/png"}},
+				Body:       io.NopCloser(bytes.NewReader(encodeTestFavicon(t, "png"))),
+				Request:    req,
+			}, nil
+		}
+		return nil, &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &net.DNSError{Err: "no such host", Name: req.URL.Hostname(), IsNotFound: true},
+		}
+	})}
+
+	iconURL := "https://definitely-missing.test-domain.com/favicon.ico"
+	_, _, err = FetchPublicSiteFavicon(iconURL)
+	if err == nil {
+		t.Fatal("NXDOMAIN favicon fetch should fail and use the built-in route fallback")
+	}
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+		t.Fatalf("favicon error should retain NXDOMAIN, got %v", err)
+	}
+	if got := atomic.LoadInt32(&providerRequests); got != 0 {
+		t.Fatalf("hosted fallback requests = %d, want 0", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, siteIconCacheDir, SiteFaviconCacheKeyForTest(iconURL)+".bin")); !os.IsNotExist(statErr) {
+		t.Fatalf("NXDOMAIN favicon should not be cached, statErr=%v", statErr)
 	}
 }
 

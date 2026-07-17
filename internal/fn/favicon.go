@@ -477,6 +477,9 @@ func downloadSiteFavicon(ctx context.Context, iconURL string) ([]byte, string, e
 	if !isRootHTTPFaviconURL(iconURL) {
 		return nil, "", err
 	}
+	if isDefinitiveSiteFaviconDNSNotFound(err) {
+		return nil, "", fmt.Errorf("favicon host does not resolve: %w", err)
+	}
 	attemptErrors := []error{fmt.Errorf("direct favicon fetch failed: %w", err)}
 	providerAttempted := false
 	if shouldPreferHostedSiteFavicon(err) {
@@ -510,6 +513,11 @@ func downloadSiteFavicon(ctx context.Context, iconURL string) ([]byte, string, e
 		}
 	}
 	return nil, "", errors.Join(attemptErrors...)
+}
+
+func isDefinitiveSiteFaviconDNSNotFound(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
 }
 
 func shouldPreferHostedSiteFavicon(err error) bool {
