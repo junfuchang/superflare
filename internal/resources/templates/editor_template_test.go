@@ -84,6 +84,111 @@ func TestEditorTemplateControlsAreNotBroken(t *testing.T) {
 	}
 }
 
+func TestEditorTemplateConstrainsHandsontableCellWidths(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "..", "embed", "templates", "editor.html")))
+	if err != nil {
+		t.Fatalf("read source editor template: %v", err)
+	}
+	page := string(raw)
+	cssBlock := func(selector string) string {
+		t.Helper()
+		start := strings.Index(page, selector+" {")
+		if start == -1 {
+			t.Fatalf("editor template missing CSS selector %q", selector)
+		}
+		end := strings.Index(page[start:], "}")
+		if end == -1 {
+			t.Fatalf("editor template CSS selector %q has no closing brace", selector)
+		}
+		return page[start : start+end]
+	}
+	requireProperties := func(selector string, properties ...string) {
+		t.Helper()
+		block := cssBlock(selector)
+		for _, property := range properties {
+			if !strings.Contains(block, property) {
+				t.Fatalf("editor template CSS selector %q missing %q: %s", selector, property, block)
+			}
+		}
+	}
+
+	requireProperties(`.editor-table-panel`, `min-width: 0;`, `max-width: 100%;`)
+	requireProperties(`.editor-table-shell`, `box-sizing: border-box;`, `min-width: 0;`, `width: 100%;`, `max-width: 100%;`)
+	requireProperties(`#container-category,
+        #container-bookmarks`, `min-width: 0;`, `width: 100%;`, `max-width: 100%;`)
+	cellBlock := cssBlock(`#container-category .handsontable td,
+        #container-bookmarks .handsontable td`)
+	for _, property := range []string{`white-space: pre-wrap !important;`, `overflow-wrap: anywhere;`, `word-break: normal;`} {
+		if !strings.Contains(cellBlock, property) {
+			t.Fatalf("editor table cells missing wrapping property %q: %s", property, cellBlock)
+		}
+	}
+	for _, property := range []string{`box-sizing: border-box !important;`, `max-width: 320px !important;`} {
+		if strings.Contains(cellBlock, property) {
+			t.Fatalf("editor table cells must leave column measurement to Handsontable, found %q: %s", property, cellBlock)
+		}
+	}
+	requireProperties(`#container-category .handsontable input,
+        #container-category .handsontable textarea,
+        #container-category .handsontable select,
+        #container-category .handsontable button,
+        #container-bookmarks .handsontable input,
+        #container-bookmarks .handsontable textarea,
+        #container-bookmarks .handsontable select,
+        #container-bookmarks .handsontable button`, `box-sizing: border-box !important;`, `min-width: 0 !important;`, `max-width: 100% !important;`)
+	requireProperties(`#container-category .handsontable textarea,
+        #container-bookmarks .handsontable textarea`, `white-space: pre-wrap !important;`, `overflow-wrap: anywhere;`, `word-break: normal;`)
+	requireProperties(`#container-category .handsontableInput,
+        #container-bookmarks .handsontableInput,
+        #container-category .htSelectEditor,
+        #container-bookmarks .htSelectEditor,
+        #container-category .htNumericInput,
+        #container-bookmarks .htNumericInput`, `box-sizing: border-box !important;`, `min-width: 0 !important;`, `max-width: 320px !important;`)
+	requireProperties(`#container-category .handsontableInput,
+        #container-bookmarks .handsontableInput`, `white-space: pre-wrap !important;`, `overflow-wrap: anywhere;`, `word-break: normal;`)
+
+	for _, expected := range []string{
+		`const TABLE_MAX_COLUMN_WIDTH = 320;`,
+		`function clampEditorColumnWidth(width) {`,
+		`return typeof width === 'number' ? Math.min(width, TABLE_MAX_COLUMN_WIDTH) : width;`,
+		`function enforceEditorColumnWidthLimit(instance) {`,
+		`let finalModifyHook = null;`,
+		`let finalStretchHook = null;`,
+		`let reinstallPending = false;`,
+		`function installFinalHooks() {`,
+		`instance.removeHook('modifyColWidth', finalModifyHook);`,
+		`instance.removeHook('beforeStretchingColumnWidth', finalStretchHook);`,
+		`finalModifyHook = function (width) {`,
+		`finalStretchHook = function (width) {`,
+		`return clampEditorColumnWidth(width);`,
+		`instance.addHook('modifyColWidth', finalModifyHook);`,
+		`instance.addHook('beforeStretchingColumnWidth', finalStretchHook);`,
+		`instance.addHook('afterUpdateSettings', function () {`,
+		`Promise.resolve().then(function () {`,
+		`afterInit: function () {`,
+		`enforceEditorColumnWidthLimit(this);`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor template missing bounded column-width behavior %q", expected)
+		}
+	}
+	if got := strings.Count(page, `modifyColWidth: clampEditorColumnWidth,`); got != 2 {
+		t.Fatalf("expected both editor tables to cap automatic column sizing, got %d hooks", got)
+	}
+	if got := strings.Count(page, `beforeStretchingColumnWidth: clampEditorColumnWidth,`); got != 2 {
+		t.Fatalf("expected both editor tables to cap stretched column sizing, got %d hooks", got)
+	}
+	if got := strings.Count(page, `autoRowSize: true,`); got != 2 {
+		t.Fatalf("expected both editor tables to measure wrapped row heights, got %d settings", got)
+	}
+	if got := strings.Count(page, `wordWrap: true,`); got != 2 {
+		t.Fatalf("expected both editor tables to wrap long cell content, got %d settings", got)
+	}
+	if got := strings.Count(page, `enforceEditorColumnWidthLimit(this);`); got != 2 {
+		t.Fatalf("expected both editor tables to cap manual column resizing after plugin initialization, got %d hooks", got)
+	}
+}
+
 func TestEditorTemplateSupportsPrivateAndNormalBookmarkFavorites(t *testing.T) {
 	raw, err := TPL.ReadFile("html/editor.html")
 	if err != nil {

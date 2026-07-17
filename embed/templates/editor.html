@@ -446,6 +446,8 @@
         .editor-table-panel {
             display: grid;
             gap: 14px;
+            min-width: 0;
+            max-width: 100%;
         }
 
         .editor-table-header {
@@ -465,6 +467,10 @@
         }
 
         .editor-table-shell {
+            box-sizing: border-box;
+            min-width: 0;
+            width: 100%;
+            max-width: 100%;
             border: 1px solid var(--editor-table-border);
             border-radius: 8px;
             background: var(--editor-table-surface);
@@ -575,6 +581,9 @@
         #container-category,
         #container-bookmarks {
             min-height: 0;
+            min-width: 0;
+            width: 100%;
+            max-width: 100%;
         }
 
         #container-category .handsontable,
@@ -645,6 +654,29 @@
         #container-category .handsontable td,
         #container-bookmarks .handsontable td {
             background: var(--editor-table-surface) !important;
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere;
+            word-break: normal;
+        }
+
+        #container-category .handsontable input,
+        #container-category .handsontable textarea,
+        #container-category .handsontable select,
+        #container-category .handsontable button,
+        #container-bookmarks .handsontable input,
+        #container-bookmarks .handsontable textarea,
+        #container-bookmarks .handsontable select,
+        #container-bookmarks .handsontable button {
+            box-sizing: border-box !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+        }
+
+        #container-category .handsontable textarea,
+        #container-bookmarks .handsontable textarea {
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere;
+            word-break: normal;
         }
 
         #container-category .handsontableInput,
@@ -653,9 +685,19 @@
         #container-bookmarks .htSelectEditor,
         #container-category .htNumericInput,
         #container-bookmarks .htNumericInput {
+            box-sizing: border-box !important;
+            min-width: 0 !important;
+            max-width: 320px !important;
             background: var(--editor-table-input-surface) !important;
             color: var(--editor-table-input-text) !important;
             border-color: var(--editor-table-border-strong) !important;
+        }
+
+        #container-category .handsontableInput,
+        #container-bookmarks .handsontableInput {
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere;
+            word-break: normal;
         }
 
         .handsontable.listbox,
@@ -965,6 +1007,7 @@
         const TABLE_ROW_HEIGHT = 27;
         const TABLE_HEADER_HEIGHT = 30;
         const TABLE_FRAME_HEIGHT = 4;
+        const TABLE_MAX_COLUMN_WIDTH = 320;
         let categories = JSON.parse(document.getElementById("data-categories").innerHTML) || [];
         const dataBookmarks = JSON.parse(document.getElementById("data-bookmarks").innerHTML) || [];
         const dataPorts = JSON.parse(document.getElementById("data-ports").textContent || "[]") || [];
@@ -1002,6 +1045,44 @@
         function tableHeightForRows(rowCount) {
             return TABLE_HEADER_HEIGHT + (Math.max(rowCount, 1) * TABLE_ROW_HEIGHT) + TABLE_FRAME_HEIGHT;
         }
+
+        function clampEditorColumnWidth(width) {
+            return typeof width === 'number' ? Math.min(width, TABLE_MAX_COLUMN_WIDTH) : width;
+        }
+
+        function enforceEditorColumnWidthLimit(instance) {
+            let finalModifyHook = null;
+            let finalStretchHook = null;
+            let reinstallPending = false;
+            function installFinalHooks() {
+                if (finalModifyHook) {
+                    instance.removeHook('modifyColWidth', finalModifyHook);
+                }
+                if (finalStretchHook) {
+                    instance.removeHook('beforeStretchingColumnWidth', finalStretchHook);
+                }
+                finalModifyHook = function (width) {
+                    return clampEditorColumnWidth(width);
+                };
+                finalStretchHook = function (width) {
+                    return clampEditorColumnWidth(width);
+                };
+                instance.addHook('modifyColWidth', finalModifyHook);
+                instance.addHook('beforeStretchingColumnWidth', finalStretchHook);
+            }
+            installFinalHooks();
+            instance.addHook('afterUpdateSettings', function () {
+                if (reinstallPending) { return; }
+                reinstallPending = true;
+                Promise.resolve().then(function () {
+                    reinstallPending = false;
+                    // Plugin hooks are re-created by updateSettings; move the cap behind them before paint.
+                    installFinalHooks();
+                    instance.render();
+                });
+            });
+            instance.render();
+        }
     </script>
 
     <script>
@@ -1021,7 +1102,14 @@
             ],
             height: tableHeightForRows(categories.length),
             renderAllRows: false,
+            autoRowSize: true,
+            wordWrap: true,
             manualColumnResize: true,
+            modifyColWidth: clampEditorColumnWidth,
+            beforeStretchingColumnWidth: clampEditorColumnWidth,
+            afterInit: function () {
+                enforceEditorColumnWidthLimit(this);
+            },
             afterChange: (changes, source) => {
                 if (!changes || source === 'loadData' || source === 'category-duplicate-revert') { return }
                 clearEditorValidationState(false);
@@ -1113,7 +1201,14 @@
             height: tableHeightForRows(bookmarks.length),
             stretchH: 'all',
             renderAllRows: false,
+            autoRowSize: true,
+            wordWrap: true,
             manualColumnResize: true,
+            modifyColWidth: clampEditorColumnWidth,
+            beforeStretchingColumnWidth: clampEditorColumnWidth,
+            afterInit: function () {
+                enforceEditorColumnWidthLimit(this);
+            },
             cells: function (row, col, prop) {
                 const cellProperties = {};
                 if (prop === 'Favorite') {
