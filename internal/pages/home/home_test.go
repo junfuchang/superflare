@@ -1476,10 +1476,10 @@ func TestInlineSiteIconRefreshScriptDeduplicatesSourcesWithoutPolling(t *testing
 			t.Fatalf("favicon refresh script should contain %q: %s", expected, script)
 		}
 	}
-	if got := strings.Count(script, `fetch(src)`); got != 1 {
-		t.Fatalf("favicon refresh script should contain one grouped fetch call, got %d: %s", got, script)
+	if got := strings.Count(script, `fetch(src,{cache:"reload"})`); got != 1 {
+		t.Fatalf("favicon refresh script should contain one grouped reload fetch call, got %d: %s", got, script)
 	}
-	for _, unexpected := range []string{`setTimeout`, `var left=`, `cache:"no-store"`} {
+	for _, unexpected := range []string{`fetch(src)`, `setTimeout`, `var left=`, `cache:"no-store"`} {
 		if strings.Contains(script, unexpected) {
 			t.Fatalf("favicon refresh script should not contain %q: %s", unexpected, script)
 		}
@@ -1510,6 +1510,25 @@ func TestInlineSiteIconRefreshScriptFallsBackWhenDirectCachedIconFails(t *testin
 		if !strings.Contains(script, expected) {
 			t.Fatalf("favicon refresh script should recover failed direct icons with %q: %s", expected, script)
 		}
+	}
+}
+
+func TestInlineSiteIconRefreshScriptRepairsLegacyDirectBrowserCacheOncePerSource(t *testing.T) {
+	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
+	for _, expected := range []string{
+		`var repairKeyPrefix="superflare.site-icon.origin-only:"`,
+		`window.localStorage.getItem(repairKeyPrefix+src)`,
+		`window.localStorage.setItem(repairKeyPrefix+src,"1")`,
+		`node.dataset.siteIconSrc||node.getAttribute("src")`,
+		`directNodes.forEach(function(img){if(needsDirectRepair(img)){nodes.push(img);}})`,
+		`});markSourceRepaired(src);`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("favicon refresh script should repair legacy direct cache with %q: %s", expected, script)
+		}
+	}
+	if got := strings.Count(script, `fetch(src,{cache:"reload"})`); got != 1 {
+		t.Fatalf("direct and asynchronous repairs should share one grouped reload fetch, got %d: %s", got, script)
 	}
 }
 

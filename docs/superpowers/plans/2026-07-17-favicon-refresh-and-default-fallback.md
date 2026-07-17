@@ -15,6 +15,8 @@
 - Automatic favicon retrieval may use only the destination's `/favicon.ico` or an icon declared by the destination HTML.
 - DNS, connection, TLS, timeout, HTTP, parsing, unsupported-content, and missing-icon failures retain the built-in bookmark SVG.
 - Failure suppression lasts five minutes in memory and must permit a later retry.
+- Keep at most 1024 unique in-memory failure entries and recheck cooldown state after claiming an in-flight fetch.
+- Repair a pre-origin-only direct browser cache once per icon source without changing its public URL.
 - Preserve source validation, redirect validation, the 4 MiB payload limit, the 512 KiB HTML scan limit, concurrent-fetch coalescing, and persistent success caching.
 - Do not add configuration fields, migrations, or Windows/Linux/Docker/fnapp-specific branches.
 - Preserve user-owned changes in `fnapp/superflare/manifest` and `tools/superflare-icon.zip`.
@@ -39,7 +41,7 @@
 
 **Interfaces:**
 - Consumes: `_inlineSiteIconRefreshScript` and `inlineSiteIconRefreshScript(model.Application)`.
-- Produces: one grouped `fetch(src,{cache:"reload"})` call per unique source URL.
+- Produces: one grouped `fetch(src,{cache:"reload"})` call per unique source URL plus a per-source `superflare.site-icon.origin-only:` repair marker for direct icons.
 
 - [ ] **Step 1: Tighten the inline-script regression test**
 
@@ -77,7 +79,31 @@ fetch(src,{cache:"reload"})
 Leave deduplication, response header checks, blob decoding, DOM replacement,
 and object URL cleanup unchanged.
 
-- [ ] **Step 4: Run the focused home tests and verify GREEN**
+- [ ] **Step 4: Add direct browser-cache repair coverage**
+
+Add `TestInlineSiteIconRefreshScriptRepairsLegacyDirectBrowserCacheOncePerSource`
+and require the script to:
+
+```go
+	for _, expected := range []string{
+		`var repairKeyPrefix="superflare.site-icon.origin-only:"`,
+		`window.localStorage.getItem(repairKeyPrefix+src)`,
+		`window.localStorage.setItem(repairKeyPrefix+src,"1")`,
+		`node.dataset.siteIconSrc||node.getAttribute("src")`,
+		`directNodes.forEach(function(img){if(needsDirectRepair(img)){nodes.push(img);}})`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("favicon refresh script should repair legacy direct cache with %q: %s", expected, script)
+		}
+	}
+```
+
+Implement those helpers inside `_inlineSiteIconRefreshScript`. Add only direct
+nodes whose per-source generation marker is absent, share the existing grouped
+reload request, and write the marker once in `apply` after successful image
+decode for both asynchronous placeholders and direct repair nodes.
+
+- [ ] **Step 5: Run the focused home tests and verify GREEN**
 
 Run:
 
@@ -246,7 +272,7 @@ Expected: PASS after renaming the NXDOMAIN test to remove the obsolete hosted-pr
 - Modify: `internal/fn/favicon.go:33-472`
 
 **Interfaces:**
-- Produces: `siteIconFailureTTL`, `siteIconFailures`, `siteFaviconFailureActive(string) bool`, `recordSiteFaviconFailure(string)`, and `clearSiteFaviconFailure(string)`.
+- Produces: `siteIconFailureTTL`, `siteIconFailureMaxEntries`, bounded `siteIconFailureCache`, `siteIconFailures`, `siteFaviconFailureActive(string) bool`, `recordSiteFaviconFailure(string)`, and `clearSiteFaviconFailure(string)`.
 - Consumes: `siteFaviconCacheKey`, `readCachedSiteFaviconContext`, `downloadSiteFavicon`, and `writeCachedSiteFavicon`.
 
 - [ ] **Step 1: Add RED tests for cooldown suppression and expiry**
@@ -309,6 +335,24 @@ func TestExpiredSiteFaviconFailureAllowsRetry(t *testing.T) {
 }
 ```
 
+Add `TestFetchPublicSiteFaviconRechecksCooldownAfterClaimingInflight`. Fill
+`siteIconFetchLimiter`, start a request, wait until its key appears in
+`siteIconInflight`, record an active failure, release the limiter, and assert
+the request returns `errSiteFaviconRetryCooldown` with zero network calls.
+
+Add `TestSiteIconFailureCacheBoundsUniqueEntries`:
+
+```go
+	var cache siteIconFailureCache
+	retryAfter := time.Now().Add(time.Minute)
+	for index := 0; index < siteIconFailureMaxEntries+100; index++ {
+		cache.Store(fmt.Sprintf("failure-%d", index), retryAfter)
+	}
+	if got := cache.Len(); got != siteIconFailureMaxEntries {
+		t.Fatalf("failure cache size = %d, want hard limit %d", got, siteIconFailureMaxEntries)
+	}
+```
+
 - [ ] **Step 2: Add a RED homepage asset-URL suppression test**
 
 ```go
@@ -354,23 +398,18 @@ Set:
 ```go
 	siteIconCacheGeneration = "2026-07-origin-only"
 	siteIconFailureTTL       = 5 * time.Minute
+	siteIconFailureMaxEntries = 1024
 ```
 
-Add `siteIconFailures sync.Map` and:
+Add a `siteIconFailureCache` containing `sync.Mutex` and
+`map[string]time.Time`. Its `Store` method removes expired entries on capacity,
+then evicts the earliest retry deadline before inserting when still full. Add
+`Delete`, `Active`, and `Len` methods and instantiate `siteIconFailures` from
+this bounded type. Implement the URL helpers as:
 
 ```go
 func siteFaviconFailureActive(iconURL string) bool {
-	key := siteFaviconCacheKey(iconURL)
-	value, ok := siteIconFailures.Load(key)
-	if !ok {
-		return false
-	}
-	retryAfter, ok := value.(time.Time)
-	if !ok || !time.Now().Before(retryAfter) {
-		siteIconFailures.CompareAndDelete(key, value)
-		return false
-	}
-	return true
+	return siteIconFailures.Active(siteFaviconCacheKey(iconURL), time.Now())
 }
 
 func recordSiteFaviconFailure(iconURL string) {
@@ -384,9 +423,10 @@ func clearSiteFaviconFailure(iconURL string) {
 
 In `GetSiteFaviconAssetURL`, return empty when the proxyable icon URL has an
 active cooldown. In `fetchAndCacheSiteFavicon`, retain the initial persistent
-cache read, then check the cooldown before creating an in-flight request.
-Record a failure only when `downloadSiteFavicon` returns an error. Clear the
-failure only after `writeCachedSiteFavicon` succeeds.
+cache read, check the cooldown before creating an in-flight request, and check
+again after acquiring `siteIconFetchLimiter`. Record a failure only when
+`downloadSiteFavicon` returns an error. Clear the failure only after
+`writeCachedSiteFavicon` succeeds.
 
 - [ ] **Step 6: Run the focused favicon package and verify GREEN**
 

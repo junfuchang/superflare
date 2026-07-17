@@ -27,6 +27,23 @@ import (
 	"golang.org/x/image/bmp"
 )
 
+func withSiteIconTempWorkingDir(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+}
+
 func TestGetSiteFaviconURL_ValidURL(t *testing.T) {
 	out := GetSiteFaviconURL("https://github.com/junfuchang/superflare/path?q=1")
 	const expected = "https://github.com/favicon.ico"
@@ -99,6 +116,28 @@ func TestReadCachedSiteFaviconIgnoresLegacyCacheKey(t *testing.T) {
 	}
 }
 
+func TestReadCachedSiteFaviconIgnoresPreviousProviderGeneration(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
+
+	iconURL := "https://provider-generation.test-domain.com/favicon.ico"
+	previousSum := sha256.Sum256([]byte("2026-07-nxdomain" + "\x00" + strings.TrimSpace(iconURL)))
+	previousKey := fmt.Sprintf("%x", previousSum)
+	previousPath := filepath.Join(siteIconCacheDir, previousKey+".bin")
+	if err := os.MkdirAll(filepath.Dir(previousPath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(previousPath, encodeTestFavicon(t, "png"), 0644); err != nil {
+		t.Fatalf("WriteFile previous-generation cache: %v", err)
+	}
+
+	if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
+		t.Fatal("previous provider-capable cache generation should be ignored")
+	}
+	if got := SiteFaviconCacheKeyForTest(iconURL); got == previousKey {
+		t.Fatal("origin-only cache key should differ from the previous provider-capable generation")
+	}
+}
+
 func TestGetSiteFaviconAssetURLDoesNotStartDuplicateBackgroundFetch(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -130,6 +169,18 @@ func TestGetSiteFaviconAssetURLDoesNotStartDuplicateBackgroundFetch(t *testing.T
 	case <-requested:
 		t.Fatal("asset URL generation should not duplicate the browser favicon request")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestGetSiteFaviconAssetURLReturnsEmptyDuringFailureCooldown(t *testing.T) {
+	bookmarkLink := "https://no-icon.test-domain.com/path"
+	iconURL := GetSiteFaviconURL(bookmarkLink)
+	key := siteFaviconCacheKey(iconURL)
+	siteIconFailures.Store(key, time.Now().Add(time.Minute))
+	defer siteIconFailures.Delete(key)
+
+	if got := GetSiteFaviconAssetURL(bookmarkLink); got != "" {
+		t.Fatalf("active failure should retain plain built-in bookmark icon, got %q", got)
 	}
 }
 
@@ -1253,68 +1304,33 @@ func TestFetchPublicSiteFaviconResolvesRelativeHTMLIconAgainstRedirectedPage(t *
 	}
 }
 
-func TestHostedSiteFaviconURLUsesOnlyPublicDomainNames(t *testing.T) {
-	if got := hostedSiteFaviconURL("https://wallroom.io/favicon.ico"); got != "https://icon.horse/icon/wallroom.io" {
-		t.Fatalf("public fallback URL = %q", got)
-	}
-	for _, input := range []string{
-		"http://192.168.1.20/favicon.ico",
-		"https://localhost/favicon.ico",
-		"https://nas.local/favicon.ico",
-		"https://intranet/favicon.ico",
-		"https://example.invalid/favicon.ico",
-		"https://service.test/favicon.ico",
-		"https://icon.example/favicon.ico",
-		"https://service.internal/favicon.ico",
-		"https://hidden.onion/favicon.ico",
-		"https://preview.alt/favicon.ico",
-	} {
-		if got := hostedSiteFaviconURL(input); got != "" {
-			t.Fatalf("local fallback URL for %q = %q, want empty", input, got)
-		}
-	}
-}
-
-func TestFetchPublicSiteFaviconUsesHostedFallbackWhenOriginUnavailable(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd: %v", err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Chdir tmp: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldWD) }()
+func TestFetchPublicSiteFaviconUsesBuiltinFallbackWhenOriginUnavailable(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
 
 	oldClient := siteIconHTTPClient
 	defer func() { siteIconHTTPClient = oldClient }()
 
-	var providerRequests int32
-	pngData := encodeTestFavicon(t, "png")
+	var originRequests int32
 	siteIconHTTPClient = &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host == "icon.horse" {
+				t.Fatalf("origin-only favicon fetching must not contact Icon Horse: %s", req.URL)
+			}
+			atomic.AddInt32(&originRequests, 1)
 			switch {
-			case req.URL.Host == "blocked-favicon.test-domain.com" && req.URL.Path == "/favicon.ico":
+			case req.URL.Host == "origin-unavailable.test-domain.com" && req.URL.Path == "/favicon.ico":
 				return &http.Response{
 					StatusCode: http.StatusNotFound,
 					Header:     http.Header{"Content-Type": []string{"text/plain"}},
 					Body:       io.NopCloser(strings.NewReader("not found")),
 					Request:    req,
 				}, nil
-			case req.URL.Host == "blocked-favicon.test-domain.com" && req.URL.Path == "/":
+			case req.URL.Host == "origin-unavailable.test-domain.com" && req.URL.Path == "/":
 				return &http.Response{
 					StatusCode: http.StatusServiceUnavailable,
 					Header:     http.Header{"Content-Type": []string{"text/plain"}},
 					Body:       io.NopCloser(strings.NewReader("unavailable")),
-					Request:    req,
-				}, nil
-			case req.URL.Host == "icon.horse" && req.URL.Path == "/icon/blocked-favicon.test-domain.com":
-				atomic.AddInt32(&providerRequests, 1)
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     http.Header{"Content-Type": []string{"image/png"}},
-					Body:       io.NopCloser(bytes.NewReader(pngData)),
 					Request:    req,
 				}, nil
 			default:
@@ -1324,22 +1340,161 @@ func TestFetchPublicSiteFaviconUsesHostedFallbackWhenOriginUnavailable(t *testin
 		}),
 	}
 
-	iconURL := "https://blocked-favicon.test-domain.com/favicon.ico"
-	for attempt := 0; attempt < 2; attempt++ {
-		data, contentType, err := FetchPublicSiteFavicon(iconURL)
-		if err != nil {
-			t.Fatalf("FetchPublicSiteFavicon attempt %d: %v", attempt+1, err)
-		}
-		if contentType != "image/png" || !bytes.Equal(data, pngData) {
-			t.Fatalf("hosted fallback attempt %d type=%q data=%v", attempt+1, contentType, data)
-		}
+	iconURL := "https://origin-unavailable.test-domain.com/favicon.ico"
+	_, _, err := FetchPublicSiteFavicon(iconURL)
+	if err == nil {
+		t.Fatal("unavailable origin should use the route's built-in fallback")
 	}
-	if got := atomic.LoadInt32(&providerRequests); got != 1 {
-		t.Fatalf("hosted fallback requests = %d, want 1", got)
+	if got := atomic.LoadInt32(&originRequests); got != 2 {
+		t.Fatalf("origin requests = %d, want direct icon and HTML page", got)
+	}
+	cachePath, pathErr := siteFaviconCachePath(iconURL)
+	if pathErr != nil {
+		t.Fatalf("siteFaviconCachePath: %v", pathErr)
+	}
+	if _, statErr := os.Stat(cachePath); !os.IsNotExist(statErr) {
+		t.Fatalf("failed origin must not produce a cache file: %v", statErr)
 	}
 }
 
-func TestFetchPublicSiteFaviconSkipsHostedFallbackForNXDOMAIN(t *testing.T) {
+func TestFetchPublicSiteFaviconSuppressesImmediateRetryAfterFailure(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
+	iconURL := "https://cooldown.test-domain.com/favicon.ico"
+	key := siteFaviconCacheKey(iconURL)
+	defer siteIconFailures.Delete(key)
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	var requests int32
+	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&requests, 1)
+		return nil, &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &net.DNSError{Err: "no such host", Name: req.URL.Hostname(), IsNotFound: true},
+		}
+	})}
+
+	if _, _, err := FetchPublicSiteFavicon(iconURL); err == nil {
+		t.Fatal("first unavailable favicon request should fail")
+	}
+	firstCount := atomic.LoadInt32(&requests)
+	if _, _, err := FetchPublicSiteFavicon(iconURL); err == nil {
+		t.Fatal("cooldown request should report the prior failure")
+	}
+	if got := atomic.LoadInt32(&requests); got != firstCount {
+		t.Fatalf("cooldown performed another network request: before=%d after=%d", firstCount, got)
+	}
+}
+
+func TestFetchPublicSiteFaviconRechecksCooldownAfterClaimingInflight(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
+	iconURL := "https://concurrent-cooldown.test-domain.com/favicon.ico"
+	key := siteFaviconCacheKey(iconURL)
+	defer siteIconFailures.Delete(key)
+	defer siteIconInflight.Delete(key)
+
+	for index := 0; index < cap(siteIconFetchLimiter); index++ {
+		siteIconFetchLimiter <- struct{}{}
+	}
+	released := false
+	releaseFetchSlots := func() {
+		if released {
+			return
+		}
+		released = true
+		for index := 0; index < cap(siteIconFetchLimiter); index++ {
+			<-siteIconFetchLimiter
+		}
+	}
+	defer releaseFetchSlots()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	var requests int32
+	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&requests, 1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+			Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+			Request:    req,
+		}, nil
+	})}
+
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := FetchPublicSiteFavicon(iconURL)
+		result <- err
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, loaded := siteIconInflight.Load(key); loaded {
+			break
+		}
+		if time.Now().After(deadline) {
+			releaseFetchSlots()
+			<-result
+			t.Fatal("favicon request did not claim the inflight key")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	siteIconFailures.Store(key, time.Now().Add(time.Minute))
+	releaseFetchSlots()
+	if err := <-result; !errors.Is(err, errSiteFaviconRetryCooldown) {
+		t.Fatalf("claimed request should honor a newly active cooldown, got %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 0 {
+		t.Fatalf("claimed request bypassed cooldown with %d network requests", got)
+	}
+}
+
+func TestSiteIconFailureCacheBoundsUniqueEntries(t *testing.T) {
+	var cache siteIconFailureCache
+	retryAfter := time.Now().Add(time.Minute)
+	for index := 0; index < siteIconFailureMaxEntries+100; index++ {
+		cache.Store(fmt.Sprintf("failure-%d", index), retryAfter)
+	}
+	if got := cache.Len(); got != siteIconFailureMaxEntries {
+		t.Fatalf("failure cache size = %d, want hard limit %d", got, siteIconFailureMaxEntries)
+	}
+}
+
+func TestExpiredSiteFaviconFailureAllowsRetry(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
+	iconURL := "https://retry.test-domain.com/favicon.ico"
+	key := siteFaviconCacheKey(iconURL)
+	siteIconFailures.Store(key, time.Now().Add(-time.Second))
+	defer siteIconFailures.Delete(key)
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	pngData := encodeTestFavicon(t, "png")
+	var requests int32
+	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&requests, 1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(bytes.NewReader(pngData)),
+			Request:    req,
+		}, nil
+	})}
+
+	if _, _, err := FetchPublicSiteFavicon(iconURL); err != nil {
+		t.Fatalf("expired cooldown should allow retry: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("retry requests = %d, want 1", got)
+	}
+	if siteFaviconFailureActive(iconURL) {
+		t.Fatal("successful retry should clear the cooldown")
+	}
+}
+
+func TestFetchPublicSiteFaviconShortCircuitsHTMLDiscoveryForNXDOMAIN(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1352,17 +1507,9 @@ func TestFetchPublicSiteFaviconSkipsHostedFallbackForNXDOMAIN(t *testing.T) {
 
 	oldClient := siteIconHTTPClient
 	defer func() { siteIconHTTPClient = oldClient }()
-	var providerRequests int32
+	var requests int32
 	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Host == siteIconFallbackHost {
-			atomic.AddInt32(&providerRequests, 1)
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"image/png"}},
-				Body:       io.NopCloser(bytes.NewReader(encodeTestFavicon(t, "png"))),
-				Request:    req,
-			}, nil
-		}
+		atomic.AddInt32(&requests, 1)
 		return nil, &net.OpError{
 			Op:  "dial",
 			Net: "tcp",
@@ -1379,8 +1526,8 @@ func TestFetchPublicSiteFaviconSkipsHostedFallbackForNXDOMAIN(t *testing.T) {
 	if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
 		t.Fatalf("favicon error should retain NXDOMAIN, got %v", err)
 	}
-	if got := atomic.LoadInt32(&providerRequests); got != 0 {
-		t.Fatalf("hosted fallback requests = %d, want 0", got)
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("NXDOMAIN requests = %d, want only the direct favicon request", got)
 	}
 	if _, statErr := os.Stat(filepath.Join(tmpDir, siteIconCacheDir, SiteFaviconCacheKeyForTest(iconURL)+".bin")); !os.IsNotExist(statErr) {
 		t.Fatalf("NXDOMAIN favicon should not be cached, statErr=%v", statErr)
@@ -1404,7 +1551,7 @@ func TestFetchPublicSiteFaviconBoundsWholeFallbackChain(t *testing.T) {
 	siteIconHTTPClient = &http.Client{
 		Timeout: 4 * time.Second,
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Host == "slow.test-domain.com" || req.URL.Host == siteIconFallbackHost {
+			if req.URL.Host == "slow.test-domain.com" {
 				requests = append(requests, req.URL.Host+req.URL.Path)
 			}
 			<-req.Context().Done()
@@ -1421,7 +1568,7 @@ func TestFetchPublicSiteFaviconBoundsWholeFallbackChain(t *testing.T) {
 	if elapsed > 9*time.Second {
 		t.Fatalf("fallback chain took %v, want less than 9s", elapsed)
 	}
-	if got := strings.Join(requests, ","); got != "slow.test-domain.com/favicon.ico,icon.horse/icon/slow.test-domain.com" {
+	if got := strings.Join(requests, ","); got != "slow.test-domain.com/favicon.ico,slow.test-domain.com/" {
 		t.Fatalf("timeout fallback request order = %q", got)
 	}
 }

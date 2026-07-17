@@ -30,17 +30,18 @@ import (
 )
 
 const (
-	siteIconProxyPath        = "/assets/site-icons"
-	siteIconCacheGeneration  = "2026-07-nxdomain"
-	siteIconCacheDir         = "var/cache/site-icons"
-	siteIconFallbackHost     = "icon.horse"
-	siteIconMaxBytes         = 4 * 1024 * 1024
-	siteIconMaxDecodedPixels = 4 * 1024 * 1024
-	siteIconHTMLBytes        = 512 * 1024
-	siteIconWarmLimit        = 8
-	siteIconDecodeLimit      = 2
-	siteIconRequestTimeout   = 4 * time.Second
-	siteIconOverallTimeout   = 8 * time.Second
+	siteIconProxyPath         = "/assets/site-icons"
+	siteIconCacheGeneration   = "2026-07-origin-only"
+	siteIconCacheDir          = "var/cache/site-icons"
+	siteIconMaxBytes          = 4 * 1024 * 1024
+	siteIconMaxDecodedPixels  = 4 * 1024 * 1024
+	siteIconHTMLBytes         = 512 * 1024
+	siteIconWarmLimit         = 8
+	siteIconDecodeLimit       = 2
+	siteIconRequestTimeout    = 4 * time.Second
+	siteIconOverallTimeout    = 8 * time.Second
+	siteIconFailureTTL        = 5 * time.Minute
+	siteIconFailureMaxEntries = 1024
 )
 
 var (
@@ -50,13 +51,76 @@ var (
 		CheckRedirect: validateSiteFaviconRedirect,
 	}
 	siteIconInflight      sync.Map
+	siteIconFailures      siteIconFailureCache
 	siteIconValidated     sync.Map
 	siteIconWarmLimiter   = make(chan struct{}, siteIconWarmLimit)
 	siteIconFetchLimiter  = make(chan struct{}, siteIconWarmLimit)
 	siteIconDecodeLimiter = make(chan struct{}, siteIconDecodeLimit)
 )
 
-var errSiteFaviconSourceNotAllowed = errors.New("site favicon source is not allowed")
+var (
+	errSiteFaviconSourceNotAllowed = errors.New("site favicon source is not allowed")
+	errSiteFaviconRetryCooldown    = errors.New("site favicon fetch is temporarily suppressed after a recent failure")
+)
+
+type siteIconFailureCache struct {
+	mu      sync.Mutex
+	entries map[string]time.Time
+}
+
+func (c *siteIconFailureCache) Store(key string, retryAfter time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[string]time.Time)
+	}
+	if _, exists := c.entries[key]; !exists && len(c.entries) >= siteIconFailureMaxEntries {
+		now := time.Now()
+		for existingKey, existingRetryAfter := range c.entries {
+			if !now.Before(existingRetryAfter) {
+				delete(c.entries, existingKey)
+			}
+		}
+		if len(c.entries) >= siteIconFailureMaxEntries {
+			var oldestKey string
+			var oldestRetryAfter time.Time
+			for existingKey, existingRetryAfter := range c.entries {
+				if oldestKey == "" || existingRetryAfter.Before(oldestRetryAfter) {
+					oldestKey = existingKey
+					oldestRetryAfter = existingRetryAfter
+				}
+			}
+			delete(c.entries, oldestKey)
+		}
+	}
+	c.entries[key] = retryAfter
+}
+
+func (c *siteIconFailureCache) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
+func (c *siteIconFailureCache) Active(key string, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	retryAfter, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+	if !now.Before(retryAfter) {
+		delete(c.entries, key)
+		return false
+	}
+	return true
+}
+
+func (c *siteIconFailureCache) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
 
 func GetSiteFaviconURL(bookmarkLink string) string {
 	bookmarkLink = strings.TrimSpace(bookmarkLink)
@@ -93,6 +157,9 @@ func GetSiteFaviconAssetURL(bookmarkLink string) string {
 		return ""
 	}
 	if isProxyableSiteFaviconURL(iconURL) {
+		if siteFaviconFailureActive(iconURL) {
+			return ""
+		}
 		return siteIconProxyURL(iconURL)
 	}
 	return iconURL
@@ -425,6 +492,19 @@ func FetchPublicSiteFavicon(iconURL string) ([]byte, string, error) {
 	return fetchAndCacheSiteFavicon(ctx, iconURL)
 }
 
+func siteFaviconFailureActive(iconURL string) bool {
+	key := siteFaviconCacheKey(iconURL)
+	return siteIconFailures.Active(key, time.Now())
+}
+
+func recordSiteFaviconFailure(iconURL string) {
+	siteIconFailures.Store(siteFaviconCacheKey(iconURL), time.Now().Add(siteIconFailureTTL))
+}
+
+func clearSiteFaviconFailure(iconURL string) {
+	siteIconFailures.Delete(siteFaviconCacheKey(iconURL))
+}
+
 func fetchAndCacheSiteFavicon(ctx context.Context, iconURL string) ([]byte, string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -433,6 +513,9 @@ func fetchAndCacheSiteFavicon(ctx context.Context, iconURL string) ([]byte, stri
 		return data, contentType, nil
 	} else if ctx.Err() != nil {
 		return nil, "", ctx.Err()
+	}
+	if siteFaviconFailureActive(iconURL) {
+		return nil, "", errSiteFaviconRetryCooldown
 	}
 
 	key := siteFaviconCacheKey(iconURL)
@@ -447,7 +530,11 @@ func fetchAndCacheSiteFavicon(ctx context.Context, iconURL string) ([]byte, stri
 				return nil, "", ctx.Err()
 			}
 		}
-		return readCachedSiteFaviconContext(ctx, iconURL)
+		data, contentType, err := readCachedSiteFaviconContext(ctx, iconURL)
+		if err != nil && siteFaviconFailureActive(iconURL) {
+			return nil, "", errSiteFaviconRetryCooldown
+		}
+		return data, contentType, err
 	}
 
 	defer close(wait)
@@ -458,14 +545,19 @@ func fetchAndCacheSiteFavicon(ctx context.Context, iconURL string) ([]byte, stri
 		return nil, "", ctx.Err()
 	}
 	defer func() { <-siteIconFetchLimiter }()
+	if siteFaviconFailureActive(iconURL) {
+		return nil, "", errSiteFaviconRetryCooldown
+	}
 
 	data, contentType, err := downloadSiteFavicon(ctx, iconURL)
 	if err != nil {
+		recordSiteFaviconFailure(iconURL)
 		return nil, "", err
 	}
 	if err := writeCachedSiteFavicon(iconURL, data); err != nil {
 		return nil, "", err
 	}
+	clearSiteFaviconFailure(iconURL)
 	return data, contentType, nil
 }
 
@@ -481,15 +573,6 @@ func downloadSiteFavicon(ctx context.Context, iconURL string) ([]byte, string, e
 		return nil, "", fmt.Errorf("favicon host does not resolve: %w", err)
 	}
 	attemptErrors := []error{fmt.Errorf("direct favicon fetch failed: %w", err)}
-	providerAttempted := false
-	if shouldPreferHostedSiteFavicon(err) {
-		providerAttempted = true
-		if data, contentType, fallbackErr := downloadHostedSiteFavicon(ctx, iconURL); fallbackErr == nil {
-			return data, contentType, nil
-		} else if fallbackErr != nil {
-			attemptErrors = append(attemptErrors, fmt.Errorf("hosted favicon fallback failed: %w", fallbackErr))
-		}
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, "", errors.Join(append(attemptErrors, err)...)
 	}
@@ -505,38 +588,12 @@ func downloadSiteFavicon(ctx context.Context, iconURL string) ([]byte, string, e
 		attemptErrors = append(attemptErrors, fmt.Errorf("html favicon discovery failed: %w", discoverErr))
 	}
 
-	if !providerAttempted {
-		if data, contentType, fallbackErr := downloadHostedSiteFavicon(ctx, iconURL); fallbackErr == nil {
-			return data, contentType, nil
-		} else if fallbackErr != nil {
-			attemptErrors = append(attemptErrors, fmt.Errorf("hosted favicon fallback failed: %w", fallbackErr))
-		}
-	}
 	return nil, "", errors.Join(attemptErrors...)
 }
 
 func isDefinitiveSiteFaviconDNSNotFound(err error) bool {
 	var dnsErr *net.DNSError
 	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
-}
-
-func shouldPreferHostedSiteFavicon(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var networkErr net.Error
-	return errors.As(err, &networkErr)
-}
-
-func downloadHostedSiteFavicon(ctx context.Context, rootIconURL string) ([]byte, string, error) {
-	fallbackURL := hostedSiteFaviconURL(rootIconURL)
-	if fallbackURL == "" {
-		return nil, "", fmt.Errorf("hosted favicon fallback is unavailable")
-	}
-	return downloadSiteFaviconDirect(ctx, fallbackURL)
 }
 
 func downloadSiteFaviconDirect(ctx context.Context, iconURL string) ([]byte, string, error) {
@@ -590,28 +647,6 @@ func isRootHTTPFaviconURL(iconURL string) bool {
 		return false
 	}
 	return (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.Path == "/favicon.ico"
-}
-
-func hostedSiteFaviconURL(rootIconURL string) string {
-	u, err := url.Parse(strings.TrimSpace(rootIconURL))
-	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return ""
-	}
-	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(u.Hostname())), ".")
-	// The fallback service receives this hostname, so never use it for local or reserved targets.
-	if host == "" || HostLooksLocalNetwork(host) || net.ParseIP(host) != nil || isReservedSiteFaviconHost(host) {
-		return ""
-	}
-	return (&url.URL{Scheme: "https", Host: siteIconFallbackHost, Path: "/icon/" + host}).String()
-}
-
-func isReservedSiteFaviconHost(host string) bool {
-	if host == "example.com" || host == "example.net" || host == "example.org" ||
-		strings.HasSuffix(host, ".example.com") || strings.HasSuffix(host, ".example.net") || strings.HasSuffix(host, ".example.org") {
-		return true
-	}
-	return strings.HasSuffix(host, ".invalid") || strings.HasSuffix(host, ".test") || strings.HasSuffix(host, ".example") ||
-		strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".onion") || strings.HasSuffix(host, ".alt")
 }
 
 func discoverSiteFaviconFromHTML(ctx context.Context, rootIconURL string) (string, error) {

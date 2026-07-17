@@ -88,6 +88,18 @@ its persistent cache. The next homepage render recognizes the validated cache
 entry and emits the direct stable site-icon URL, which the browser can render
 from its cache during initial layout.
 
+A direct icon can still encounter a browser response cached by an earlier
+SuperFlare version if another client has already populated the current server
+cache. Direct icon nodes therefore participate in the same grouped reload flow
+once per source and browser cache generation. A per-source `localStorage`
+marker under `superflare.site-icon.origin-only:` is written after any grouped
+reload receives `cached` and the image blob decodes successfully. This means
+the first asynchronous placeholder request also marks the source, while a
+direct icon repairs an older immutable response only when still unmarked. The
+public URL remains unchanged and later page loads do not make another repair
+request. If storage is unavailable or repair fails, the marker is not written
+and a future page load may retry.
+
 ### Origin-Only Discovery
 
 The favicon download chain becomes:
@@ -110,8 +122,11 @@ does not trigger a redundant HTML request to the same nonexistent host.
 ### Finite Failure Cooldown
 
 Actual upstream download or HTML-discovery failures are stored in a
-process-local concurrent map for five minutes. Entries are keyed with the same
-generation-aware site-icon cache key as persistent files.
+process-local, mutex-protected cache for five minutes. Entries are keyed with
+the same generation-aware site-icon cache key as persistent files. The cache
+has a hard limit of 1024 unique entries; on reaching the limit it removes
+expired entries and then evicts the entry with the earliest retry time if
+necessary.
 
 The fetch path always checks for a valid persistent cache file before checking
 the failure map. During an active failure cooldown it returns immediately
@@ -119,11 +134,16 @@ without another upstream request. Successful download and cache write clears
 the corresponding failure entry. Cache-write failures are not recorded as
 upstream failures.
 
+The fetch path checks the cooldown again after claiming the per-source
+in-flight role and acquiring a global fetch slot. This closes the race where a
+previous leader records a failure between the new caller's initial cache check
+and in-flight claim.
+
 When homepage rendering finds an active failure and no validated icon, the
 asset URL helper returns an empty string. The bookmark therefore remains the
 plain built-in SVG and receives no asynchronous fetch marker on subsequent
-renders during the cooldown. Expired entries are removed lazily and the next
-request may retry the origin.
+renders during the cooldown. An expired entry is removed when queried or when
+the bounded cache needs space, and the next request may retry the origin.
 
 The cooldown is intentionally in memory. Restarting SuperFlare permits a fresh
 attempt, while persistent valid icons continue to survive restarts.
@@ -136,9 +156,9 @@ filename under `var/cache/site-icons`; it does not change the browser-visible
 route or configuration.
 
 Provider-generated images stored under earlier generations are ignored. The
-`cache: "reload"` asynchronous request also prevents a browser-cached old
-provider response at the stable URL from being applied without consulting the
-new server behavior.
+`cache: "reload"` asynchronous request and once-per-source direct repair also
+prevent a browser-cached old provider response at the stable URL from being
+applied indefinitely without consulting the new server behavior.
 
 ## Compatibility
 
@@ -161,8 +181,14 @@ Automated coverage will prove that:
 - an unavailable origin never contacts Icon Horse and produces no cache file;
 - the first origin failure starts a cooldown and an immediate second request
   performs no network work;
+- a caller that claims the in-flight role after another failure still rechecks
+  the cooldown before network work;
+- more than 1024 unique failures cannot grow the process cache beyond its hard
+  limit;
 - an active cooldown suppresses the homepage asynchronous marker;
 - an expired cooldown permits a successful retry and is cleared on success;
+- a direct icon with no origin-only browser marker is repaired once through the
+  same grouped reload request and then marked per source;
 - the previous internal cache generation is ignored;
 - direct and HTML-discovered icons still download, validate, cache, and render;
 - public site-icon URLs still contain no `v` parameter;
