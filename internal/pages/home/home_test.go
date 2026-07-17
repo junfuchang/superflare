@@ -1440,9 +1440,9 @@ func TestInlineSiteIconRefreshScriptDeduplicatesSourcesWithoutPolling(t *testing
 	for _, expected := range []string{
 		`var groups=new Map()`,
 		`groups.get(src)`,
-		`groups.set(src,[img])`,
+		`groups.set(src,[node])`,
 		`groups.forEach(function(group,src)`,
-		`group.forEach(function(img)`,
+		`group.forEach(function(node)`,
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("favicon refresh script should contain %q: %s", expected, script)
@@ -1454,6 +1454,32 @@ func TestInlineSiteIconRefreshScriptDeduplicatesSourcesWithoutPolling(t *testing
 	for _, unexpected := range []string{`setTimeout`, `var left=`, `cache:"no-store"`} {
 		if strings.Contains(script, unexpected) {
 			t.Fatalf("favicon refresh script should not contain %q: %s", unexpected, script)
+		}
+	}
+}
+
+func TestInlineSiteIconRefreshScriptDecodesBlobBeforeReplacingFallback(t *testing.T) {
+	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
+	for _, expected := range []string{
+		`var probe=new Image()`,
+		`probe.decode().then(apply,discard)`,
+		`}else{probe.onload=apply;probe.onerror=discard;`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("favicon refresh script should validate fetched image with %q: %s", expected, script)
+		}
+	}
+}
+
+func TestInlineSiteIconRefreshScriptReplacesInlineFallbackAfterDecode(t *testing.T) {
+	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
+	for _, expected := range []string{
+		`querySelectorAll("[data-site-icon-src]")`,
+		`node.tagName==="IMG"`,
+		`node.replaceWith(img)`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("favicon refresh script should support inline fallback with %q: %s", expected, script)
 		}
 	}
 }
@@ -3040,9 +3066,6 @@ func TestAppendConfiguredIconWarningsReportsLoadError(t *testing.T) {
 
 func TestRenderBookmarkIconFallsBackToBuiltinBookmarkWhenFaviconMissing(t *testing.T) {
 	prepareIconTest(t)
-	origGetter := getSiteFaviconFast
-	getSiteFaviconFast = func(string, string) string { return "" }
-	defer func() { getSiteFaviconFast = origGetter }()
 
 	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
 	if !strings.Contains(out, `bookmark.svg`) {

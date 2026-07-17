@@ -27,11 +27,12 @@ import (
 var Favicon embed.FS
 
 const (
-	faviconRoutePath          = "/favicon.ico"
-	appleTouchIconRoutePath   = "/apple-touch-icon.png"
-	androidChrome192RoutePath = "/android-chrome-192x192.png"
-	androidChrome512RoutePath = "/android-chrome-512x512.png"
-	siteIconStateHeader       = "X-SuperFlare-Site-Icon"
+	faviconRoutePath              = "/favicon.ico"
+	appleTouchIconRoutePath       = "/apple-touch-icon.png"
+	androidChrome192RoutePath     = "/android-chrome-192x192.png"
+	androidChrome512RoutePath     = "/android-chrome-512x512.png"
+	siteIconStateHeader           = "X-SuperFlare-Site-Icon"
+	siteIconContentSecurityPolicy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"
 )
 
 type assetsRuntimeSnapshot struct {
@@ -214,6 +215,9 @@ func serveSiteFavicon(c *echo.Context) error {
 	if iconURL == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing site favicon source")
 	}
+	c.Response().Header().Set("Content-Security-Policy", siteIconContentSecurityPolicy)
+	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
+	c.Response().Header().Set("Referrer-Policy", "no-referrer")
 
 	data, contentType, err := fn.FetchPublicSiteFavicon(iconURL)
 	if err == nil {

@@ -1,10 +1,14 @@
 package home
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/junfuchang/superflare/config/define"
+	"github.com/junfuchang/superflare/config/model"
+	"github.com/junfuchang/superflare/internal/fn"
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
@@ -29,13 +33,7 @@ func TestRenderBookmarkIcon_EmptyIconUsesSiteFaviconInFillingMode(t *testing.T) 
 
 func TestRenderBookmarkIcon_CacheMissMarksFallbackForAsyncSiteFavicon(t *testing.T) {
 	prepareIconTest(t)
-	origFast := getSiteFaviconFast
 	origAssetURL := getSiteFaviconAssetURL
-	var fastFallback string
-	getSiteFaviconFast = func(_ string, fallback string) string {
-		fastFallback = fallback
-		return fallback
-	}
 	getSiteFaviconAssetURL = func(link string) string {
 		if link != "https://example.com/path" {
 			t.Fatalf("unexpected favicon link: %s", link)
@@ -43,19 +41,67 @@ func TestRenderBookmarkIcon_CacheMissMarksFallbackForAsyncSiteFavicon(t *testing
 		return "/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"
 	}
 	defer func() {
-		getSiteFaviconFast = origFast
 		getSiteFaviconAssetURL = origAssetURL
 	}()
 
 	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
-	if fastFallback != "" {
-		t.Fatalf("fast favicon lookup should not consume the visible fallback, got fallback %q", fastFallback)
-	}
 	if !strings.Contains(out, `bookmark.svg`) {
 		t.Fatalf("cache miss should still render builtin bookmark fallback, got %q", out)
 	}
 	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
 		t.Fatalf("cache miss fallback should be marked for async favicon refresh, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_MinimumRequestCacheMissMarksInlineFallbackForAsyncSiteFavicon(t *testing.T) {
+	prepareIconTest(t)
+	mdi.SetRuntimeFlags(model.Flags{EnableMinimumRequest: true})
+	t.Cleanup(func() { mdi.SetRuntimeFlags(model.Flags{}) })
+
+	origAssetURL := getSiteFaviconAssetURL
+	getSiteFaviconAssetURL = func(_ string) string {
+		return "/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"
+	}
+	defer func() {
+		getSiteFaviconAssetURL = origAssetURL
+	}()
+
+	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
+	if !strings.HasPrefix(out, "<svg ") {
+		t.Fatalf("minimum request cache miss should keep inline svg fallback, got %q", out)
+	}
+	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"`) {
+		t.Fatalf("minimum request inline fallback should be marked for async favicon refresh, got %q", out)
+	}
+}
+
+func TestRenderBookmarkIcon_CacheHitStillDecodesBeforeReplacingFallback(t *testing.T) {
+	prepareIconTest(t)
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	iconURL := "https://example.com/favicon.ico"
+	cachePath := filepath.Join(tmpDir, "var", "cache", "site-icons", fn.SiteFaviconCacheKeyForTest(iconURL)+".bin")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), 0644); err != nil {
+		t.Fatalf("WriteFile cache: %v", err)
+	}
+
+	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
+	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico&amp;v=2"`) {
+		t.Fatalf("cached favicon should still be decoded before replacing fallback, got %q", out)
+	}
+	if !strings.Contains(out, `bookmark.svg`) {
+		t.Fatalf("cached favicon should keep builtin fallback until browser decode succeeds, got %q", out)
 	}
 }
 

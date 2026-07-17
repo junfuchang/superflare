@@ -9,7 +9,6 @@ import (
 	"github.com/junfuchang/superflare/internal/resources/mdi"
 )
 
-var getSiteFaviconFast = fn.GetSiteFaviconFast
 var getSiteFaviconAssetURL = fn.GetSiteFaviconAssetURL
 
 func renderBookmarkIcon(icon string, link string, iconMode string) string {
@@ -38,9 +37,6 @@ func renderBookmarkIcon(icon string, link string, iconMode string) string {
 }
 
 func iconFallbackForLink(link string, fallback string) string {
-	if favicon := getSiteFaviconFast(link, ""); favicon != "" {
-		return favicon
-	}
 	iconURL := strings.TrimSpace(getSiteFaviconAssetURL(link))
 	if iconURL == "" {
 		return fallback
@@ -58,6 +54,9 @@ func markFallbackIconForAsyncSiteFavicon(fallback string, iconURL string) string
 	}
 	if strings.HasPrefix(fallback, "<img ") {
 		return strings.Replace(fallback, "<img ", `<img data-site-icon-src="`+escaped+`" `, 1)
+	}
+	if strings.HasPrefix(fallback, "<svg ") {
+		return strings.Replace(fallback, "<svg ", `<svg data-site-icon-src="`+escaped+`" `, 1)
 	}
 	return fallback
 }

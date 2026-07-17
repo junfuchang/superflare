@@ -3,8 +3,14 @@ package fn
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +21,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/image/bmp"
 )
 
 func TestGetSiteFaviconURL_ValidURL(t *testing.T) {
@@ -36,7 +44,7 @@ func TestGetSiteFaviconURL_InvalidOrUnsupportedURL(t *testing.T) {
 
 func TestGetSiteFavicon_ValidURL(t *testing.T) {
 	out := GetSiteFavicon("http://example.com:8080/a/b", "fallback")
-	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2Fexample.com%3A8080%2Ffavicon.ico"`) {
+	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2Fexample.com%3A8080%2Ffavicon.ico&amp;v=2"`) {
 		t.Fatalf("GetSiteFavicon should proxy public site favicon through local route, got %q", out)
 	}
 	if !strings.Contains(out, `referrerpolicy="no-referrer"`) {
@@ -46,16 +54,50 @@ func TestGetSiteFavicon_ValidURL(t *testing.T) {
 
 func TestGetSiteFavicon_LocalURLUsesProxyFallbackRoute(t *testing.T) {
 	out := GetSiteFavicon("http://192.168.1.20:8080/a/b", "fallback")
-	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2F192.168.1.20%3A8080%2Ffavicon.ico"`) {
+	if !strings.Contains(out, `src="/assets/site-icons?src=http%3A%2F%2F192.168.1.20%3A8080%2Ffavicon.ico&amp;v=2"`) {
 		t.Fatalf("GetSiteFavicon should use proxy fallback route for local-network favicon, got %q", out)
 	}
 }
 
 func TestGetSiteFaviconAssetURL_PublicUsesProxy(t *testing.T) {
 	out := GetSiteFaviconAssetURL("https://github.com/junfuchang/superflare")
-	const expected = `/assets/site-icons?src=https%3A%2F%2Fgithub.com%2Ffavicon.ico`
+	const expected = `/assets/site-icons?src=https%3A%2F%2Fgithub.com%2Ffavicon.ico&v=2`
 	if out != expected {
 		t.Fatalf("GetSiteFaviconAssetURL public: expected %q, got %q", expected, out)
+	}
+}
+
+func TestGetSiteFaviconAssetURLDoesNotStartDuplicateBackgroundFetch(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	requested := make(chan struct{}, 1)
+	siteIconHTTPClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			requested <- struct{}{}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	_ = GetSiteFaviconAssetURL("https://example.com/path")
+	select {
+	case <-requested:
+		t.Fatal("asset URL generation should not duplicate the browser favicon request")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
@@ -66,9 +108,45 @@ func TestGetSiteFaviconAssetURLFast_PublicCacheMissReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestGetSiteFaviconAssetURLFastDoesNotStartDuplicateBackgroundFetch(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	requested := make(chan struct{}, 1)
+	siteIconHTTPClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			requested <- struct{}{}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	if out := GetSiteFaviconAssetURLFast("https://example.com/path"); out != "" {
+		t.Fatalf("cache miss should stay empty, got %q", out)
+	}
+	select {
+	case <-requested:
+		t.Fatal("fast asset URL lookup should not duplicate the browser favicon request")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestGetSiteFaviconAssetURL_LocalUsesProxyFallbackRoute(t *testing.T) {
 	out := GetSiteFaviconAssetURL("https://nas.local/apps")
-	const expected = `/assets/site-icons?src=https%3A%2F%2Fnas.local%2Ffavicon.ico`
+	const expected = `/assets/site-icons?src=https%3A%2F%2Fnas.local%2Ffavicon.ico&v=2`
 	if out != expected {
 		t.Fatalf("GetSiteFaviconAssetURL local: expected %q, got %q", expected, out)
 	}
@@ -109,6 +187,17 @@ func TestGetYandexFavicon_InvalidURL(t *testing.T) {
 }
 
 func TestDetectSiteFaviconContentTypeSupportsCommonImageFormats(t *testing.T) {
+	pngData := encodeTestFavicon(t, "png")
+	jpegData := encodeTestFavicon(t, "jpeg")
+	gifData := encodeTestFavicon(t, "gif")
+	bmpData := encodeTestFavicon(t, "bmp")
+	webpData, err := base64.StdEncoding.DecodeString("UklGRrIBAABXRUJQVlA4TKUBAAAvSsAYAA8w//M///MfeJAkbXvaSG7m8Q3GfYSBJekwQztm/IcZlgwnmWImn2BK7aFmBtnVir6q//8VOkFE/xm4baTIu8c48ArEo6+B3zFKYln3pqClSCKX0begFTAXFOLXHSyF8cCNcZEG4OywuA4KVVfJCiArU7GAgJI8+lJP/OKMT/fBAjevg1cYB7YVkFuWga2lyPi5I0HFy5YTpWIHg0RZpkniRVW9odHAKOwosWuOGdxIyn2OvaCDvhg/we6TwadPBPbqBV58MsLmMJ8yZnOWk8SRz4N+QoyPL+MnamzMvcE1rHNEr91F9GKZPVUcS9w7PhhH36suB9qPeYb/oLk6cuTiJ0wOK3m5h1cKjW6EVZCYMK7dxcKCBdgP9HkKr9gkAO2P8GKZGWVdIAatQa+1IDpt6qyorVwdy01xdW8Jkfk6xjEXmVQQ+HQdFr6OKhIN34dXWq0+0qr6EJSCeeVLH9+gvGTLyqM65PQ44ihzlTXxQKjKbAvshXgir7Lil9w4L2bvMycmjQcqXaMCO6BlY28i+FOLzbfI1vEqxAhotocAAA==")
+	if err != nil {
+		t.Fatalf("decode webp fixture: %v", err)
+	}
+	icoData := encodeTestICO(pngData)
+	icoDIBData := encodeTestICODIB()
+
 	tests := []struct {
 		name       string
 		data       []byte
@@ -122,33 +211,51 @@ func TestDetectSiteFaviconContentTypeSupportsCommonImageFormats(t *testing.T) {
 			wantType:   "image/svg+xml",
 		},
 		{
-			name:       "png header",
-			data:       []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00},
+			name:       "svg with document preamble",
+			data:       []byte("\xef\xbb\xbf<?xml version=\"1.0\"?><!-- icon --><!DOCTYPE svg><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"),
+			headerType: "application/xml",
+			wantType:   "image/svg+xml",
+		},
+		{
+			name:       "png",
+			data:       pngData,
 			headerType: "application/octet-stream",
 			wantType:   "image/png",
 		},
 		{
-			name:       "jpeg header",
-			data:       []byte{0xff, 0xd8, 0xff, 0xe0, 0x00},
+			name:       "jpeg",
+			data:       jpegData,
 			headerType: "",
 			wantType:   "image/jpeg",
 		},
 		{
-			name:       "gif header",
-			data:       []byte("GIF89a\x01\x00\x01\x00"),
+			name:       "gif",
+			data:       gifData,
 			headerType: "",
 			wantType:   "image/gif",
 		},
 		{
-			name:       "webp header",
-			data:       []byte("RIFF1234WEBPVP8 "),
+			name:       "webp",
+			data:       webpData,
 			headerType: "application/octet-stream",
 			wantType:   "image/webp",
 		},
 		{
-			name:       "ico header",
-			data:       []byte{0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x10, 0x10, 0x00, 0x00, 0x01, 0x00},
+			name:       "bmp",
+			data:       bmpData,
+			headerType: "image/bmp",
+			wantType:   "image/bmp",
+		},
+		{
+			name:       "ico",
+			data:       icoData,
 			headerType: "application/octet-stream",
+			wantType:   "image/x-icon",
+		},
+		{
+			name:       "ico dib",
+			data:       icoDIBData,
+			headerType: "image/x-icon",
 			wantType:   "image/x-icon",
 		},
 	}
@@ -166,10 +273,147 @@ func TestDetectSiteFaviconContentTypeSupportsCommonImageFormats(t *testing.T) {
 	}
 }
 
+func TestDetectSiteFaviconContentTypeRejectsInvalidImagePayloads(t *testing.T) {
+	prefixedPNG := append([]byte(" \n"), encodeTestFavicon(t, "png")...)
+	completePNG := encodeTestFavicon(t, "png")
+	truncatedPNGBody := completePNG[:len(completePNG)-12]
+	invalidICOBody := encodeTestICO([]byte("not an icon image"))
+	invalidICODIB := encodeTestICO(append(makeTestICODIBHeader(2, 2), 0))
+	avifFtypOnly := encodeTestAVIFFtypOnly()
+	tests := []struct {
+		name       string
+		data       []byte
+		headerType string
+	}{
+		{name: "mislabeled text", data: []byte("not an image"), headerType: "image/png"},
+		{name: "truncated png", data: []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00}, headerType: "image/png"},
+		{name: "truncated png body", data: truncatedPNGBody, headerType: "image/png"},
+		{name: "truncated ico", data: []byte{0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10, 0x00, 0x00, 0x01, 0x00}, headerType: "image/x-icon"},
+		{name: "invalid ico body", data: invalidICOBody, headerType: "image/x-icon"},
+		{name: "ico dib without pixels", data: invalidICODIB, headerType: "image/x-icon"},
+		{name: "truncated avif", data: []byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}, headerType: "image/avif"},
+		{name: "avif without image boxes", data: avifFtypOnly, headerType: "image/avif"},
+		{name: "unvalidated avif payload", data: encodeTestAVIF(), headerType: "image/avif"},
+		{name: "truncated svg", data: []byte(`<svg xmlns="http://www.w3.org/2000/svg"><path>`), headerType: "image/svg+xml"},
+		{name: "uppercase svg root", data: []byte(`<SVG xmlns="http://www.w3.org/2000/svg"></SVG>`), headerType: "image/svg+xml"},
+		{name: "prefixed png", data: prefixedPNG, headerType: "image/png"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, ok := detectSiteFaviconContentType(tt.data, tt.headerType); ok || got != "" {
+				t.Fatalf("invalid image payload should be rejected, got ok=%v type=%q", ok, got)
+			}
+		})
+	}
+}
+
+func TestDetectSiteFaviconContentTypeRejectsOversizedDecodedImage(t *testing.T) {
+	data := encodeTestFaviconSize(t, "png", 2049, 2049)
+	if got, ok := detectSiteFaviconContentType(data, "image/png"); ok || got != "" {
+		t.Fatalf("oversized decoded image should be rejected, got ok=%v type=%q", ok, got)
+	}
+}
+
+func encodeTestFavicon(t *testing.T, format string) []byte {
+	return encodeTestFaviconSize(t, format, 2, 2)
+}
+
+func encodeTestFaviconSize(t *testing.T, format string, width int, height int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	var out bytes.Buffer
+	var err error
+	switch format {
+	case "png":
+		err = png.Encode(&out, img)
+	case "jpeg":
+		err = jpeg.Encode(&out, img, nil)
+	case "gif":
+		err = gif.Encode(&out, img, nil)
+	case "bmp":
+		err = bmp.Encode(&out, img)
+	default:
+		t.Fatalf("unsupported test favicon format: %s", format)
+	}
+	if err != nil {
+		t.Fatalf("encode %s favicon: %v", format, err)
+	}
+	return out.Bytes()
+}
+
+func encodeTestICO(pngData []byte) []byte {
+	const directorySize = 6 + 16
+	out := make([]byte, directorySize, directorySize+len(pngData))
+	binary.LittleEndian.PutUint16(out[2:4], 1)
+	binary.LittleEndian.PutUint16(out[4:6], 1)
+	out[6] = 2
+	out[7] = 2
+	binary.LittleEndian.PutUint16(out[10:12], 1)
+	binary.LittleEndian.PutUint16(out[12:14], 32)
+	binary.LittleEndian.PutUint32(out[14:18], uint32(len(pngData)))
+	binary.LittleEndian.PutUint32(out[18:22], directorySize)
+	return append(out, pngData...)
+}
+
+func encodeTestICODIB() []byte {
+	const (
+		width        = 2
+		height       = 2
+		xorBytes     = 16
+		andMaskBytes = 8
+	)
+	payload := append(makeTestICODIBHeader(width, height), make([]byte, xorBytes+andMaskBytes)...)
+	return encodeTestICO(payload)
+}
+
+func makeTestICODIBHeader(width uint32, height uint32) []byte {
+	const headerSize = 40
+	header := make([]byte, headerSize)
+	binary.LittleEndian.PutUint32(header[0:4], headerSize)
+	binary.LittleEndian.PutUint32(header[4:8], width)
+	binary.LittleEndian.PutUint32(header[8:12], height*2)
+	binary.LittleEndian.PutUint16(header[12:14], 1)
+	binary.LittleEndian.PutUint16(header[14:16], 32)
+	return header
+}
+
+func encodeTestAVIF() []byte {
+	out := encodeTestAVIFFtypOnly()
+	meta := make([]byte, 12)
+	binary.BigEndian.PutUint32(meta[0:4], uint32(len(meta)))
+	copy(meta[4:8], "meta")
+	mdat := make([]byte, 9)
+	binary.BigEndian.PutUint32(mdat[0:4], uint32(len(mdat)))
+	copy(mdat[4:8], "mdat")
+	mdat[8] = 1
+	out = append(out, meta...)
+	out = append(out, mdat...)
+	return out
+}
+
+func encodeTestAVIFFtypOnly() []byte {
+	out := make([]byte, 24)
+	binary.BigEndian.PutUint32(out[0:4], uint32(len(out)))
+	copy(out[4:8], "ftyp")
+	copy(out[8:12], "avif")
+	copy(out[16:20], "mif1")
+	copy(out[20:24], "avif")
+	return out
+}
+
 func TestDetectSiteFaviconContentTypeRejectsHTML(t *testing.T) {
 	got, ok := detectSiteFaviconContentType([]byte("<!doctype html><html><body>no icon</body></html>"), "image/png")
 	if ok || got != "" {
 		t.Fatalf("html payload should be rejected, got ok=%v type=%q", ok, got)
+	}
+}
+
+func TestDetectSiteFaviconContentTypeRejectsHTMLContainingInlineSVG(t *testing.T) {
+	data := []byte(`<!doctype html><html><body><svg viewBox="0 0 16 16"></svg></body></html>`)
+	got, ok := detectSiteFaviconContentType(data, "text/html; charset=utf-8")
+	if ok || got != "" {
+		t.Fatalf("html payload containing inline svg should be rejected, got ok=%v type=%q", ok, got)
 	}
 }
 
@@ -218,7 +462,8 @@ func TestReadCachedSiteFaviconRemovesInvalidCacheFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 		t.Fatalf("MkdirAll cache: %v", err)
 	}
-	if err := os.WriteFile(cachePath, []byte("<html>broken</html>"), 0644); err != nil {
+	invalidHTML := []byte(`<!doctype html><html><body><svg viewBox="0 0 16 16"></svg></body></html>`)
+	if err := os.WriteFile(cachePath, invalidHTML, 0644); err != nil {
 		t.Fatalf("WriteFile cache: %v", err)
 	}
 
@@ -228,6 +473,42 @@ func TestReadCachedSiteFaviconRemovesInvalidCacheFile(t *testing.T) {
 	}
 	if _, statErr := os.Stat(cachePath); !os.IsNotExist(statErr) {
 		t.Fatalf("invalid cache file should be removed, statErr=%v", statErr)
+	}
+}
+
+func TestFetchAndCacheSiteFaviconCacheHitHonorsCanceledContextBeforeRead(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	iconURL := "https://example.com/favicon.ico"
+	if err := writeCachedSiteFavicon(iconURL, encodeTestFavicon(t, "png")); err != nil {
+		t.Fatalf("writeCachedSiteFavicon: %v", err)
+	}
+	for index := 0; index < siteIconDecodeLimit; index++ {
+		siteIconDecodeLimiter <- struct{}{}
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		for index := 0; index < siteIconDecodeLimit; index++ {
+			<-siteIconDecodeLimiter
+		}
+		close(released)
+	}()
+	defer func() { <-released }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = fetchAndCacheSiteFavicon(ctx, iconURL)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled cache read should return context cancellation, got %v", err)
 	}
 }
 
@@ -529,6 +810,59 @@ func TestFetchPublicSiteFaviconDoesNotRejectNonHTTPSchemeBeforeFetch(t *testing.
 	}
 }
 
+func TestFetchPublicSiteFaviconRejectsHTMLWithInlineSVGAndUsesDeclaredIcon(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	const iconBody = `<svg xmlns="http://www.w3.org/2000/svg"><title>declared-icon</title></svg>`
+	const pageBody = `<!doctype html><html><head><link rel="icon" href="/assets/icon.svg"></head><body><svg viewBox="0 0 16 16"></svg></body></html>`
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/favicon.ico", "/":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+					Body:       io.NopCloser(strings.NewReader(pageBody)),
+					Request:    req,
+				}, nil
+			case "/assets/icon.svg":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"image/svg+xml"}},
+					Body:       io.NopCloser(strings.NewReader(iconBody)),
+					Request:    req,
+				}, nil
+			default:
+				t.Fatalf("unexpected favicon request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+
+	iconURL := "https://example.com/favicon.ico"
+	data, contentType, err := FetchPublicSiteFavicon(iconURL)
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon: %v", err)
+	}
+	if contentType != "image/svg+xml" || string(data) != iconBody {
+		t.Fatalf("favicon type=%q body=%q, want declared icon", contentType, data)
+	}
+	if cached, cachedType, err := readCachedSiteFavicon(iconURL); err != nil || cachedType != "image/svg+xml" || string(cached) != iconBody {
+		t.Fatalf("cached favicon type=%q err=%v body=%q, want declared icon", cachedType, err, cached)
+	}
+}
+
 func TestFetchPublicSiteFaviconDiscoversHTMLDeclaredIconWhenRootIcoFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -794,7 +1128,7 @@ func TestFetchPublicSiteFaviconUsesHostedFallbackWhenOriginUnavailable(t *testin
 	defer func() { siteIconHTTPClient = oldClient }()
 
 	var providerRequests int32
-	pngData := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00}
+	pngData := encodeTestFavicon(t, "png")
 	siteIconHTTPClient = &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {

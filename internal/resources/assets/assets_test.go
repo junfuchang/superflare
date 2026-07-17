@@ -391,6 +391,18 @@ func TestSiteIconProxyCacheHitServesCachedData(t *testing.T) {
 	if got := rec.Header().Get(siteIconStateHeader); got != "cached" {
 		t.Fatalf("site icon proxy cache-hit state header = %q", got)
 	}
+	contentSecurityPolicy := rec.Header().Get("Content-Security-Policy")
+	for _, expected := range []string{"default-src 'none'", "script-src 'none'", "style-src 'unsafe-inline'", "img-src data:", "sandbox"} {
+		if !strings.Contains(contentSecurityPolicy, expected) {
+			t.Fatalf("site icon proxy CSP should contain %q, got %q", expected, contentSecurityPolicy)
+		}
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("site icon proxy X-Content-Type-Options = %q", got)
+	}
+	if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("site icon proxy Referrer-Policy = %q", got)
+	}
 }
 
 func setupAssetsConfigDir(t *testing.T) string {

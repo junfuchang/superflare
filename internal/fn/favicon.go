@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net"
 	"net/http"
@@ -18,18 +24,23 @@ import (
 	"time"
 
 	"github.com/junfuchang/superflare/internal/netutil"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
 	xhtml "golang.org/x/net/html"
 )
 
 const (
-	siteIconProxyPath      = "/assets/site-icons"
-	siteIconCacheDir       = "var/cache/site-icons"
-	siteIconFallbackHost   = "icon.horse"
-	siteIconMaxBytes       = 4 * 1024 * 1024
-	siteIconHTMLBytes      = 512 * 1024
-	siteIconWarmLimit      = 8
-	siteIconRequestTimeout = 4 * time.Second
-	siteIconOverallTimeout = 8 * time.Second
+	siteIconProxyPath           = "/assets/site-icons"
+	siteIconBrowserCacheVersion = "2"
+	siteIconCacheDir            = "var/cache/site-icons"
+	siteIconFallbackHost        = "icon.horse"
+	siteIconMaxBytes            = 4 * 1024 * 1024
+	siteIconMaxDecodedPixels    = 4 * 1024 * 1024
+	siteIconHTMLBytes           = 512 * 1024
+	siteIconWarmLimit           = 8
+	siteIconDecodeLimit         = 2
+	siteIconRequestTimeout      = 4 * time.Second
+	siteIconOverallTimeout      = 8 * time.Second
 )
 
 var (
@@ -38,9 +49,10 @@ var (
 		Transport:     safeSiteFaviconTransport(),
 		CheckRedirect: validateSiteFaviconRedirect,
 	}
-	siteIconInflight     sync.Map
-	siteIconWarmLimiter  = make(chan struct{}, siteIconWarmLimit)
-	siteIconFetchLimiter = make(chan struct{}, siteIconWarmLimit)
+	siteIconInflight      sync.Map
+	siteIconWarmLimiter   = make(chan struct{}, siteIconWarmLimit)
+	siteIconFetchLimiter  = make(chan struct{}, siteIconWarmLimit)
+	siteIconDecodeLimiter = make(chan struct{}, siteIconDecodeLimit)
 )
 
 var errSiteFaviconSourceNotAllowed = errors.New("site favicon source is not allowed")
@@ -80,8 +92,7 @@ func GetSiteFaviconAssetURL(bookmarkLink string) string {
 		return ""
 	}
 	if isProxyableSiteFaviconURL(iconURL) {
-		WarmSiteFavicon(bookmarkLink)
-		return siteIconProxyPath + "?src=" + url.QueryEscape(iconURL)
+		return siteIconProxyURL(iconURL)
 	}
 	return iconURL
 }
@@ -93,12 +104,19 @@ func GetSiteFaviconAssetURLFast(bookmarkLink string) string {
 	}
 	if isProxyableSiteFaviconURL(iconURL) {
 		if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
-			return siteIconProxyPath + "?src=" + url.QueryEscape(iconURL)
+			return siteIconProxyURL(iconURL)
 		}
-		WarmSiteFaviconURL(iconURL)
 		return ""
 	}
 	return iconURL
+}
+
+func siteIconProxyURL(iconURL string) string {
+	query := url.Values{
+		"src": {iconURL},
+		"v":   {siteIconBrowserCacheVersion},
+	}
+	return siteIconProxyPath + "?" + query.Encode()
 }
 
 func GetSiteFavicon(bookmarkLink string, fallback string) string {
@@ -125,67 +143,203 @@ func GetYandexFavicon(bookmarkLink string, fallback string) string {
 	return `<img src="https://favicon.yandex.net/favicon/` + u.Hostname() + `/"/>`
 }
 
-func detectSiteFaviconContentType(data []byte, headerContentType string) (string, bool) {
-	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 {
+func detectSiteFaviconContentType(data []byte, _ string) (string, bool) {
+	svgData := bytes.TrimSpace(data)
+	svgData = bytes.TrimPrefix(svgData, []byte{0xef, 0xbb, 0xbf})
+	svgData = bytes.TrimSpace(svgData)
+	if len(svgData) == 0 {
 		return "", false
 	}
 
-	lower := bytes.ToLower(trimmed)
-	if bytes.Contains(lower, []byte("<svg")) {
+	if svgData[0] == '<' && isStandaloneSVGDocument(svgData) {
 		return "image/svg+xml", true
 	}
-	if bytes.HasPrefix(trimmed, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
-		return "image/png", true
+	if bytes.HasPrefix(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+		return detectDecodedSiteFavicon(data, "png", "image/png")
 	}
-	if len(trimmed) >= 3 && trimmed[0] == 0xff && trimmed[1] == 0xd8 && trimmed[2] == 0xff {
-		return "image/jpeg", true
+	if len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
+		return detectDecodedSiteFavicon(data, "jpeg", "image/jpeg")
 	}
-	if bytes.HasPrefix(trimmed, []byte("GIF87a")) || bytes.HasPrefix(trimmed, []byte("GIF89a")) {
-		return "image/gif", true
+	if bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")) {
+		return detectDecodedSiteFavicon(data, "gif", "image/gif")
 	}
-	if len(trimmed) >= 12 && bytes.Equal(trimmed[:4], []byte("RIFF")) && bytes.Equal(trimmed[8:12], []byte("WEBP")) {
-		return "image/webp", true
+	if len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
+		return detectDecodedSiteFavicon(data, "webp", "image/webp")
 	}
-	if bytes.HasPrefix(trimmed, []byte("BM")) {
-		return "image/bmp", true
+	if bytes.HasPrefix(data, []byte("BM")) {
+		return detectDecodedSiteFavicon(data, "bmp", "image/bmp")
 	}
-	if len(trimmed) >= 12 && bytes.Equal(trimmed[:4], []byte{0x00, 0x00, 0x01, 0x00}) {
+	if validSiteFaviconICO(data, 1) {
 		return "image/x-icon", true
 	}
-	if len(trimmed) >= 12 && bytes.Equal(trimmed[:4], []byte{0x00, 0x00, 0x02, 0x00}) {
+	if validSiteFaviconICO(data, 2) {
 		return "image/x-icon", true
 	}
-	if len(trimmed) >= 12 && bytes.Equal(trimmed[4:8], []byte("ftyp")) {
-		brand := string(trimmed[8:12])
-		switch brand {
-		case "avif", "avis":
-			return "image/avif", true
-		}
-	}
-
-	detected := strings.TrimSpace(http.DetectContentType(trimmed))
-	if idx := strings.Index(detected, ";"); idx >= 0 {
-		detected = detected[:idx]
-	}
-	if strings.HasPrefix(detected, "image/") {
-		return detected, true
-	}
-
-	headerContentType = strings.TrimSpace(headerContentType)
-	if idx := strings.Index(headerContentType, ";"); idx >= 0 {
-		headerContentType = headerContentType[:idx]
-	}
-	headerContentType = strings.TrimSpace(headerContentType)
-	if strings.HasPrefix(headerContentType, "image/") {
-		lowerText := strings.ToLower(string(trimmed))
-		if strings.HasPrefix(lowerText, "<!doctype html") || strings.HasPrefix(lowerText, "<html") {
-			return "", false
-		}
-		return headerContentType, true
-	}
-
 	return "", false
+}
+
+func isStandaloneSVGDocument(data []byte) bool {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	foundRoot := false
+	closedRoot := false
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return foundRoot && closedRoot && depth == 0
+		}
+		if err != nil {
+			return false
+		}
+		switch current := token.(type) {
+		case xml.StartElement:
+			if !foundRoot {
+				if current.Name.Local != "svg" ||
+					(current.Name.Space != "" && current.Name.Space != "http://www.w3.org/2000/svg") {
+					return false
+				}
+				foundRoot = true
+			} else if closedRoot {
+				return false
+			}
+			depth++
+		case xml.EndElement:
+			if !foundRoot || closedRoot || depth == 0 {
+				return false
+			}
+			depth--
+			if depth == 0 {
+				closedRoot = true
+			}
+		case xml.CharData:
+			if (!foundRoot || closedRoot) && len(bytes.TrimSpace(current)) != 0 {
+				return false
+			}
+		}
+	}
+}
+
+func detectDecodedSiteFavicon(data []byte, expectedFormat string, contentType string) (string, bool) {
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || format != expectedFormat || config.Width <= 0 || config.Height <= 0 {
+		return "", false
+	}
+	if uint64(config.Width)*uint64(config.Height) > uint64(siteIconMaxDecodedPixels) {
+		return "", false
+	}
+	decoded, format, err := image.Decode(bytes.NewReader(data))
+	if err != nil || format != expectedFormat || decoded.Bounds().Dx() <= 0 || decoded.Bounds().Dy() <= 0 {
+		return "", false
+	}
+	return contentType, true
+}
+
+func validSiteFaviconICO(data []byte, expectedType uint16) bool {
+	if len(data) < 6 || binary.LittleEndian.Uint16(data[0:2]) != 0 || binary.LittleEndian.Uint16(data[2:4]) != expectedType {
+		return false
+	}
+	count := int(binary.LittleEndian.Uint16(data[4:6]))
+	directoryEnd := 6 + count*16
+	if count == 0 || directoryEnd > len(data) {
+		return false
+	}
+	for index := 0; index < count; index++ {
+		entry := data[6+index*16 : 6+(index+1)*16]
+		size := binary.LittleEndian.Uint32(entry[8:12])
+		offset := binary.LittleEndian.Uint32(entry[12:16])
+		end := uint64(offset) + uint64(size)
+		if size == 0 || uint64(offset) < uint64(directoryEnd) || end > uint64(len(data)) {
+			return false
+		}
+		payload := data[int(offset):int(end)]
+		if bytes.HasPrefix(payload, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+			if _, ok := detectDecodedSiteFavicon(payload, "png", "image/png"); !ok {
+				return false
+			}
+		} else if !validSiteFaviconICOBitmap(payload) {
+			return false
+		}
+	}
+	return true
+}
+
+func validSiteFaviconICOBitmap(data []byte) bool {
+	if len(data) < 12 {
+		return false
+	}
+	headerSize := int(binary.LittleEndian.Uint32(data[0:4]))
+	if headerSize == 12 {
+		width := uint64(binary.LittleEndian.Uint16(data[4:6]))
+		encodedHeight := uint64(binary.LittleEndian.Uint16(data[6:8]))
+		planes := binary.LittleEndian.Uint16(data[8:10])
+		bitsPerPixel := binary.LittleEndian.Uint16(data[10:12])
+		if width == 0 || encodedHeight == 0 || encodedHeight%2 != 0 || planes != 1 || !validSiteFaviconICOBitDepth(bitsPerPixel) {
+			return false
+		}
+		paletteBytes := uint64(0)
+		if bitsPerPixel <= 8 {
+			paletteBytes = uint64(1<<bitsPerPixel) * 3
+		}
+		return validSiteFaviconICOBitmapDataLength(data, uint64(headerSize)+paletteBytes, width, encodedHeight/2, bitsPerPixel)
+	}
+	if headerSize < 40 || headerSize > len(data) {
+		return false
+	}
+	width := int64(int32(binary.LittleEndian.Uint32(data[4:8])))
+	encodedHeight := int64(int32(binary.LittleEndian.Uint32(data[8:12])))
+	planes := binary.LittleEndian.Uint16(data[12:14])
+	bitsPerPixel := binary.LittleEndian.Uint16(data[14:16])
+	compression := binary.LittleEndian.Uint32(data[16:20])
+	if width <= 0 || encodedHeight == 0 || planes != 1 || !validSiteFaviconICOBitDepth(bitsPerPixel) ||
+		(compression != 0 && compression != 3) {
+		return false
+	}
+	if encodedHeight < 0 {
+		encodedHeight = -encodedHeight
+	}
+	if encodedHeight%2 != 0 {
+		return false
+	}
+	pixelOffset := uint64(headerSize)
+	if compression == 3 && headerSize == 40 {
+		pixelOffset += 12
+	}
+	if bitsPerPixel <= 8 {
+		paletteCount := uint64(binary.LittleEndian.Uint32(data[32:36]))
+		maximumPaletteCount := uint64(1 << bitsPerPixel)
+		if paletteCount == 0 {
+			paletteCount = maximumPaletteCount
+		} else if paletteCount > maximumPaletteCount {
+			return false
+		}
+		pixelOffset += paletteCount * 4
+	}
+	return validSiteFaviconICOBitmapDataLength(data, pixelOffset, uint64(width), uint64(encodedHeight/2), bitsPerPixel)
+}
+
+func validSiteFaviconICOBitDepth(bitsPerPixel uint16) bool {
+	switch bitsPerPixel {
+	case 1, 4, 8, 16, 24, 32:
+		return true
+	default:
+		return false
+	}
+}
+
+func validSiteFaviconICOBitmapDataLength(data []byte, pixelOffset uint64, width uint64, height uint64, bitsPerPixel uint16) bool {
+	if width == 0 || height == 0 || width*height > uint64(siteIconMaxDecodedPixels) || pixelOffset > uint64(len(data)) {
+		return false
+	}
+	xorRowBytes := ((width*uint64(bitsPerPixel) + 31) / 32) * 4
+	andMaskRowBytes := ((width + 31) / 32) * 4
+	xorEnd := pixelOffset + xorRowBytes*height
+	if xorEnd > uint64(len(data)) {
+		return false
+	}
+	if xorEnd == uint64(len(data)) {
+		return true
+	}
+	return xorEnd+andMaskRowBytes*height <= uint64(len(data))
 }
 
 func WarmSiteFavicon(bookmarkLink string) {
@@ -233,8 +387,10 @@ func fetchAndCacheSiteFavicon(ctx context.Context, iconURL string) ([]byte, stri
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if data, contentType, err := readCachedSiteFavicon(iconURL); err == nil {
+	if data, contentType, err := readCachedSiteFaviconContext(ctx, iconURL); err == nil {
 		return data, contentType, nil
+	} else if ctx.Err() != nil {
+		return nil, "", ctx.Err()
 	}
 
 	key := siteFaviconCacheKey(iconURL)
@@ -249,7 +405,7 @@ func fetchAndCacheSiteFavicon(ctx context.Context, iconURL string) ([]byte, stri
 				return nil, "", ctx.Err()
 			}
 		}
-		return readCachedSiteFavicon(iconURL)
+		return readCachedSiteFaviconContext(ctx, iconURL)
 	}
 
 	defer close(wait)
@@ -366,6 +522,10 @@ func downloadSiteFaviconDirect(ctx context.Context, iconURL string) ([]byte, str
 		return nil, "", fmt.Errorf("favicon too large")
 	}
 
+	if err := acquireSiteIconDecodeSlot(ctx); err != nil {
+		return nil, "", err
+	}
+	defer func() { <-siteIconDecodeLimiter }()
 	contentType, ok := detectSiteFaviconContentType(data, resp.Header.Get("Content-Type"))
 	if !ok {
 		return nil, "", fmt.Errorf("unexpected content type: %s", contentType)
@@ -546,13 +706,37 @@ func validateSiteFaviconSource(iconURL string) error {
 }
 
 func readCachedSiteFavicon(iconURL string) ([]byte, string, error) {
+	return readCachedSiteFaviconContext(context.Background(), iconURL)
+}
+
+func readCachedSiteFaviconContext(ctx context.Context, iconURL string) ([]byte, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := acquireSiteIconDecodeSlot(ctx); err != nil {
+		return nil, "", err
+	}
+	defer func() { <-siteIconDecodeLimiter }()
+
 	cachePath, err := siteFaviconCachePath(iconURL)
 	if err != nil {
 		return nil, "", err
 	}
-	data, err := os.ReadFile(cachePath)
+	file, err := os.Open(cachePath)
 	if err != nil {
 		return nil, "", err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, siteIconMaxBytes+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, "", readErr
+	}
+	if closeErr != nil {
+		return nil, "", closeErr
+	}
+	if len(data) > siteIconMaxBytes {
+		_ = os.Remove(cachePath)
+		return nil, "", fmt.Errorf("cached favicon too large")
 	}
 	contentType, ok := detectSiteFaviconContentType(data, "")
 	if !ok {
@@ -560,6 +744,18 @@ func readCachedSiteFavicon(iconURL string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("unexpected cached content type")
 	}
 	return data, contentType, nil
+}
+
+func acquireSiteIconDecodeSlot(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case siteIconDecodeLimiter <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func writeCachedSiteFavicon(iconURL string, data []byte) error {
