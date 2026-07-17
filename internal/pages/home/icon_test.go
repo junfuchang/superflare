@@ -33,7 +33,11 @@ func TestRenderBookmarkIcon_EmptyIconUsesSiteFaviconInFillingMode(t *testing.T) 
 
 func TestRenderBookmarkIcon_CacheMissMarksFallbackForAsyncSiteFavicon(t *testing.T) {
 	prepareIconTest(t)
+	origFast := getSiteFaviconFast
 	origAssetURL := getSiteFaviconAssetURL
+	getSiteFaviconFast = func(_ string, fallback string) string {
+		return fallback
+	}
 	getSiteFaviconAssetURL = func(link string) string {
 		if link != "https://example.com/path" {
 			t.Fatalf("unexpected favicon link: %s", link)
@@ -41,6 +45,7 @@ func TestRenderBookmarkIcon_CacheMissMarksFallbackForAsyncSiteFavicon(t *testing
 		return "/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"
 	}
 	defer func() {
+		getSiteFaviconFast = origFast
 		getSiteFaviconAssetURL = origAssetURL
 	}()
 
@@ -58,11 +63,16 @@ func TestRenderBookmarkIcon_MinimumRequestCacheMissMarksInlineFallbackForAsyncSi
 	mdi.SetRuntimeFlags(model.Flags{EnableMinimumRequest: true})
 	t.Cleanup(func() { mdi.SetRuntimeFlags(model.Flags{}) })
 
+	origFast := getSiteFaviconFast
 	origAssetURL := getSiteFaviconAssetURL
+	getSiteFaviconFast = func(_ string, fallback string) string {
+		return fallback
+	}
 	getSiteFaviconAssetURL = func(_ string) string {
 		return "/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico"
 	}
 	defer func() {
+		getSiteFaviconFast = origFast
 		getSiteFaviconAssetURL = origAssetURL
 	}()
 
@@ -75,7 +85,7 @@ func TestRenderBookmarkIcon_MinimumRequestCacheMissMarksInlineFallbackForAsyncSi
 	}
 }
 
-func TestRenderBookmarkIcon_CacheHitStillDecodesBeforeReplacingFallback(t *testing.T) {
+func TestRenderBookmarkIcon_CacheHitRendersDirectlyWithoutAsyncFallback(t *testing.T) {
 	prepareIconTest(t)
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -97,11 +107,49 @@ func TestRenderBookmarkIcon_CacheHitStillDecodesBeforeReplacingFallback(t *testi
 	}
 
 	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
-	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico&amp;v=2"`) {
-		t.Fatalf("cached favicon should still be decoded before replacing fallback, got %q", out)
+	if !strings.Contains(out, `src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico&amp;v=2"`) {
+		t.Fatalf("cached favicon should render directly from the validated cache, got %q", out)
 	}
-	if !strings.Contains(out, `bookmark.svg`) {
-		t.Fatalf("cached favicon should keep builtin fallback until browser decode succeeds, got %q", out)
+	if strings.Contains(out, `data-site-icon-src=`) {
+		t.Fatalf("cached favicon should not use the asynchronous fallback path, got %q", out)
+	}
+	for _, expected := range []string{
+		`data-site-icon-direct="1"`,
+		`data-site-icon-fallback-src="/assets/mdi/blackboard-bookmark.svg"`,
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("cached favicon should retain browser error fallback %q, got %q", expected, out)
+		}
+	}
+}
+
+func TestRenderBookmarkIcon_InvalidCacheKeepsAsyncFallback(t *testing.T) {
+	prepareIconTest(t)
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	iconURL := "https://example.com/favicon.ico"
+	cachePath := filepath.Join(tmpDir, "var", "cache", "site-icons", fn.SiteFaviconCacheKeyForTest(iconURL)+".bin")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte(`<!doctype html><html><body><svg></svg></body></html>`), 0644); err != nil {
+		t.Fatalf("WriteFile cache: %v", err)
+	}
+
+	out := renderBookmarkIcon("", "https://example.com/path", "FILLING")
+	if !strings.Contains(out, `data-site-icon-src="/assets/site-icons?src=https%3A%2F%2Fexample.com%2Ffavicon.ico&amp;v=2"`) {
+		t.Fatalf("invalid cache should keep the asynchronous favicon path, got %q", out)
+	}
+	if !strings.Contains(out, `src="/assets/mdi/blackboard-bookmark.svg"`) {
+		t.Fatalf("invalid cache should keep the builtin fallback visible, got %q", out)
 	}
 }
 

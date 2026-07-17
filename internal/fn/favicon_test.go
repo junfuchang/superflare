@@ -108,6 +108,136 @@ func TestGetSiteFaviconAssetURLFast_PublicCacheMissReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestGetSiteFaviconAssetURLFastDoesNotWaitForBusyDecodeSlots(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	bookmarkLink := "https://example.com/path"
+	writeValidSiteFaviconCacheForTest(t, bookmarkLink)
+	releaseSlots := occupySiteIconDecodeSlots(t)
+	defer releaseSlots()
+
+	result := make(chan string, 1)
+	go func() { result <- GetSiteFaviconAssetURLFast(bookmarkLink) }()
+	select {
+	case got := <-result:
+		if got != "" {
+			t.Fatalf("busy fast cache lookup should fall back to the async path, got %q", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		releaseSlots()
+		<-result
+		t.Fatal("fast cache lookup blocked waiting for a decode slot")
+	}
+}
+
+func TestGetSiteFaviconAssetURLFastReusesValidatedCacheMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	bookmarkLink := "https://example.com/path"
+	writeValidSiteFaviconCacheForTest(t, bookmarkLink)
+	want := siteIconProxyURL(GetSiteFaviconURL(bookmarkLink))
+	if got := GetSiteFaviconAssetURLFast(bookmarkLink); got != want {
+		t.Fatalf("initial fast cache lookup = %q, want %q", got, want)
+	}
+
+	releaseSlots := occupySiteIconDecodeSlots(t)
+	defer releaseSlots()
+	result := make(chan string, 1)
+	go func() { result <- GetSiteFaviconAssetURLFast(bookmarkLink) }()
+	select {
+	case got := <-result:
+		if got != want {
+			t.Fatalf("validated cache metadata lookup = %q, want %q", got, want)
+		}
+	case <-time.After(200 * time.Millisecond):
+		releaseSlots()
+		<-result
+		t.Fatal("validated cache metadata was not reused")
+	}
+}
+
+func TestGetSiteFaviconAssetURLFastRevalidatesChangedCacheFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir tmp: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+
+	bookmarkLink := "https://example.com/path"
+	iconURL := GetSiteFaviconURL(bookmarkLink)
+	writeValidSiteFaviconCacheForTest(t, bookmarkLink)
+	if got := GetSiteFaviconAssetURLFast(bookmarkLink); got == "" {
+		t.Fatal("initial valid cache should be available to the fast lookup")
+	}
+
+	cachePath, err := siteFaviconCachePath(iconURL)
+	if err != nil {
+		t.Fatalf("siteFaviconCachePath: %v", err)
+	}
+	invalid := []byte(`<!doctype html><html><body><svg></svg></body></html>`)
+	if err := os.WriteFile(cachePath, invalid, 0644); err != nil {
+		t.Fatalf("replace cache file: %v", err)
+	}
+	if got := GetSiteFaviconAssetURLFast(bookmarkLink); got != "" {
+		t.Fatalf("changed invalid cache should be revalidated, got %q", got)
+	}
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("changed invalid cache should be removed, stat err=%v", err)
+	}
+}
+
+func writeValidSiteFaviconCacheForTest(t *testing.T, bookmarkLink string) {
+	t.Helper()
+	iconURL := GetSiteFaviconURL(bookmarkLink)
+	cachePath, err := siteFaviconCachePath(iconURL)
+	if err != nil {
+		t.Fatalf("siteFaviconCachePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, encodeTestFavicon(t, "png"), 0644); err != nil {
+		t.Fatalf("WriteFile cache: %v", err)
+	}
+}
+
+func occupySiteIconDecodeSlots(t *testing.T) func() {
+	t.Helper()
+	for index := 0; index < siteIconDecodeLimit; index++ {
+		siteIconDecodeLimiter <- struct{}{}
+	}
+	released := false
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		for index := 0; index < siteIconDecodeLimit; index++ {
+			<-siteIconDecodeLimiter
+		}
+	}
+}
+
 func TestGetSiteFaviconAssetURLFastDoesNotStartDuplicateBackgroundFetch(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()

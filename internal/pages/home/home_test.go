@@ -1471,6 +1471,29 @@ func TestInlineSiteIconRefreshScriptDecodesBlobBeforeReplacingFallback(t *testin
 	}
 }
 
+func TestInlineSiteIconRefreshScriptFallsBackWhenDirectCachedIconFails(t *testing.T) {
+	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
+	for _, expected := range []string{
+		`querySelectorAll("img[data-site-icon-direct][data-site-icon-fallback-src]")`,
+		`img.addEventListener("error",useFallback,{once:true})`,
+		`img.complete&&img.naturalWidth===0`,
+		`img.src=fallback`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("favicon refresh script should recover failed direct icons with %q: %s", expected, script)
+		}
+	}
+}
+
+func TestInlineSiteIconRefreshScriptSupportsDefaultModeFallbacks(t *testing.T) {
+	if script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingBlank})); script == "" {
+		t.Fatal("default icon mode should include the site icon fallback script")
+	}
+	if script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeHidden})); script != "" {
+		t.Fatalf("hidden icon mode should omit the site icon fallback script, got %s", script)
+	}
+}
+
 func TestInlineSiteIconRefreshScriptReplacesInlineFallbackAfterDecode(t *testing.T) {
 	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
 	for _, expected := range []string{

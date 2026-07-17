@@ -50,6 +50,7 @@ var (
 		CheckRedirect: validateSiteFaviconRedirect,
 	}
 	siteIconInflight      sync.Map
+	siteIconValidated     sync.Map
 	siteIconWarmLimiter   = make(chan struct{}, siteIconWarmLimit)
 	siteIconFetchLimiter  = make(chan struct{}, siteIconWarmLimit)
 	siteIconDecodeLimiter = make(chan struct{}, siteIconDecodeLimit)
@@ -103,12 +104,56 @@ func GetSiteFaviconAssetURLFast(bookmarkLink string) string {
 		return ""
 	}
 	if isProxyableSiteFaviconURL(iconURL) {
-		if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
+		if hasValidatedSiteFaviconFast(iconURL) {
 			return siteIconProxyURL(iconURL)
 		}
 		return ""
 	}
 	return iconURL
+}
+
+type siteIconCacheStamp struct {
+	size             int64
+	modifiedUnixNano int64
+}
+
+func siteIconStamp(info os.FileInfo) (siteIconCacheStamp, bool) {
+	if info == nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > siteIconMaxBytes {
+		return siteIconCacheStamp{}, false
+	}
+	return siteIconCacheStamp{
+		size:             info.Size(),
+		modifiedUnixNano: info.ModTime().UnixNano(),
+	}, true
+}
+
+func hasValidatedSiteFaviconFast(iconURL string) bool {
+	cachePath, err := siteFaviconCachePath(iconURL)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(cachePath)
+	if err != nil {
+		siteIconValidated.Delete(cachePath)
+		return false
+	}
+	stamp, ok := siteIconStamp(info)
+	if !ok {
+		siteIconValidated.Delete(cachePath)
+		return false
+	}
+	if cached, loaded := siteIconValidated.Load(cachePath); loaded && cached == stamp {
+		return true
+	}
+
+	select {
+	case siteIconDecodeLimiter <- struct{}{}:
+		defer func() { <-siteIconDecodeLimiter }()
+	default:
+		return false
+	}
+	_, _, err = readCachedSiteFaviconFile(cachePath)
+	return err == nil
 }
 
 func siteIconProxyURL(iconURL string) string {
@@ -713,35 +758,55 @@ func readCachedSiteFaviconContext(ctx context.Context, iconURL string) ([]byte, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := acquireSiteIconDecodeSlot(ctx); err != nil {
-		return nil, "", err
-	}
-	defer func() { <-siteIconDecodeLimiter }()
-
 	cachePath, err := siteFaviconCachePath(iconURL)
 	if err != nil {
 		return nil, "", err
 	}
-	file, err := os.Open(cachePath)
-	if err != nil {
+	if _, err := os.Stat(cachePath); err != nil {
+		siteIconValidated.Delete(cachePath)
 		return nil, "", err
 	}
+	if err := acquireSiteIconDecodeSlot(ctx); err != nil {
+		return nil, "", err
+	}
+	defer func() { <-siteIconDecodeLimiter }()
+	return readCachedSiteFaviconFile(cachePath)
+}
+
+func readCachedSiteFaviconFile(cachePath string) ([]byte, string, error) {
+	file, err := os.Open(cachePath)
+	if err != nil {
+		siteIconValidated.Delete(cachePath)
+		return nil, "", err
+	}
+	info, statErr := file.Stat()
 	data, readErr := io.ReadAll(io.LimitReader(file, siteIconMaxBytes+1))
 	closeErr := file.Close()
+	if statErr != nil {
+		siteIconValidated.Delete(cachePath)
+		return nil, "", statErr
+	}
 	if readErr != nil {
+		siteIconValidated.Delete(cachePath)
 		return nil, "", readErr
 	}
 	if closeErr != nil {
+		siteIconValidated.Delete(cachePath)
 		return nil, "", closeErr
 	}
 	if len(data) > siteIconMaxBytes {
+		siteIconValidated.Delete(cachePath)
 		_ = os.Remove(cachePath)
 		return nil, "", fmt.Errorf("cached favicon too large")
 	}
 	contentType, ok := detectSiteFaviconContentType(data, "")
 	if !ok {
+		siteIconValidated.Delete(cachePath)
 		_ = os.Remove(cachePath)
 		return nil, "", fmt.Errorf("unexpected cached content type")
+	}
+	if stamp, ok := siteIconStamp(info); ok {
+		siteIconValidated.Store(cachePath, stamp)
 	}
 	return data, contentType, nil
 }
