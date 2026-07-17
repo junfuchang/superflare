@@ -19,14 +19,16 @@
 
 ---
 
-### Task 1: Add Failing Editor Template Contracts
+### Task 1: Fix Row Alignment and Link Check Height
 
 **Files:**
 - Modify: `internal/resources/templates/editor_template_test.go`
+- Modify: `embed/templates/editor.html`
+- Generate: `internal/resources/templates/html/editor.html`
 
 **Interfaces:**
-- Consumes: embedded `TPL` editor template and source `embed/templates/editor.html`.
-- Produces: regression contracts for `syncEditorRowHeaderHeights(instance)`, link-check layout scheduling, and scoped cell alignment.
+- Consumes: embedded `TPL` editor template, source `embed/templates/editor.html`, `fitEditorTableHeight(instance)`, `applyLinkCheckResults(results)`, and Handsontable master/left-clone DOM.
+- Produces: regression contracts plus `syncEditorRowHeaderHeights(instance)`, link-check layout scheduling, and scoped cell alignment.
 
 - [ ] **Step 1: Add the row-header and link-check regression test**
 
@@ -112,20 +114,7 @@ Run:
 
 Expected: FAIL because the row-header helper, link-check schedule, and alignment rules are absent.
 
----
-
-### Task 2: Synchronize Rows, Refit Link Checks, and Align Cells
-
-**Files:**
-- Modify: `embed/templates/editor.html`
-- Generate: `internal/resources/templates/html/editor.html`
-- Test: `internal/resources/templates/editor_template_test.go`
-
-**Interfaces:**
-- Consumes: `fitEditorTableHeight(instance)`, `applyLinkCheckResults(results)`, and Handsontable master/left-clone DOM.
-- Produces: `syncEditorRowHeaderHeights(instance)` and scheduled full-height refitting after link checks.
-
-- [ ] **Step 1: Add scoped cell alignment**
+- [ ] **Step 4: Add scoped cell alignment**
 
 Extend the existing data-cell rule and add a header rule:
 
@@ -146,7 +135,7 @@ Extend the existing data-cell rule and add a header rule:
 }
 ```
 
-- [ ] **Step 2: Add the row-header synchronization helper**
+- [ ] **Step 5: Add the row-header synchronization helper**
 
 Add immediately before `fitEditorTableHeight`:
 
@@ -175,7 +164,7 @@ instance.render();
 syncEditorRowHeaderHeights(instance);
 ```
 
-- [ ] **Step 3: Refit after batched link-check updates**
+- [ ] **Step 6: Refit after batched link-check updates**
 
 At the end of `applyLinkCheckResults`, after rendering, add:
 
@@ -184,7 +173,7 @@ instanceBookmarks.render();
 scheduleTableLayoutSync();
 ```
 
-- [ ] **Step 4: Regenerate the embedded template and verify GREEN**
+- [ ] **Step 7: Regenerate the embedded template and verify GREEN**
 
 Run:
 
@@ -195,7 +184,7 @@ Run:
 
 Expected: PASS with the source and generated templates synchronized.
 
-- [ ] **Step 5: Commit the implementation**
+- [ ] **Step 8: Commit the implementation**
 
 ```powershell
 git add -- embed/templates/editor.html internal/resources/templates/editor_template_test.go internal/resources/templates/html/editor.html
@@ -204,7 +193,7 @@ git commit -m "fix: keep editor rows aligned after updates"
 
 ---
 
-### Task 3: Full Verification and Browser Regression
+### Task 2: Full Verification and Browser Regression
 
 **Files:**
 - Verify only: repository and local `/editor` runtime.
