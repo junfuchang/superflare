@@ -1004,9 +1004,6 @@
             validationFixData: '{{ if eq .Locale "en" }}Fix data first{{ else }}\u8bf7\u5148\u4fee\u6b63\u6570\u636e{{ end }}',
             validationFailed: '{{ if eq .Locale "en" }}Data validation failed{{ else }}\u6570\u636e\u6821\u9a8c\u5931\u8d25{{ end }}'
         };
-        const TABLE_ROW_HEIGHT = 27;
-        const TABLE_HEADER_HEIGHT = 30;
-        const TABLE_FRAME_HEIGHT = 4;
         const TABLE_MAX_COLUMN_WIDTH = 320;
         let categories = JSON.parse(document.getElementById("data-categories").innerHTML) || [];
         const dataBookmarks = JSON.parse(document.getElementById("data-bookmarks").innerHTML) || [];
@@ -1041,10 +1038,6 @@
             item.CheckResult = '';
             return item;
         }).sort((a, b) => (a.Category + "").localeCompare(b.Category + ""));
-
-        function tableHeightForRows(rowCount) {
-            return TABLE_HEADER_HEIGHT + (Math.max(rowCount, 1) * TABLE_ROW_HEIGHT) + TABLE_FRAME_HEIGHT;
-        }
 
         function clampEditorColumnWidth(width) {
             return typeof width === 'number' ? Math.min(width, TABLE_MAX_COLUMN_WIDTH) : width;
@@ -1100,8 +1093,8 @@
             columns: [
                 { data: 'Name', renderer: categoryValidationRenderer },
             ],
-            height: tableHeightForRows(categories.length),
-            renderAllRows: false,
+            height: 'auto',
+            renderAllRows: true,
             autoRowSize: true,
             wordWrap: true,
             manualColumnResize: true,
@@ -1178,8 +1171,6 @@
         const container = document.getElementById('container-bookmarks');
         const dataTableColumns = buildDataTableColumns();
         let tableLayoutFrame = null;
-        let lastCategoryTableHeight = 0;
-        let lastBookmarkTableHeight = 0;
         let searchInvalidateFrame = null;
         let operationNoticeTimer = null;
         const bookmarkSearchState = {
@@ -1198,9 +1189,9 @@
             manualRowMove: true,
             contextMenu: ["row_above", "row_below", "remove_row", "---------", "undo", "redo", "---------", "cut", "copy"],
             columns: dataTableColumns,
-            height: tableHeightForRows(bookmarks.length),
+            height: 'auto',
             stretchH: 'all',
-            renderAllRows: false,
+            renderAllRows: true,
             autoRowSize: true,
             wordWrap: true,
             manualColumnResize: true,
@@ -1315,20 +1306,6 @@
         });
 
         function syncTableLayouts() {
-            const nextCategoryHeight = tableHeightForRows(instanceCategories.countRows());
-            const nextBookmarkHeight = tableHeightForRows(instanceBookmarks.countRows());
-            if (nextCategoryHeight !== lastCategoryTableHeight) {
-                instanceCategories.updateSettings({
-                    height: nextCategoryHeight
-                });
-                lastCategoryTableHeight = nextCategoryHeight;
-            }
-            if (nextBookmarkHeight !== lastBookmarkTableHeight) {
-                instanceBookmarks.updateSettings({
-                    height: nextBookmarkHeight
-                });
-                lastBookmarkTableHeight = nextBookmarkHeight;
-            }
             instanceCategories.render();
             instanceBookmarks.render();
         }
@@ -2195,8 +2172,7 @@
             });
             instanceBookmarks.updateData(bookmarks)
             instanceBookmarks.updateSettings({
-                columns: buildDataTableColumns(),
-                height: tableHeightForRows(bookmarks.length)
+                columns: buildDataTableColumns()
             })
             rebuildBookmarkSearchIndex();
             runBookmarkSearch(searchField.value, false);

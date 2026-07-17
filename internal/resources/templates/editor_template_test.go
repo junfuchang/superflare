@@ -189,6 +189,33 @@ func TestEditorTemplateConstrainsHandsontableCellWidths(t *testing.T) {
 	}
 }
 
+func TestEditorTemplateTablesGrowToRenderedHeight(t *testing.T) {
+	raw, err := TPL.ReadFile("html/editor.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	if got := strings.Count(page, `height: 'auto',`); got != 2 {
+		t.Fatalf("expected both editor tables to use auto height, got %d settings", got)
+	}
+	if got := strings.Count(page, `renderAllRows: true,`); got != 2 {
+		t.Fatalf("expected both editor tables to render all rows, got %d settings", got)
+	}
+	for _, unexpected := range []string{
+		`TABLE_ROW_HEIGHT`,
+		`TABLE_HEADER_HEIGHT`,
+		`TABLE_FRAME_HEIGHT`,
+		`tableHeightForRows`,
+		`lastCategoryTableHeight`,
+		`lastBookmarkTableHeight`,
+	} {
+		if strings.Contains(page, unexpected) {
+			t.Fatalf("editor template should not retain fixed-height behavior %q", unexpected)
+		}
+	}
+}
+
 func TestEditorTemplateSupportsPrivateAndNormalBookmarkFavorites(t *testing.T) {
 	raw, err := TPL.ReadFile("html/editor.html")
 	if err != nil {
