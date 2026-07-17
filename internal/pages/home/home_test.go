@@ -726,15 +726,30 @@ func TestBookmarkTooltipScriptCleansDisconnectedTargets(t *testing.T) {
 	}
 }
 
-func TestBookmarkTooltipScriptResetsOnBookmarkActivation(t *testing.T) {
+func TestBookmarkTooltipScriptSuppressesActivatedTargetUntilInteractionMovesAway(t *testing.T) {
 	script := _inlineBookmarkTooltipScript
 	for _, expected := range []string{
-		`function resetOnActivation(event){if(findTarget(event)){reset();}}`,
+		`var suppressedHoverTarget=null`,
+		`var suppressedFocusTarget=null`,
+		`if(suppressedHoverTarget&&target!==suppressedHoverTarget&&event.target&&event.target.isConnected){suppressedHoverTarget=null;}`,
+		`if(target===suppressedHoverTarget){clearHover();reconcile();return;}`,
+		`if(target===suppressedHoverTarget&&event.relatedTarget&&event.relatedTarget.isConnected){suppressedHoverTarget=null;}`,
+		`if(suppressedFocusTarget&&target!==suppressedFocusTarget&&event.target&&event.target.isConnected){suppressedFocusTarget=null;}`,
+		`if(target===suppressedFocusTarget){focusTarget=null;reconcile();return;}`,
+		`if(target===suppressedFocusTarget&&event.relatedTarget&&event.relatedTarget.isConnected){suppressedFocusTarget=null;}`,
+		`function resetOnActivation(event){var target=findTarget(event);if(!target||(event.type==="auxclick"&&event.button!==1)){return;}suppressedHoverTarget=target;suppressedFocusTarget=target;reset();}`,
 		`document.addEventListener("click",resetOnActivation,true)`,
 		`document.addEventListener("auxclick",resetOnActivation,true)`,
+		`suppressedHoverTarget&&!suppressedHoverTarget.isConnected`,
+		`suppressedFocusTarget&&!suppressedFocusTarget.isConnected`,
 	} {
 		if !strings.Contains(script, expected) {
-			t.Fatalf("tooltip script should reset on bookmark activation with %q: %s", expected, script)
+			t.Fatalf("tooltip script should suppress a reactivated bookmark with %q: %s", expected, script)
+		}
+	}
+	for _, forbidden := range []string{`.blur()`, `preventDefault`, `stopPropagation`} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("tooltip dismissal must not alter bookmark navigation or focus with %q: %s", forbidden, script)
 		}
 	}
 }
