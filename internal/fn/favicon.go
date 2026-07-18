@@ -32,7 +32,7 @@ import (
 
 const (
 	siteIconProxyPath          = "/assets/site-icons"
-	siteIconCacheGeneration    = "2026-07-verified-hosted"
+	siteIconCacheGeneration    = "2026-07-primary-favicon"
 	siteIconCacheDir           = "var/cache/site-icons"
 	siteIconMaxBytes           = 4 * 1024 * 1024
 	siteIconMaxDecodedPixels   = 4 * 1024 * 1024
@@ -47,6 +47,8 @@ const (
 	siteIconHostedHost         = "favicon.im"
 	siteIconHostedAssetHost    = "a.favicon.im"
 	siteIconHostedSourceHeader = "X-Favicon-Source"
+	siteIconPrimaryHostedHost  = "icon.horse"
+	siteIconPrimaryHostedCache = "max-age=2592000"
 )
 
 var (
@@ -291,6 +293,32 @@ func detectSiteFaviconContentType(data []byte, _ string) (string, bool) {
 		return "image/x-icon", true
 	}
 	return "", false
+}
+
+func siteFaviconTransparency(data []byte) (bool, bool) {
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return false, false
+	}
+	bounds := decoded.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, alpha := decoded.At(x, y).RGBA()
+			if alpha < 0xffff {
+				return true, true
+			}
+		}
+	}
+	return false, true
+}
+
+func siteFaviconTransparencyContext(ctx context.Context, data []byte) (bool, bool, error) {
+	if err := acquireSiteIconDecodeSlot(ctx); err != nil {
+		return false, false, err
+	}
+	defer func() { <-siteIconDecodeLimiter }()
+	hasTransparency, known := siteFaviconTransparency(data)
+	return hasTransparency, known, nil
 }
 
 func isStandaloneSVGDocument(data []byte) bool {
@@ -659,7 +687,37 @@ func downloadHostedSiteFavicon(ctx context.Context, rootIconURL string) ([]byte,
 	if hostedURL == "" {
 		return nil, "", fmt.Errorf("verified hosted favicon recovery is unavailable")
 	}
-	return downloadSiteFaviconWithClient(ctx, hostedURL, hostedSiteFaviconHTTPClient(), validateHostedSiteFaviconResponse)
+	data, contentType, err := downloadSiteFaviconWithClient(ctx, hostedURL, hostedSiteFaviconHTTPClient(), validateHostedSiteFaviconResponse)
+	if err != nil {
+		return nil, "", err
+	}
+	data, contentType = refineOpaqueHostedSiteFavicon(ctx, rootIconURL, data, contentType)
+	return data, contentType, nil
+}
+
+func refineOpaqueHostedSiteFavicon(ctx context.Context, rootIconURL string, data []byte, contentType string) ([]byte, string) {
+	hasTransparency, known, err := siteFaviconTransparencyContext(ctx, data)
+	if err != nil || !known || hasTransparency {
+		return data, contentType
+	}
+	primaryURL := primaryHostedSiteFaviconURL(rootIconURL)
+	if primaryURL == "" {
+		return data, contentType
+	}
+	primaryData, primaryType, err := downloadSiteFaviconWithClient(
+		ctx,
+		primaryURL,
+		primaryHostedSiteFaviconHTTPClient(),
+		validatePrimaryHostedSiteFaviconResponse,
+	)
+	if err != nil {
+		return data, contentType
+	}
+	primaryHasTransparency, primaryKnown, err := siteFaviconTransparencyContext(ctx, primaryData)
+	if err != nil || !primaryKnown || !primaryHasTransparency {
+		return data, contentType
+	}
+	return primaryData, primaryType
 }
 
 func downloadSiteFaviconDirect(ctx context.Context, iconURL string) ([]byte, string, error) {
@@ -733,12 +791,8 @@ func isRootHTTPFaviconURL(iconURL string) bool {
 }
 
 func hostedSiteFaviconURL(rootIconURL string) string {
-	u, err := url.Parse(strings.TrimSpace(rootIconURL))
-	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return ""
-	}
-	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(u.Hostname())), ".")
-	if host == "" || HostLooksLocalNetwork(host) || net.ParseIP(host) != nil || isReservedSiteFaviconHost(host) {
+	host := siteFaviconProviderHostname(rootIconURL)
+	if host == "" {
 		return ""
 	}
 	query := url.Values{"throw-error-on-404": {"true"}}
@@ -748,6 +802,30 @@ func hostedSiteFaviconURL(rootIconURL string) string {
 		Path:     "/" + host,
 		RawQuery: query.Encode(),
 	}).String()
+}
+
+func primaryHostedSiteFaviconURL(rootIconURL string) string {
+	host := siteFaviconProviderHostname(rootIconURL)
+	if host == "" {
+		return ""
+	}
+	return (&url.URL{
+		Scheme: "https",
+		Host:   siteIconPrimaryHostedHost,
+		Path:   "/icon/" + host,
+	}).String()
+}
+
+func siteFaviconProviderHostname(rootIconURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rootIconURL))
+	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(u.Hostname())), ".")
+	if host == "" || HostLooksLocalNetwork(host) || net.ParseIP(host) != nil || isReservedSiteFaviconHost(host) {
+		return ""
+	}
+	return host
 }
 
 func isReservedSiteFaviconHost(host string) bool {
@@ -784,6 +862,42 @@ func validateHostedSiteFaviconResponse(resp *http.Response) error {
 		return fmt.Errorf("untrusted hosted favicon source: %q", strings.TrimSpace(source))
 	}
 	return nil
+}
+
+func validatePrimaryHostedSiteFaviconResponse(resp *http.Response) error {
+	if resp == nil {
+		return fmt.Errorf("invalid primary hosted favicon response")
+	}
+	if resp.Request == nil || !isAllowedPrimaryHostedSiteFaviconURL(resp.Request.URL) {
+		return fmt.Errorf("primary hosted favicon response URL is not allowed")
+	}
+	cacheValues := resp.Header.Values("CDN-Cache-Control")
+	if len(cacheValues) != 1 || strings.TrimSpace(cacheValues[0]) != siteIconPrimaryHostedCache {
+		return fmt.Errorf("primary hosted favicon source metadata is not trusted")
+	}
+	etags := resp.Header.Values("ETag")
+	if len(etags) != 1 || !validSiteFaviconEntityTag(etags[0]) {
+		return fmt.Errorf("primary hosted favicon ETag is not trusted")
+	}
+	return nil
+}
+
+func validSiteFaviconEntityTag(value string) bool {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "W/") {
+		value = value[2:]
+	}
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return false
+	}
+	for index := 1; index < len(value)-1; index++ {
+		char := value[index]
+		if char == 0x21 || (char >= 0x23 && char <= 0x7e) || char >= 0x80 {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func discoverSiteFaviconFromHTML(ctx context.Context, rootIconURL string) (string, error) {
@@ -928,6 +1042,10 @@ func validateHostedSiteFaviconRedirect(req *http.Request, via []*http.Request) e
 	return nil
 }
 
+func validatePrimaryHostedSiteFaviconRedirect(_ *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("primary hosted favicon redirects are not allowed")
+}
+
 func isAllowedHostedSiteFaviconURL(u *url.URL) bool {
 	if u == nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" {
 		return false
@@ -943,10 +1061,27 @@ func isAllowedHostedSiteFaviconURL(u *url.URL) bool {
 	return len(query) == 1 && len(query["throw-error-on-404"]) == 1 && query.Get("throw-error-on-404") == "true"
 }
 
+func isAllowedPrimaryHostedSiteFaviconURL(u *url.URL) bool {
+	if u == nil || u.Scheme != "https" || u.Host != siteIconPrimaryHostedHost || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	host := strings.TrimPrefix(u.Path, "/icon/")
+	if host == "" || strings.Contains(host, "/") || u.EscapedPath() != "/icon/"+host {
+		return false
+	}
+	return siteFaviconProviderHostname("https://"+host+"/favicon.ico") == host
+}
+
 func hostedSiteFaviconHTTPClient() *http.Client {
 	client := *siteIconHTTPClient
 	client.Timeout = siteIconHostedTimeout
 	client.CheckRedirect = validateHostedSiteFaviconRedirect
+	return &client
+}
+
+func primaryHostedSiteFaviconHTTPClient() *http.Client {
+	client := *siteIconHTTPClient
+	client.CheckRedirect = validatePrimaryHostedSiteFaviconRedirect
 	return &client
 }
 

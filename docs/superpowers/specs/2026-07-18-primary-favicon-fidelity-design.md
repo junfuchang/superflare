@@ -8,102 +8,124 @@ Status: Approved for implementation
 SuperFlare displays an opaque white-backed icon for `cupfox.love` even though
 the page's primary `rel="icon"` PNG has transparency.
 
-The complete data path shows that SuperFlare does not add the white pixels:
+The complete data path proves that CSS and SuperFlare do not add the white
+pixels:
 
-- the page's first `rel="icon"` is a 256x256 PNG with 45,814 non-opaque
-  pixels;
-- the page's later `apple-touch-icon` is an opaque 180x180 PNG;
+- the page's first `rel="icon"` is an 8,365-byte 256x256 PNG with 45,814
+  non-opaque pixels;
+- the page's later `apple-touch-icon` is an opaque 4,770-byte 180x180 PNG;
 - `favicon.im`, the persistent SuperFlare cache, and the public
-  `/assets/site-icons` response are byte-for-byte equal to that opaque Apple
+  `/assets/site-icons` response are byte-for-byte equal to the opaque Apple
   icon;
-- bookmark CSS leaves both the image and its parent background transparent.
+- bookmark CSS leaves the image and its parent background transparent.
 
-The cache entry was created after the direct root favicon request followed the
-network-error recovery path. That path returns a verified hosted result before
-attempting HTML discovery. Provider provenance proves that an image came from
-the site, but it does not prove that the provider selected the page's primary
-favicon or preserved its alpha channel.
+`favicon.im` proves that its result came from the destination, but it may
+select a secondary Apple icon rather than the page's primary favicon. The Go
+network path in the affected runtime cannot reach the destination HTML, so
+changing HTML/provider ordering alone still returns the opaque provider image.
 
 ## Goals
 
-- Prefer a valid page-declared primary favicon over a verified hosted result,
-  including after direct network and TLS failures.
-- Preserve the existing verified hosted recovery for origins that SuperFlare
-  cannot reach, including `wallhaven.cc` and `wallroom.io`.
-- Keep the existing ten-second request bound imposed by the server's write
-  timeout.
-- Ignore opaque provider-derived cache entries written by the previous
-  generation and repair the stable browser URL once without adding a public
-  version parameter.
+- Preserve transparent primary favicons when the verified hosted baseline
+  selected an opaque secondary icon.
+- Never restore Icon Horse's generated first-letter fallback tiles.
+- Preserve `favicon.im` as the fail-closed availability baseline for
+  `wallhaven.cc`, `wallroom.io`, and other origins SuperFlare cannot reach.
+- Keep the ten-second overall request bound, existing global concurrency
+  ceiling, and sequential network behavior.
+- Invalidate the current opaque server/browser cache once without adding a
+  public version parameter.
 - Keep behavior platform-neutral across Windows, Linux, Docker, and fnapp.
-- Preserve all existing byte, decoded-pixel, redirect, privacy, concurrency,
-  cooldown, and atomic-cache limits.
+- Preserve existing validation, privacy, cooldown, coalescing, and atomic
+  cache behavior.
 
 ## Non-Goals
 
-- Detecting transparency loss with per-site rules, OCR, color thresholds, or
-  image-comparison heuristics.
-- Rewriting an opaque image to manufacture transparent pixels.
+- Site-specific hostname rules or hard-coded icon URLs.
+- Rewriting opaque pixels or guessing a background color to remove.
+- Treating arbitrary provider image validity as proof that an image is real.
 - Contacting a hosted provider for local, private, reserved, IP-address, or
   definitive NXDOMAIN destinations.
-- Changing bookmark or settings schemas.
-- Adding `v` or any other cache-generation parameter to public site-icon URLs.
+- Changing bookmark, application, or settings schemas.
+- Adding `v` or another cache-generation parameter to public site-icon URLs.
 
 ## Approaches Considered
 
 ### Cache Invalidation Only
 
-Bumping the cache generation would fix the currently reachable
-`cupfox.love`, because its ordinary 404 path now discovers the transparent
-HTML icon. A later transient network failure could select and persist the
-opaque hosted image again, so this does not address the root cause.
+This fixes the current cache only when the destination HTML happens to be
+reachable. A later network failure can persist the same opaque hosted icon, so
+the defect recurs.
 
-### Fully Sequential Origin-First Retrieval
+### Concurrent HTML and Hosted Recovery
 
-Always running direct favicon, HTML page, declared icon, and hosted recovery
-in sequence gives deterministic source preference. Their existing per-request
-budgets require up to 18 seconds, while the server has a ten-second write
-timeout. Increasing only the favicon context would therefore produce broken
-responses; increasing the global server timeout would broaden this narrowly
-scoped change.
+The implementation and tests proved deterministic HTML preference, but live
+validation still returned the opaque icon because the Go runtime cannot reach
+the destination HTML at all. The concurrent version also made one chain own
+two active outbound requests and required join semantics beyond the existing
+global concurrency contract. It is not retained.
 
-### Concurrent Recovery with Deterministic HTML Preference
+### Fail-Closed Transparent Primary Refinement
 
-After a direct network-class failure, start HTML discovery and verified hosted
-recovery concurrently. Retain an early hosted success in memory while waiting
-for the HTML branch. Return the HTML-declared icon whenever that branch
-succeeds within the existing overall deadline. Return the retained hosted icon
-only after the HTML branch fails or the deadline expires.
+Keep the existing verified `favicon.im` result as a trusted baseline. Only
+when that baseline is a decodable raster with no non-opaque pixels, request one
+Icon Horse candidate. Replace the baseline only when the candidate passes both
+provider-source and pixel-fidelity checks.
 
-This approach is selected because it reserves the provider's full remaining
-budget without allowing response timing to override source quality.
+Live evidence supports this approach:
+
+- Icon Horse returns the exact 8,365-byte transparent primary PNG for
+  `cupfox.love` and the exact origin ICO bytes for Wallhaven and Wallroom.
+- A nonexistent domain returns an opaque generated first-letter tile.
+- Real cached icons include exactly `CDN-Cache-Control: max-age=2592000` and a
+  non-empty ETag; generated fallbacks omit both and use a short shared-cache
+  lifetime.
+- Icon Horse is reachable through the same Go transport that cannot reach the
+  destination HTML.
+
+The metadata is treated as a strict positive allowlist, not a heuristic. If it
+is absent, duplicated, malformed, or changes in the future, refinement fails
+closed and SuperFlare retains the already verified `favicon.im` baseline.
 
 ## Retrieval Flow
 
-For a root HTTP(S) favicon URL:
+The ordinary root favicon flow remains:
 
-1. Read the validated current-generation persistent cache.
+1. Read the validated persistent cache.
 2. Fetch the destination's `/favicon.ico` directly.
-3. Stop immediately on definitive NXDOMAIN without contacting HTML or a
-   provider.
-4. For a network, TLS, EOF, or timeout failure, start two bounded branches:
-   HTML discovery plus declared-icon download, and verified hosted recovery.
-5. If the HTML branch returns a valid icon, cancel the hosted branch and use
-   the HTML bytes regardless of which branch completed first.
-6. If the HTML branch fails, use an already successful hosted result or wait
-   for the hosted branch within the existing overall context.
-7. If the overall context ends after hosted success but before HTML success,
-   use the retained hosted result. No new work continues after return.
-8. For non-network direct failures, preserve the existing sequential order:
-   HTML discovery first, then one hosted attempt.
-9. If all eligible paths fail, return the existing aggregate error so the
-   route serves the built-in bookmark SVG with `no-store`.
+3. Stop on definitive NXDOMAIN without contacting any provider.
+4. For network, TLS, EOF, or timeout failures, try verified `favicon.im`
+   recovery before HTML, preserving its remaining timeout budget.
+5. For other failures, try bounded HTML discovery and the declared icon before
+   verified hosted recovery.
+6. If all eligible paths fail, let the route serve the built-in bookmark SVG
+   with `no-store`.
 
-Each recovery goroutine writes to a capacity-one result channel and shares a
-cancelable child context. The coordinator is the only owner of result
-selection, so a hosted success cannot be cached while a successful HTML result
-is available. Cancellation and buffered delivery prevent blocked senders or
-orphaned request work.
+Every successful `favicon.im` result then passes through an optional quality
+refinement:
+
+1. Decode the already validated baseline and scan until a non-opaque pixel is
+   found.
+2. If transparency is present or cannot be determined, retain the baseline and
+   make no additional request.
+3. If the baseline is definitely fully opaque, construct
+   `https://icon.horse/icon/<public-hostname>`.
+4. Reject redirects; the final URL must remain HTTPS on exactly `icon.horse`,
+   with the normalized destination hostname as its only escaped path segment
+   and no query, port, or userinfo.
+5. Require exactly one `CDN-Cache-Control` value equal to
+   `max-age=2592000` and exactly one non-empty ETag.
+6. Apply the existing status, byte, decoded-pixel, SVG/ICO, and supported-image
+   validation to the body.
+7. Decode the candidate and require at least one non-opaque pixel.
+8. Use the candidate only when every check succeeds. Otherwise retain the
+   verified baseline without turning a quality-refinement failure into a
+   broken icon.
+
+The two providers are contacted sequentially inside the existing chain-level
+fetch slot. No new goroutines or additional concurrency slots are introduced.
+Both receive only the normalized public hostname, never bookmark paths,
+queries, fragments, credentials, descriptions, or local addresses.
 
 ## Cache Compatibility
 
@@ -114,41 +136,45 @@ generation-aware key.
 The browser repair marker changes from
 `superflare.site-icon.verified-hosted:` to
 `superflare.site-icon.primary-favicon:`. The existing grouped
-`fetch(src, {cache: "reload"})` then replaces an old immutable browser response
-once per source after the new server response decodes successfully.
+`fetch(src, {cache: "reload"})` replaces an old immutable browser response once
+after the corrected server response decodes.
 
 The public route remains exactly `/assets/site-icons?src=...`, with no `v`
-parameter or schema migration.
+parameter and no configuration migration.
 
-## Error and Security Behavior
+## Failure and Security Behavior
 
-- Both branches retain the same source validation and redirect policies.
-- Provider responses still require exactly one trusted
-  `X-Favicon-Source` value and an approved final provider URL.
-- A provider failure is retained in the aggregate error when HTML also fails.
-- A successful HTML result suppresses provider errors and is the only result
-  written to the destination cache.
-- Only a final failed chain records the existing five-minute cooldown.
-- Existing in-flight coalescing and global fetch/decode limits remain in
-  force; the two branch requests still share the caller's overall context.
+- The trusted `favicon.im` baseline retains its current strict URL, redirect,
+  and `X-Favicon-Source` validation.
+- Icon Horse is never contacted unless that trusted baseline already proved
+  the public destination has a real icon and the baseline is fully opaque.
+- A generated or unverifiable Icon Horse body is never cached or exposed.
+- A quality-refinement failure does not record a cooldown because the trusted
+  baseline remains a successful result.
+- Only the final selected bytes are written atomically under the original
+  destination key.
+- Existing in-flight coalescing and the eight-chain global fetch limit remain
+  unchanged.
 
 ## Verification
 
 Automated tests will prove:
 
-- after a direct network failure, a transparent HTML-declared PNG wins over an
-  earlier successful opaque hosted PNG;
-- the hosted and HTML branches are both started for eligible network recovery,
-  while selection remains deterministic rather than completion-order based;
-- hosted recovery still succeeds when the HTML branch fails;
-- NXDOMAIN and non-public destinations retain their privacy behavior;
-- non-network direct failures retain HTML-first sequential ordering;
-- the previous cache generation is ignored;
-- the browser repair prefix changes while public URLs remain free of `v`;
+- an opaque trusted baseline is replaced by a strictly validated transparent
+  primary candidate;
+- transparent trusted baselines never contact Icon Horse;
+- short-cache first-letter fallback responses, missing/duplicate source
+  headers, blank ETags, redirects, invalid bodies, and opaque candidates are
+  rejected while retaining the trusted baseline;
+- private, local, reserved, IP-address, and NXDOMAIN destinations are never
+  sent to either provider;
+- Wallhaven/Wallroom hosted recovery and the ten-second timeout remain intact;
+- the previous server cache and browser marker generations are ignored;
+- public site-icon URLs remain free of `v` parameters;
 - focused tests, full tests, build, touched-package vet, formatting, and diff
   checks pass.
 
-Rendered verification will use a freshly built local server and confirm that
-`cupfox.love` resolves to the 8,365-byte transparent primary PNG, while
-`wallhaven.cc` and `wallroom.io` still return valid cached icons and a
-nonexistent destination still returns the built-in fallback.
+Live verification will use a freshly built server. `cupfox.love` must return
+the 8,365-byte transparent PNG, Wallhaven and Wallroom must retain their valid
+ICO responses, and a nonexistent destination must retain the built-in SVG
+fallback.

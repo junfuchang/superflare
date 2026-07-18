@@ -1516,7 +1516,7 @@ func TestInlineSiteIconRefreshScriptFallsBackWhenDirectCachedIconFails(t *testin
 func TestInlineSiteIconRefreshScriptRepairsLegacyDirectBrowserCacheOncePerSource(t *testing.T) {
 	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
 	for _, expected := range []string{
-		`var repairKeyPrefix="superflare.site-icon.verified-hosted:"`,
+		`var repairKeyPrefix="superflare.site-icon.primary-favicon:"`,
 		`window.localStorage.getItem(repairKeyPrefix+src)`,
 		`window.localStorage.setItem(repairKeyPrefix+src,"1")`,
 		`node.dataset.siteIconSrc||node.getAttribute("src")`,
@@ -1526,6 +1526,9 @@ func TestInlineSiteIconRefreshScriptRepairsLegacyDirectBrowserCacheOncePerSource
 		if !strings.Contains(script, expected) {
 			t.Fatalf("favicon refresh script should repair legacy direct cache with %q: %s", expected, script)
 		}
+	}
+	if strings.Contains(script, `superflare.site-icon.verified-hosted:`) {
+		t.Fatalf("favicon refresh script should not retain the verified-hosted repair generation: %s", script)
 	}
 	if got := strings.Count(script, `fetch(src,{cache:"reload"})`); got != 1 {
 		t.Fatalf("direct and asynchronous repairs should share one grouped reload fetch, got %d: %s", got, script)

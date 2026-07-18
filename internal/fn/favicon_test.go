@@ -161,6 +161,28 @@ func TestReadCachedSiteFaviconIgnoresOriginOnlyGeneration(t *testing.T) {
 	}
 }
 
+func TestReadCachedSiteFaviconIgnoresVerifiedHostedGeneration(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
+
+	iconURL := "https://verified-hosted-generation.test-domain.com/favicon.ico"
+	previousSum := sha256.Sum256([]byte("2026-07-verified-hosted" + "\x00" + strings.TrimSpace(iconURL)))
+	previousKey := fmt.Sprintf("%x", previousSum)
+	previousPath := filepath.Join(siteIconCacheDir, previousKey+".bin")
+	if err := os.MkdirAll(filepath.Dir(previousPath), 0755); err != nil {
+		t.Fatalf("MkdirAll cache: %v", err)
+	}
+	if err := os.WriteFile(previousPath, encodeTestFavicon(t, "png"), 0644); err != nil {
+		t.Fatalf("WriteFile verified-hosted cache: %v", err)
+	}
+
+	if _, _, err := readCachedSiteFavicon(iconURL); err == nil {
+		t.Fatal("verified-hosted cache generation should be ignored")
+	}
+	if got := SiteFaviconCacheKeyForTest(iconURL); got == previousKey {
+		t.Fatal("primary-favicon cache key should differ from the verified-hosted generation")
+	}
+}
+
 func TestGetSiteFaviconAssetURLDoesNotStartDuplicateBackgroundFetch(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -574,6 +596,19 @@ func encodeTestFaviconSize(t *testing.T, format string, width int, height int) [
 	}
 	if err != nil {
 		t.Fatalf("encode %s favicon: %v", format, err)
+	}
+	return out.Bytes()
+}
+
+func encodeOpaqueTestPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	for index := 3; index < len(img.Pix); index += 4 {
+		img.Pix[index] = 0xff
+	}
+	var out bytes.Buffer
+	if err := png.Encode(&out, img); err != nil {
+		t.Fatalf("encode opaque png favicon: %v", err)
 	}
 	return out.Bytes()
 }
@@ -1351,6 +1386,164 @@ func TestHostedSiteFaviconURLUsesOnlyPublicDomainNames(t *testing.T) {
 	}
 }
 
+func TestPrimaryHostedSiteFaviconURLUsesOnlyPublicDomainNames(t *testing.T) {
+	if got := primaryHostedSiteFaviconURL("https://cupfox.love/favicon.ico"); got != "https://icon.horse/icon/cupfox.love" {
+		t.Fatalf("public primary hosted favicon URL = %q", got)
+	}
+	for _, input := range []string{
+		"http://192.168.1.20/favicon.ico",
+		"https://localhost/favicon.ico",
+		"https://nas.local/favicon.ico",
+		"https://intranet/favicon.ico",
+		"https://example.com/favicon.ico",
+		"https://sub.example.net/favicon.ico",
+		"https://example.invalid/favicon.ico",
+		"https://service.test/favicon.ico",
+		"https://icon.example/favicon.ico",
+		"https://service.internal/favicon.ico",
+		"https://hidden.onion/favicon.ico",
+		"https://preview.alt/favicon.ico",
+	} {
+		if got := primaryHostedSiteFaviconURL(input); got != "" {
+			t.Fatalf("private primary hosted favicon URL for %q = %q, want empty", input, got)
+		}
+	}
+}
+
+func TestValidatePrimaryHostedSiteFaviconResponseRequiresLongLivedSourceMetadata(t *testing.T) {
+	trustedRequest := mustSiteFaviconRequest(t, "https://icon.horse/icon/cupfox.love")
+	validHeader := http.Header{
+		"Cdn-Cache-Control": []string{"max-age=2592000"},
+		"Etag":              []string{`"primary-icon"`},
+	}
+	if err := validatePrimaryHostedSiteFaviconResponse(&http.Response{Header: validHeader, Request: trustedRequest}); err != nil {
+		t.Fatalf("valid primary hosted response rejected: %v", err)
+	}
+	weakHeader := http.Header{
+		"Cdn-Cache-Control": []string{"max-age=2592000"},
+		"Etag":              []string{`W/"primary-icon"`},
+	}
+	if err := validatePrimaryHostedSiteFaviconResponse(&http.Response{Header: weakHeader, Request: trustedRequest}); err != nil {
+		t.Fatalf("valid weak primary hosted ETag rejected: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		header  http.Header
+		request *http.Request
+	}{
+		{name: "missing-source", header: http.Header{"Etag": []string{`"primary-icon"`}}, request: trustedRequest},
+		{name: "wrong-source", header: http.Header{"Cdn-Cache-Control": []string{"max-age=300"}, "Etag": []string{`"primary-icon"`}}, request: trustedRequest},
+		{name: "duplicate-source", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000", "max-age=2592000"}, "Etag": []string{`"primary-icon"`}}, request: trustedRequest},
+		{name: "missing-etag", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000"}}, request: trustedRequest},
+		{name: "blank-etag", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{" "}}, request: trustedRequest},
+		{name: "duplicate-etag", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{`"one"`, `"two"`}}, request: trustedRequest},
+		{name: "malformed-etag", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{"garbage"}}, request: trustedRequest},
+		{name: "incomplete-weak-etag", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{"W/"}}, request: trustedRequest},
+		{name: "combined-etag", header: http.Header{"Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{`"one", "two"`}}, request: trustedRequest},
+		{name: "wrong-host", header: validHeader, request: mustSiteFaviconRequest(t, "https://evil.example/icon/cupfox.love")},
+		{name: "wrong-path", header: validHeader, request: mustSiteFaviconRequest(t, "https://icon.horse/other/cupfox.love")},
+		{name: "query", header: validHeader, request: mustSiteFaviconRequest(t, "https://icon.horse/icon/cupfox.love?fallback=true")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validatePrimaryHostedSiteFaviconResponse(&http.Response{Header: tt.header, Request: tt.request}); err == nil {
+				t.Fatal("untrusted primary hosted response should be rejected")
+			}
+		})
+	}
+	if err := validatePrimaryHostedSiteFaviconResponse(nil); err == nil {
+		t.Fatal("nil primary hosted response should be rejected")
+	}
+}
+
+func TestValidatePrimaryHostedSiteFaviconRedirectRejectsEveryRedirect(t *testing.T) {
+	initial := mustSiteFaviconRequest(t, "https://icon.horse/icon/cupfox.love")
+	redirect := mustSiteFaviconRequest(t, "https://icon.horse/icon/www.cupfox.love")
+	if err := validatePrimaryHostedSiteFaviconRedirect(redirect, []*http.Request{initial}); err == nil {
+		t.Fatal("primary hosted favicon redirect should be rejected")
+	}
+}
+
+func TestSiteFaviconTransparency(t *testing.T) {
+	if hasTransparency, known := siteFaviconTransparency(encodeTestFavicon(t, "png")); !known || !hasTransparency {
+		t.Fatal("transparent PNG should report transparency")
+	}
+	if hasTransparency, known := siteFaviconTransparency(encodeOpaqueTestPNG(t)); !known || hasTransparency {
+		t.Fatal("opaque PNG should not report transparency")
+	}
+	if hasTransparency, known := siteFaviconTransparency([]byte("not an image")); known || hasTransparency {
+		t.Fatal("invalid image should not report transparency")
+	}
+}
+
+func TestRefineOpaqueHostedSiteFaviconHonorsDecodeLimit(t *testing.T) {
+	opaquePNG := encodeOpaqueTestPNG(t)
+	transparentPNG := encodeTestFavicon(t, "png")
+	for index := 0; index < cap(siteIconDecodeLimiter); index++ {
+		siteIconDecodeLimiter <- struct{}{}
+	}
+	defer func() {
+		for index := 0; index < cap(siteIconDecodeLimiter); index++ {
+			<-siteIconDecodeLimiter
+		}
+	}()
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	var primaryRequests int32
+	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&primaryRequests, 1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type":      []string{"image/png"},
+				"Cdn-Cache-Control": []string{"max-age=2592000"},
+				"Etag":              []string{`"primary-icon"`},
+			},
+			Body:    io.NopCloser(bytes.NewReader(transparentPNG)),
+			Request: req,
+		}, nil
+	})}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	data, contentType := refineOpaqueHostedSiteFavicon(ctx, "https://decode-limit.test-domain.com/favicon.ico", opaquePNG, "image/png")
+	if contentType != "image/png" || !bytes.Equal(data, opaquePNG) {
+		t.Fatalf("busy decode limiter should retain the trusted baseline, type=%q data=%x", contentType, data)
+	}
+	if got := atomic.LoadInt32(&primaryRequests); got != 0 {
+		t.Fatalf("busy decode limiter allowed %d primary hosted requests, want 0", got)
+	}
+}
+
+func TestRefineOpaqueHostedSiteFaviconRetainsBaselineOnPrimaryTimeout(t *testing.T) {
+	opaquePNG := encodeOpaqueTestPNG(t)
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	var primaryRequests int32
+	siteIconHTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&primaryRequests, 1)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	data, contentType := refineOpaqueHostedSiteFavicon(ctx, "https://primary-timeout.test-domain.com/favicon.ico", opaquePNG, "image/png")
+	elapsed := time.Since(started)
+	if contentType != "image/png" || !bytes.Equal(data, opaquePNG) {
+		t.Fatalf("primary timeout should retain the trusted baseline, type=%q data=%x", contentType, data)
+	}
+	if got := atomic.LoadInt32(&primaryRequests); got != 1 {
+		t.Fatalf("primary timeout requests = %d, want 1", got)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("primary timeout took %v, want less than 1s", elapsed)
+	}
+}
+
 func TestTrustedHostedSiteFaviconSourcesFailClosed(t *testing.T) {
 	for _, source := range []string{"origin", " cache-fresh ", "CACHE-STALE"} {
 		if !isTrustedHostedSiteFaviconSource(source) {
@@ -1469,6 +1662,197 @@ func TestShouldPreferHostedSiteFaviconAcceptsTLSVerificationFailure(t *testing.T
 	if !shouldPreferHostedSiteFavicon(err) {
 		t.Fatal("TLS verification failure should use early verified hosted recovery")
 	}
+}
+
+func TestFetchPublicSiteFaviconRefinesOpaqueHostedIconWithTransparentPrimary(t *testing.T) {
+	withSiteIconTempWorkingDir(t)
+
+	oldClient := siteIconHTTPClient
+	defer func() { siteIconHTTPClient = oldClient }()
+	host := "primary-icon.test-domain.com"
+	transparentPNG := encodeTestFavicon(t, "png")
+	opaquePNG := encodeOpaqueTestPNG(t)
+	var htmlRequests int32
+	var verifiedHostedRequests int32
+	var primaryHostedRequests int32
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch {
+			case req.URL.Host == host && req.URL.Path == "/favicon.ico":
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+			case req.URL.Host == host && req.URL.Path == "/":
+				atomic.AddInt32(&htmlRequests, 1)
+				return nil, fmt.Errorf("network recovery should not wait for destination HTML")
+			case req.URL.Host == siteIconHostedHost:
+				atomic.AddInt32(&verifiedHostedRequests, 1)
+				return &http.Response{
+					StatusCode: http.StatusFound,
+					Header:     http.Header{"Location": []string{"https://a.favicon.im/" + host + "?throw-error-on-404=true"}},
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			case req.URL.Host == siteIconHostedAssetHost:
+				atomic.AddInt32(&verifiedHostedRequests, 1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header: http.Header{
+						"Content-Type":     []string{"image/png"},
+						"X-Favicon-Source": []string{"cache-fresh"},
+					},
+					Body:    io.NopCloser(bytes.NewReader(opaquePNG)),
+					Request: req,
+				}, nil
+			case req.URL.Host == "icon.horse" && req.URL.Path == "/icon/"+host:
+				atomic.AddInt32(&primaryHostedRequests, 1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header: http.Header{
+						"Content-Type":      []string{"image/png"},
+						"Cdn-Cache-Control": []string{"max-age=2592000"},
+						"Etag":              []string{`"primary-icon"`},
+					},
+					Body:    io.NopCloser(bytes.NewReader(transparentPNG)),
+					Request: req,
+				}, nil
+			default:
+				return nil, fmt.Errorf("unexpected favicon request URL: %s", req.URL)
+			}
+		}),
+	}
+
+	iconURL := "https://" + host + "/favicon.ico"
+	data, contentType, err := FetchPublicSiteFavicon(iconURL)
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon: %v", err)
+	}
+	if contentType != "image/png" || !bytes.Equal(data, transparentPNG) {
+		t.Fatalf("opaque hosted icon should be refined with the transparent primary, type=%q data=%x", contentType, data)
+	}
+	if bytes.Equal(data, opaquePNG) {
+		t.Fatal("network recovery retained the opaque hosted baseline")
+	}
+	if got := atomic.LoadInt32(&htmlRequests); got != 0 {
+		t.Fatalf("destination HTML requests = %d, want 0", got)
+	}
+	if got := atomic.LoadInt32(&verifiedHostedRequests); got != 2 {
+		t.Fatalf("verified hosted requests = %d, want redirect and asset", got)
+	}
+	if got := atomic.LoadInt32(&primaryHostedRequests); got != 1 {
+		t.Fatalf("primary hosted requests = %d, want 1", got)
+	}
+
+	cached, _, err := readCachedSiteFavicon(iconURL)
+	if err != nil || !bytes.Equal(cached, transparentPNG) {
+		t.Fatalf("transparent primary icon was not cached: err=%v data=%x", err, cached)
+	}
+}
+
+func TestFetchPublicSiteFaviconRejectsUnverifiedPrimaryRefinement(t *testing.T) {
+	transparentPNG := encodeTestFavicon(t, "png")
+	opaquePNG := encodeOpaqueTestPNG(t)
+	validHeader := http.Header{
+		"Content-Type":      []string{"image/png"},
+		"Cdn-Cache-Control": []string{"max-age=2592000"},
+		"Etag":              []string{`"primary-icon"`},
+	}
+	tests := []struct {
+		name       string
+		statusCode int
+		header     http.Header
+		body       []byte
+	}{
+		{
+			name:       "short-cache-letter",
+			statusCode: http.StatusOK,
+			header: http.Header{
+				"Content-Type":  []string{"image/png"},
+				"Cache-Control": []string{"public, max-age=604800, s-maxage=300, stale-while-revalidate=3600"},
+			},
+			body: opaquePNG,
+		},
+		{name: "missing-source", statusCode: http.StatusOK, header: http.Header{"Content-Type": []string{"image/png"}, "Etag": []string{`"primary-icon"`}}, body: transparentPNG},
+		{name: "blank-etag", statusCode: http.StatusOK, header: http.Header{"Content-Type": []string{"image/png"}, "Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{" "}}, body: transparentPNG},
+		{name: "malformed-etag", statusCode: http.StatusOK, header: http.Header{"Content-Type": []string{"image/png"}, "Cdn-Cache-Control": []string{"max-age=2592000"}, "Etag": []string{"garbage"}}, body: transparentPNG},
+		{name: "duplicate-source", statusCode: http.StatusOK, header: http.Header{"Content-Type": []string{"image/png"}, "Cdn-Cache-Control": []string{"max-age=2592000", "max-age=2592000"}, "Etag": []string{`"primary-icon"`}}, body: transparentPNG},
+		{name: "opaque-candidate", statusCode: http.StatusOK, header: validHeader, body: opaquePNG},
+		{name: "invalid-image", statusCode: http.StatusOK, header: validHeader, body: []byte("not an image")},
+		{name: "not-found", statusCode: http.StatusNotFound, header: validHeader, body: transparentPNG},
+		{name: "redirect", statusCode: http.StatusFound, header: http.Header{"Location": []string{"https://evil.example/icon/refinement.test-domain.com"}}, body: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseline := encodeOpaqueTestPNG(t)
+			data, contentType, primaryRequests := fetchHostedRefinementCandidateForTest(t, baseline, tt.statusCode, tt.header, tt.body)
+			if contentType != "image/png" || !bytes.Equal(data, baseline) {
+				t.Fatalf("unverified primary candidate replaced trusted baseline, type=%q data=%x", contentType, data)
+			}
+			if primaryRequests != 1 {
+				t.Fatalf("primary hosted requests = %d, want 1", primaryRequests)
+			}
+		})
+	}
+}
+
+func TestFetchPublicSiteFaviconSkipsPrimaryRefinementForTransparentHostedIcon(t *testing.T) {
+	baseline := encodeTestFavicon(t, "png")
+	validHeader := http.Header{
+		"Content-Type":      []string{"image/png"},
+		"Cdn-Cache-Control": []string{"max-age=2592000"},
+		"Etag":              []string{`"primary-icon"`},
+	}
+	data, contentType, primaryRequests := fetchHostedRefinementCandidateForTest(t, baseline, http.StatusOK, validHeader, baseline)
+	if contentType != "image/png" || !bytes.Equal(data, baseline) {
+		t.Fatalf("transparent hosted baseline changed, type=%q data=%x", contentType, data)
+	}
+	if primaryRequests != 0 {
+		t.Fatalf("transparent hosted baseline made %d primary requests, want 0", primaryRequests)
+	}
+}
+
+func fetchHostedRefinementCandidateForTest(t *testing.T, baseline []byte, primaryStatus int, primaryHeader http.Header, primaryBody []byte) ([]byte, string, int32) {
+	t.Helper()
+	withSiteIconTempWorkingDir(t)
+
+	oldClient := siteIconHTTPClient
+	t.Cleanup(func() { siteIconHTTPClient = oldClient })
+	host := strings.ToLower("refinement-" + strings.ReplaceAll(t.Name(), "/", "-") + ".test-domain.com")
+	var primaryRequests int32
+	siteIconHTTPClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			switch {
+			case req.URL.Host == host && req.URL.Path == "/favicon.ico":
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+			case req.URL.Host == siteIconHostedHost:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header: http.Header{
+						"Content-Type":     []string{"image/png"},
+						"X-Favicon-Source": []string{"cache-fresh"},
+					},
+					Body:    io.NopCloser(bytes.NewReader(baseline)),
+					Request: req,
+				}, nil
+			case req.URL.Host == siteIconPrimaryHostedHost && req.URL.Path == "/icon/"+host:
+				atomic.AddInt32(&primaryRequests, 1)
+				return &http.Response{
+					StatusCode: primaryStatus,
+					Header:     primaryHeader.Clone(),
+					Body:       io.NopCloser(bytes.NewReader(primaryBody)),
+					Request:    req,
+				}, nil
+			default:
+				return nil, fmt.Errorf("unexpected favicon request URL: %s", req.URL)
+			}
+		}),
+	}
+
+	data, contentType, err := FetchPublicSiteFavicon("https://" + host + "/favicon.ico")
+	if err != nil {
+		t.Fatalf("FetchPublicSiteFavicon: %v", err)
+	}
+	return data, contentType, atomic.LoadInt32(&primaryRequests)
 }
 
 func mustSiteFaviconRequest(t *testing.T, rawURL string) *http.Request {
