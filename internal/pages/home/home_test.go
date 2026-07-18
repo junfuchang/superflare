@@ -1516,7 +1516,7 @@ func TestInlineSiteIconRefreshScriptFallsBackWhenDirectCachedIconFails(t *testin
 func TestInlineSiteIconRefreshScriptRepairsLegacyDirectBrowserCacheOncePerSource(t *testing.T) {
 	script := string(inlineSiteIconRefreshScript(model.Application{IconMode: define.IconModeMissingFill}))
 	for _, expected := range []string{
-		`var repairKeyPrefix="superflare.site-icon.origin-only:"`,
+		`var repairKeyPrefix="superflare.site-icon.verified-hosted:"`,
 		`window.localStorage.getItem(repairKeyPrefix+src)`,
 		`window.localStorage.setItem(repairKeyPrefix+src,"1")`,
 		`node.dataset.siteIconSrc||node.getAttribute("src")`,

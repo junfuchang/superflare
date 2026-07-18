@@ -15,7 +15,7 @@
 - Provider `default`, missing/unknown provenance, non-2xx status, invalid image, and unsafe redirect responses must retain the built-in bookmark SVG.
 - Never send local, private, IP-address, reserved, or definitive NXDOMAIN hosts to a provider.
 - Provider redirects are HTTPS-only and limited to `favicon.im` and `a.favicon.im` with unchanged path and strict-mode query.
-- Keep the eight-second overall deadline, four-second request timeout, 4 MiB body limit, 4-megapixel decoded limit, 512 KiB HTML scan, five-minute failure cooldown, 1024 failure-entry limit, in-flight coalescing, and atomic success cache.
+- Keep a ten-second overall deadline, four-second origin timeout, six-second hosted timeout, 4 MiB body limit, 4-megapixel decoded limit, 512 KiB HTML scan, five-minute failure cooldown, 1024 failure-entry limit, in-flight coalescing, and atomic success cache.
 - Do not add configuration fields, migrations, platform-specific proxy discovery, or public `v` parameters.
 - Preserve user-owned `fnapp/superflare/manifest` and `tools/superflare-icon.zip` changes.
 - Work directly on local `main`; do not push.
@@ -122,8 +122,8 @@ func isTrustedHostedSiteFaviconSource(source string) bool {
 }
 ```
 
-`validateHostedSiteFaviconResponse` must reject nil responses and any source
-outside that allowlist.
+`validateHostedSiteFaviconResponse` must reject nil responses, duplicate source
+headers, and any source outside that allowlist.
 
 - [ ] **Step 4: Run the provider contract tests and verify GREEN**
 
@@ -192,7 +192,7 @@ Run the Step 2 command again. Expected: PASS.
 - Modify: `internal/fn/favicon.go`
 
 **Interfaces:**
-- Produces: `downloadHostedSiteFavicon(context.Context, string) ([]byte, string, error)`, `shouldPreferHostedSiteFavicon(error) bool`, and a shared response-download helper.
+- Produces: `downloadHostedSiteFavicon(context.Context, string) ([]byte, string, error)`, `shouldPreferHostedSiteFavicon(error) bool`, `siteIconHostedTimeout`, and a shared response-download helper.
 - Consumes: provider helpers from Tasks 1-2 and existing direct/HTML fetch functions.
 
 - [ ] **Step 1: Add verified success and ordering RED tests**
@@ -224,6 +224,17 @@ destination cache file, and retain the provider request in the aggregate error.
 For a direct 404, return HTML declaring `/real.svg`, serve a valid SVG there,
 and fail the test if any provider host is contacted. This locks in origin HTML
 preference for non-network failures.
+
+Also cover favicon redirects rejected for userinfo or a non-HTTP(S) scheme.
+Mark all ordinary redirect policy failures with `errSiteFaviconRedirectRejected` and make
+`shouldPreferHostedSiteFavicon` return false for that sentinel through the
+outer `url.Error`; the HTML-declared icon must still win.
+
+Create a real `http.Client` malformed-Location error and require HTML ordering.
+Recursively unwrap `url.Error` before classifying its underlying error as
+network-related. Keep explicit early recovery for deadline, `net.Error`, EOF,
+TLS certificate verification, and TLS record-header failures, with a dedicated
+TLS regression test.
 
 - [ ] **Step 4: Run recovery tests and verify RED**
 
@@ -260,7 +271,15 @@ deadlines, attempt verified hosted recovery before HTML discovery. For other
 errors, try HTML first and hosted recovery last. Attempt the provider at most
 once and join labeled errors from every attempted path.
 
-- [ ] **Step 7: Run all focused favicon tests and verify GREEN**
+- [ ] **Step 7: Reserve enough time for a cold provider redirect chain**
+
+Add `TestSiteFaviconTimeoutBudgetReservesVerifiedHostedRecovery`, requiring a
+ten-second `siteIconOverallTimeout` and a six-second timeout on
+`hostedSiteFaviconHTTPClient()`. Keep `siteIconRequestTimeout` at four seconds.
+Set the cloned provider client's `Timeout` explicitly to
+`siteIconHostedTimeout` so it does not inherit the shorter origin budget.
+
+- [ ] **Step 8: Run all focused favicon tests and verify GREEN**
 
 Run:
 

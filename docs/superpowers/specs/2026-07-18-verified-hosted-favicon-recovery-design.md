@@ -81,10 +81,12 @@ For a root HTTP(S) favicon URL:
 7. If no path returns a valid real icon, return an error to the existing route,
    which serves the built-in bookmark SVG with `no-store`.
 
-The existing eight-second overall context remains authoritative. The existing
-four-second HTTP client timeout bounds each individual request. The early
-provider attempt for network errors is important: requesting the same
-unreachable origin page first can exhaust the entire budget.
+The overall context is ten seconds. Ordinary origin requests retain their
+four-second client timeout, while the cloned hosted client receives six seconds
+because a cold provider request normally includes both `favicon.im` and
+`a.favicon.im` TLS/HTTP stages. The early provider attempt for network errors is
+important: requesting the same unreachable origin page first can exhaust the
+remaining budget.
 
 ## Provider Request
 
@@ -115,14 +117,22 @@ A hosted response is accepted only when all of these checks pass:
 - The final URL remains HTTPS on exactly `favicon.im` or `a.favicon.im`.
 - The final path and `throw-error-on-404=true` query still identify the
   originally requested hostname.
-- `X-Favicon-Source`, after trimming and lowercasing, is exactly `origin`,
-  `cache-fresh`, or `cache-stale`.
+- Exactly one `X-Favicon-Source` header is present and, after trimming and
+  lowercasing, is exactly `origin`, `cache-fresh`, or `cache-stale`.
 - The body passes the existing byte limit, decoded-pixel limit, ICO structure,
   SVG-document, and supported-image validation.
 
 `default`, blank, malformed, and unknown source values are rejected even when
-the body is a valid image. Header or API drift therefore fails closed to the
-built-in bookmark icon.
+the body is a valid image. Duplicate source headers are also rejected rather
+than trusting the first value. Header or API drift therefore fails closed to
+the built-in bookmark icon.
+
+An origin redirect rejected by SuperFlare's redirect policy, including
+userinfo and non-HTTP(S) targets, or a malformed Location header is not a
+network failure. It proceeds to same-origin HTML discovery before any provider
+attempt. `url.Error` wrappers are recursively removed before classifying the
+underlying failure; genuine connection, TLS, EOF, and timeout errors retain the
+early provider path.
 
 ## Redirect Security
 
@@ -172,6 +182,8 @@ Automated tests will prove:
 - accepted source values and rejection of default, blank, and unknown values;
 - provider redirect acceptance only between the two approved HTTPS hosts with
   unchanged request identity;
+- a ten-second overall budget, four-second origin timeout, and six-second
+  hosted timeout so a cold redirect chain has time to finish;
 - a direct network failure uses verified hosted recovery before HTML;
 - an ordinary origin 404 still prefers a successfully discovered HTML icon;
 - verified provider success is cached under the destination key;
